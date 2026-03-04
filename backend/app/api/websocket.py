@@ -1,7 +1,8 @@
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db, redis_client
+from app.database import get_db
+from app import database as _db
 from app.core.dependencies import get_ws_user
 
 router = APIRouter()

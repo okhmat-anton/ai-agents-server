@@ -3,11 +3,34 @@ from uuid import UUID
 from datetime import datetime
 
 
+# ---------- Agent Model sub-schemas ----------
+
+class AgentModelEntry(BaseModel):
+    """One model assignment for an agent."""
+    model_config_id: UUID
+    task_type: str = "general"  # e.g. "code generation", "text analysis"
+    tags: list[str] = []       # e.g. ["code", "fast", "large-context"]
+    priority: int = 0          # 0 = primary / default
+
+
+class AgentModelResponse(BaseModel):
+    id: UUID
+    model_config_id: UUID
+    model_name: str | None = None  # resolved from relationship
+    model_display_name: str | None = None
+    task_type: str
+    tags: list[str] | None = []
+    priority: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ---------- Agent schemas ----------
+
 class AgentCreate(BaseModel):
     name: str
     description: str | None = None
-    model_id: UUID
-    model_name: str = "qwen2.5-coder:14b"
     system_prompt: str = ""
     temperature: float = 0.7
     top_p: float = 0.9
@@ -19,13 +42,13 @@ class AgentCreate(BaseModel):
     stop: list[str] = []
     num_thread: int = 8
     num_gpu: int = 1
+    # Multi-model support
+    models: list[AgentModelEntry] = []
 
 
 class AgentUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
-    model_id: UUID | None = None
-    model_name: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
     top_p: float | None = None
@@ -37,14 +60,16 @@ class AgentUpdate(BaseModel):
     stop: list[str] | None = None
     num_thread: int | None = None
     num_gpu: int | None = None
+    # Multi-model support (if provided, replaces all)
+    models: list[AgentModelEntry] | None = None
 
 
 class AgentResponse(BaseModel):
     id: UUID
     name: str
     description: str | None
-    model_id: UUID
-    model_name: str
+    model_id: UUID | None = None      # legacy, may be null
+    model_name: str | None = None     # legacy, may be null
     system_prompt: str
     status: str
     temperature: float
@@ -60,6 +85,8 @@ class AgentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_run_at: datetime | None
+    # Multi-model
+    agent_models: list[AgentModelResponse] = []
 
     model_config = {"from_attributes": True}
 

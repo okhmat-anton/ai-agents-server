@@ -12,8 +12,8 @@ class Agent(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("model_configs.id"), nullable=False)
-    model_name: Mapped[str] = mapped_column(String(200), nullable=False, default="qwen2.5-coder:14b")
+    model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("model_configs.id"), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(200), nullable=True, default=None)
     system_prompt: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(20), default="idle")  # idle, running, paused, error, stopped
 
@@ -36,6 +36,7 @@ class Agent(Base):
 
     # Relationships
     model_config_rel = relationship("ModelConfig", lazy="selectin")
+    agent_models = relationship("AgentModel", back_populates="agent", cascade="all, delete-orphan", lazy="selectin", order_by="AgentModel.priority")
     tasks = relationship("Task", back_populates="agent", cascade="all, delete-orphan")
     logs = relationship("AgentLog", back_populates="agent", cascade="all, delete-orphan")
     agent_skills = relationship("AgentSkill", back_populates="agent", cascade="all, delete-orphan")

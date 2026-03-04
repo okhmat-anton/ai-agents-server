@@ -13,19 +13,6 @@
               <v-text-field v-model="form.name" label="Name" required />
             </v-col>
             <v-col cols="12" md="6">
-              <v-select
-                v-model="form.model_id"
-                :items="models"
-                item-title="name"
-                item-value="id"
-                label="Provider"
-                required
-              />
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="form.model_name" label="Model Name" hint="e.g. qwen2.5-coder:14b" />
-            </v-col>
-            <v-col cols="12">
               <v-textarea v-model="form.description" label="Description" rows="2" />
             </v-col>
             <v-col cols="12">
@@ -33,7 +20,84 @@
             </v-col>
           </v-row>
 
-          <v-expansion-panels class="mt-4">
+          <!-- ─── Models ─────────────────────────────────── -->
+          <div class="text-h6 mt-6 mb-3">Models</div>
+
+          <v-card
+            v-for="(entry, idx) in form.models"
+            :key="idx"
+            variant="outlined"
+            class="mb-3 pa-3"
+          >
+            <v-row align="center" dense>
+              <v-col cols="12" md="4">
+                <v-select
+                  v-model="entry.model_config_id"
+                  :items="models"
+                  item-title="name"
+                  item-value="id"
+                  label="Model"
+                  density="compact"
+                  hide-details
+                  required
+                >
+                  <template #item="{ item, props }">
+                    <v-list-item v-bind="props">
+                      <v-list-item-subtitle>{{ item.raw.model_id }}</v-list-item-subtitle>
+                    </v-list-item>
+                  </template>
+                </v-select>
+              </v-col>
+              <v-col cols="12" md="3">
+                <v-text-field
+                  v-model="entry.task_type"
+                  label="Task Type"
+                  density="compact"
+                  hide-details
+                  placeholder="e.g. code generation"
+                />
+              </v-col>
+              <v-col cols="12" md="3">
+                <v-combobox
+                  v-model="entry.tags"
+                  label="Tags"
+                  density="compact"
+                  hide-details
+                  multiple
+                  chips
+                  closable-chips
+                  small-chips
+                  placeholder="Press Enter to add"
+                />
+              </v-col>
+              <v-col cols="auto" md="1">
+                <v-text-field
+                  v-model.number="entry.priority"
+                  label="Priority"
+                  type="number"
+                  density="compact"
+                  hide-details
+                  style="max-width: 80px"
+                />
+              </v-col>
+              <v-col cols="auto">
+                <v-btn icon="mdi-delete" size="small" variant="text" color="error" @click="removeModel(idx)" />
+              </v-col>
+            </v-row>
+          </v-card>
+
+          <v-btn
+            variant="tonal"
+            color="primary"
+            prepend-icon="mdi-plus"
+            size="small"
+            @click="addModel"
+          >
+            Add Model
+          </v-btn>
+
+          <!-- ─── Generation Parameters ──────────────────── -->
+          <v-expansion-panels class="mt-6">
             <v-expansion-panel title="Generation Parameters">
               <v-expansion-panel-text>
                 <v-row>
@@ -96,8 +160,6 @@ const models = computed(() => settingsStore.models)
 const form = ref({
   name: '',
   description: '',
-  model_id: null,
-  model_name: 'qwen2.5-coder:14b',
   system_prompt: '',
   temperature: 0.7,
   top_p: 0.9,
@@ -107,17 +169,47 @@ const form = ref({
   repeat_penalty: 1.1,
   num_thread: 8,
   num_gpu: 1,
+  models: [],  // array of { model_config_id, task_type, tags, priority }
 })
+
+const addModel = () => {
+  form.value.models.push({
+    model_config_id: models.value.length ? models.value[0].id : null,
+    task_type: 'general',
+    tags: [],
+    priority: form.value.models.length,
+  })
+}
+
+const removeModel = (idx) => {
+  form.value.models.splice(idx, 1)
+}
 
 onMounted(async () => {
   await settingsStore.fetchModels()
   if (isEdit.value) {
     const agent = await agentsStore.fetchAgent(route.params.id)
-    Object.keys(form.value).forEach((key) => {
-      if (agent[key] !== undefined) form.value[key] = agent[key]
+    // Copy scalar fields
+    const scalarKeys = [
+      'name', 'description', 'system_prompt', 'temperature', 'top_p', 'top_k',
+      'max_tokens', 'num_ctx', 'repeat_penalty', 'num_thread', 'num_gpu',
+    ]
+    scalarKeys.forEach((key) => {
+      if (agent[key] !== undefined && agent[key] !== null) form.value[key] = agent[key]
     })
-  } else if (models.value.length) {
-    form.value.model_id = models.value[0].id
+    // Load agent_models
+    if (agent.agent_models && agent.agent_models.length) {
+      form.value.models = agent.agent_models.map((am) => ({
+        model_config_id: am.model_config_id,
+        task_type: am.task_type || 'general',
+        tags: am.tags || [],
+        priority: am.priority ?? 0,
+      }))
+    }
+  }
+  // If no models yet, auto-add first available
+  if (!form.value.models.length && models.value.length) {
+    addModel()
   }
 })
 

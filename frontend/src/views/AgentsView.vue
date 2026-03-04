@@ -18,8 +18,13 @@
           <template #item.status="{ item }">
             <v-chip :color="statusColor(item.status)" size="small" variant="tonal">{{ item.status }}</v-chip>
           </template>
-          <template #item.model_name="{ item }">
-            <code>{{ item.model_name }}</code>
+          <template #item.models="{ item }">
+            <div v-if="item.agent_models && item.agent_models.length" class="d-flex flex-wrap ga-1">
+              <v-chip v-for="am in item.agent_models" :key="am.id" size="x-small" variant="tonal" color="primary">
+                {{ am.model_display_name || am.model_name }}
+              </v-chip>
+            </div>
+            <span v-else class="text-grey">—</span>
           </template>
           <template #item.created_at="{ item }">
             {{ new Date(item.created_at).toLocaleDateString() }}
@@ -62,7 +67,7 @@ const deleteTarget = ref(null)
 const headers = [
   { title: 'Name', key: 'name' },
   { title: 'Status', key: 'status', width: 120 },
-  { title: 'Model', key: 'model_name' },
+  { title: 'Model', key: 'models', sortable: false },
   { title: 'Created', key: 'created_at', width: 120 },
   { title: 'Actions', key: 'actions', sortable: false, width: 200 },
 ]

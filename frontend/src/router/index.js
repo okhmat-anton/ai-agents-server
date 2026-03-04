@@ -28,6 +28,7 @@ const routes = [
       { path: 'settings/models', name: 'Models', component: () => import('../views/ModelsView.vue') },
       { path: 'settings/api-keys', name: 'ApiKeys', component: () => import('../views/ApiKeysView.vue') },
       { path: 'system/logs', name: 'SystemLogs', component: () => import('../views/SystemLogsView.vue') },
+      { path: 'ollama', name: 'Ollama', component: () => import('../views/OllamaView.vue') },
     ],
   },
 ]

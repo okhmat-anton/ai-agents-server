@@ -1,19 +1,53 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
+from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.agent import Agent
+from app.models.agent_model import AgentModel
 from app.models.task import Task
 from app.models.log import AgentLog
 from app.models.memory import Memory
 from app.models.skill import AgentSkill
-from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentStatsResponse
+from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentStatsResponse, AgentModelResponse
 from app.schemas.common import MessageResponse
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+
+async def _load_agent(db: AsyncSession, agent_id) -> Agent | None:
+    """Load agent with agent_models + nested model_config_rel eagerly."""
+    result = await db.execute(
+        select(Agent)
+        .where(Agent.id == agent_id)
+        .options(
+            selectinload(Agent.agent_models).selectinload(AgentModel.model_config_rel)
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _build_agent_response(agent: Agent) -> dict:
+    """Build response dict with resolved model names from agent_models."""
+    data = {c.key: getattr(agent, c.key) for c in agent.__table__.columns}
+    agent_models_out = []
+    for am in (agent.agent_models or []):
+        mcr = am.model_config_rel
+        agent_models_out.append(AgentModelResponse(
+            id=am.id,
+            model_config_id=am.model_config_id,
+            model_name=mcr.model_id if mcr else None,
+            model_display_name=mcr.name if mcr else None,
+            task_type=am.task_type,
+            tags=am.tags or [],
+            priority=am.priority,
+            created_at=am.created_at,
+        ))
+    data["agent_models"] = agent_models_out
+    return data
 
 
 @router.get("", response_model=list[AgentResponse])
@@ -24,12 +58,15 @@ async def list_agents(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(Agent)
+    q = select(Agent).options(
+        selectinload(Agent.agent_models).selectinload(AgentModel.model_config_rel)
+    )
     if status:
         q = q.where(Agent.status == status)
     q = q.order_by(Agent.created_at.desc()).limit(limit).offset(offset)
     result = await db.execute(q)
-    return result.scalars().all()
+    agents = result.scalars().all()
+    return [_build_agent_response(a) for a in agents]
 
 
 @router.post("", response_model=AgentResponse, status_code=201)
@@ -38,11 +75,24 @@ async def create_agent(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    agent = Agent(**body.model_dump())
+    agent_data = body.model_dump(exclude={"models"})
+    agent = Agent(**agent_data)
     db.add(agent)
     await db.flush()
-    await db.refresh(agent)
-    return agent
+
+    # Create agent_model entries
+    for entry in body.models:
+        am = AgentModel(
+            agent_id=agent.id,
+            model_config_id=entry.model_config_id,
+            task_type=entry.task_type,
+            tags=entry.tags,
+            priority=entry.priority,
+        )
+        db.add(am)
+    await db.flush()
+    agent = await _load_agent(db, agent.id)
+    return _build_agent_response(agent)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
@@ -51,11 +101,10 @@ async def get_agent(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+    agent = await _load_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return agent
+    return _build_agent_response(agent)
 
 
 @router.put("/{agent_id}", response_model=AgentResponse)
@@ -69,11 +118,27 @@ async def update_agent(
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    for key, value in body.model_dump(exclude_unset=True).items():
+
+    update_data = body.model_dump(exclude_unset=True, exclude={"models"})
+    for key, value in update_data.items():
         setattr(agent, key, value)
+
+    # If models list is provided, replace all agent_model entries
+    if body.models is not None:
+        await db.execute(delete(AgentModel).where(AgentModel.agent_id == agent_id))
+        for entry in body.models:
+            am = AgentModel(
+                agent_id=agent.id,
+                model_config_id=entry.model_config_id,
+                task_type=entry.task_type,
+                tags=entry.tags,
+                priority=entry.priority,
+            )
+            db.add(am)
+
     await db.flush()
-    await db.refresh(agent)
-    return agent
+    agent = await _load_agent(db, agent.id)
+    return _build_agent_response(agent)
 
 
 @router.delete("/{agent_id}", response_model=MessageResponse)
@@ -104,8 +169,8 @@ async def start_agent(
     from datetime import datetime, timezone
     agent.last_run_at = datetime.now(timezone.utc)
     await db.flush()
-    await db.refresh(agent)
-    return agent
+    agent = await _load_agent(db, agent_id)
+    return _build_agent_response(agent)
 
 
 @router.post("/{agent_id}/stop", response_model=AgentResponse)
@@ -120,8 +185,8 @@ async def stop_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
     agent.status = "stopped"
     await db.flush()
-    await db.refresh(agent)
-    return agent
+    agent = await _load_agent(db, agent_id)
+    return _build_agent_response(agent)
 
 
 @router.post("/{agent_id}/pause", response_model=AgentResponse)
@@ -136,8 +201,8 @@ async def pause_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
     agent.status = "paused"
     await db.flush()
-    await db.refresh(agent)
-    return agent
+    agent = await _load_agent(db, agent_id)
+    return _build_agent_response(agent)
 
 
 @router.post("/{agent_id}/resume", response_model=AgentResponse)
@@ -152,8 +217,8 @@ async def resume_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
     agent.status = "running"
     await db.flush()
-    await db.refresh(agent)
-    return agent
+    agent = await _load_agent(db, agent_id)
+    return _build_agent_response(agent)
 
 
 @router.post("/{agent_id}/duplicate", response_model=AgentResponse, status_code=201)
@@ -162,16 +227,13 @@ async def duplicate_agent(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+    agent = await _load_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     new_agent = Agent(
         name=f"{agent.name} (copy)",
         description=agent.description,
-        model_id=agent.model_id,
-        model_name=agent.model_name,
         system_prompt=agent.system_prompt,
         temperature=agent.temperature,
         top_p=agent.top_p,
@@ -186,8 +248,20 @@ async def duplicate_agent(
     )
     db.add(new_agent)
     await db.flush()
-    await db.refresh(new_agent)
-    return new_agent
+
+    # Duplicate agent_models
+    for am in agent.agent_models:
+        new_am = AgentModel(
+            agent_id=new_agent.id,
+            model_config_id=am.model_config_id,
+            task_type=am.task_type,
+            tags=am.tags,
+            priority=am.priority,
+        )
+        db.add(new_am)
+    await db.flush()
+    new_agent = await _load_agent(db, new_agent.id)
+    return _build_agent_response(new_agent)
 
 
 @router.get("/{agent_id}/stats", response_model=AgentStatsResponse)

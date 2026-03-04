@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from datetime import datetime, timezone, timedelta
-from app.database import get_db, redis_client
+from app.database import get_db
+from app import database as _db
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.agent import Agent
@@ -34,8 +35,8 @@ async def health(db: AsyncSession = Depends(get_db)):
     # Check Redis
     redis_status = "ok"
     try:
-        if redis_client:
-            await redis_client.ping()
+        if _db.redis_client:
+            await _db.redis_client.ping()
         else:
             redis_status = "not connected"
     except Exception:
@@ -45,9 +46,12 @@ async def health(db: AsyncSession = Depends(get_db)):
     chromadb_status = "ok"
     try:
         async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"{settings.CHROMADB_URL}/api/v1/heartbeat")
+            r = await client.get(f"{settings.CHROMADB_URL}/api/v2/heartbeat")
             if r.status_code != 200:
-                chromadb_status = "error"
+                # Fallback to v1
+                r = await client.get(f"{settings.CHROMADB_URL}/api/v1/heartbeat")
+                if r.status_code != 200:
+                    chromadb_status = "error"
     except Exception:
         chromadb_status = "unavailable"
 

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.model_config import ModelConfig
 from app.config import get_settings
+from app.services.log_service import syslog
 
 
 async def sync_ollama_models(db: AsyncSession):
@@ -14,16 +15,16 @@ async def sync_ollama_models(db: AsyncSession):
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(f"{base_url}/api/tags")
             if resp.status_code != 200:
-                print("[model_service] Ollama not available, skipping model sync")
+                await syslog(db, "warning", "Ollama not available, skipping model sync", source="system")
                 return
             data = resp.json()
     except Exception:
-        print("[model_service] Ollama not reachable, skipping model sync")
+        await syslog(db, "warning", "Ollama not reachable, skipping model sync", source="system")
         return
 
     ollama_models = data.get("models", [])
     if not ollama_models:
-        print("[model_service] No Ollama models found")
+        await syslog(db, "info", "No Ollama models found", source="system")
         return
 
     # Get existing model_ids from DB
@@ -56,6 +57,7 @@ async def sync_ollama_models(db: AsyncSession):
 
     if added:
         await db.commit()
-        print(f"[model_service] Added {added} Ollama model(s) to database")
+        await syslog(db, "info", f"Synced {added} new Ollama model(s) to database", source="system",
+                     metadata={"count": added})
     else:
-        print(f"[model_service] All {len(ollama_models)} Ollama model(s) already in database")
+        await syslog(db, "debug", f"All {len(ollama_models)} Ollama model(s) already in database", source="system")

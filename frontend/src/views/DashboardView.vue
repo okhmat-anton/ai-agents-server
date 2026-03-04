@@ -38,6 +38,37 @@
                 <v-list-item-title>{{ key }}</v-list-item-title>
                 <template #append>
                   <v-chip :color="val === 'ok' ? 'success' : 'warning'" size="small" variant="tonal">{{ val }}</v-chip>
+                  <v-btn
+                    v-if="key === 'ollama' && val !== 'ok'"
+                    size="x-small"
+                    color="success"
+                    variant="tonal"
+                    class="ml-2"
+                    :loading="startingOllama"
+                    @click="startOllama"
+                  >
+                    Start
+                  </v-btn>
+                  <v-btn
+                    v-if="key === 'ollama' && val === 'ok'"
+                    size="x-small"
+                    color="error"
+                    variant="tonal"
+                    class="ml-2"
+                    :loading="stoppingOllama"
+                    @click="stopOllama"
+                  >
+                    Stop
+                  </v-btn>
+                  <v-btn
+                    v-if="key === 'ollama'"
+                    size="x-small"
+                    variant="text"
+                    class="ml-1"
+                    :to="'/ollama'"
+                  >
+                    <v-icon size="small">mdi-open-in-new</v-icon>
+                  </v-btn>
                 </template>
               </v-list-item>
             </v-list>
@@ -75,6 +106,8 @@ import api from '../api'
 const stats = ref({})
 const health = ref({})
 const agents = ref([])
+const startingOllama = ref(false)
+const stoppingOllama = ref(false)
 
 const statsCards = computed(() => [
   { title: 'Agents', value: stats.value.total_agents || 0, icon: 'mdi-robot', color: 'primary' },
@@ -84,6 +117,36 @@ const statsCards = computed(() => [
 ])
 
 const statusColor = (s) => ({ idle: 'grey', running: 'success', paused: 'warning', error: 'error', stopped: 'grey' }[s] || 'grey')
+
+const refreshHealth = async () => {
+  const hRes = await api.get('/system/health')
+  const { status, uptime_seconds, ...healthData } = hRes.data
+  health.value = healthData
+}
+
+const startOllama = async () => {
+  startingOllama.value = true
+  try {
+    await api.post('/ollama/start')
+    await refreshHealth()
+  } catch (e) {
+    console.error('Failed to start Ollama:', e)
+  } finally {
+    startingOllama.value = false
+  }
+}
+
+const stopOllama = async () => {
+  stoppingOllama.value = true
+  try {
+    await api.post('/ollama/stop')
+    await refreshHealth()
+  } catch (e) {
+    console.error('Failed to stop Ollama:', e)
+  } finally {
+    stoppingOllama.value = false
+  }
+}
 
 onMounted(async () => {
   try {

@@ -60,6 +60,7 @@ const navItems = [
   { path: '/settings', icon: 'mdi-cog', title: 'Settings' },
 //   { path: '/settings/models', icon: 'mdi-brain', title: 'Models' },
 //   { path: '/settings/api-keys', icon: 'mdi-key', title: 'API Keys' },
+  { path: '/ollama', icon: 'mdi-creation', title: 'Ollama' },
   { path: '/system/logs', icon: 'mdi-text-box-search', title: 'System Logs' },
 ]
 

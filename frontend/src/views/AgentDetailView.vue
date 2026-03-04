@@ -35,7 +35,26 @@
         <!-- Info Tab -->
         <div v-if="tab === 'info'">
           <v-list>
-            <v-list-item><strong>Model:</strong>&nbsp;{{ agent.model_name }}</v-list-item>
+            <v-list-item v-if="agent.agent_models && agent.agent_models.length">
+              <strong>Models:</strong>
+              <div class="mt-1">
+                <v-chip
+                  v-for="am in agent.agent_models"
+                  :key="am.id"
+                  size="small"
+                  variant="tonal"
+                  color="primary"
+                  class="mr-1 mb-1"
+                >
+                  {{ am.model_display_name || am.model_name }}
+                  <v-tooltip activator="parent" location="top">
+                    <div><strong>Task:</strong> {{ am.task_type }}</div>
+                    <div v-if="am.tags && am.tags.length"><strong>Tags:</strong> {{ am.tags.join(', ') }}</div>
+                    <div><strong>Priority:</strong> {{ am.priority }}</div>
+                  </v-tooltip>
+                </v-chip>
+              </div>
+            </v-list-item>
             <v-list-item><strong>Temperature:</strong>&nbsp;{{ agent.temperature }}</v-list-item>
             <v-list-item><strong>Context:</strong>&nbsp;{{ agent.num_ctx }}</v-list-item>
             <v-list-item v-if="agent.description"><strong>Description:</strong>&nbsp;{{ agent.description }}</v-list-item>

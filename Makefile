@@ -1,4 +1,4 @@
-.PHONY: install run run-dev stop restart update test lint logs migrate clean
+.PHONY: install run run-dev stop stop-dev restart update test lint logs migrate clean
 
 install:
 	@echo "=== AI Agents Server — Installation ==="
@@ -55,14 +55,31 @@ run:
 
 run-dev:
 	@echo "=== Starting dev mode (infra in Docker, backend+frontend local) ==="
+	@echo ""
+	@echo "1. Starting infrastructure..."
 	docker compose up -d postgres redis chromadb
-	@echo "Waiting for Postgres & Redis..."
+	@echo "   Waiting for Postgres & Redis..."
 	@sleep 3
 	@echo ""
-	@echo "Starting backend (uvicorn --reload)..."
-	cd backend && uvicorn app.main:app --host 0.0.0.0 --port 4700 --reload &
-	@echo "Starting frontend (vite dev)..."
-	cd frontend && npm run dev &
+	@echo "2. Setting up backend Python environment..."
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "   Creating virtual environment (Python 3.11)..."; \
+		python3.11 -m venv backend/.venv || python3 -m venv backend/.venv; \
+	fi
+	@echo "   Installing dependencies..."
+	@backend/.venv/bin/pip install -q -r backend/requirements.txt 2>/dev/null || backend/.venv/bin/pip install -r backend/requirements.txt
+	@echo ""
+	@echo "3. Setting up frontend..."
+	@if [ ! -d "frontend/node_modules" ]; then \
+		echo "   Installing npm packages..."; \
+		cd frontend && npm install; \
+	fi
+	@echo ""
+	@echo "4. Starting services..."
+	@lsof -ti:4700 | xargs kill -9 2>/dev/null || true
+	@lsof -ti:4200 | xargs kill -9 2>/dev/null || true
+	@cd backend && PYTHONPATH=. OLLAMA_BASE_URL=http://localhost:11434 CHROMADB_URL=http://localhost:4800 .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 4700 --reload &
+	@cd frontend && VITE_BACKEND_URL=http://localhost:4700 npm run dev -- --host 0.0.0.0 --port 4200 &
 	@echo ""
 	@echo "=== Dev mode running ==="
 	@echo "Frontend: http://localhost:4200"
@@ -74,6 +91,11 @@ run-dev:
 
 stop:
 	docker compose down
+
+stop-dev:
+	@lsof -ti:4700 | xargs kill -9 2>/dev/null || true
+	@lsof -ti:4200 | xargs kill -9 2>/dev/null || true
+	@echo "Dev processes stopped"
 
 restart:
 	docker compose restart
