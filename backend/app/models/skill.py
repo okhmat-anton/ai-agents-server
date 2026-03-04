@@ -13,6 +13,7 @@ class Skill(Base):
     name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
+    description_for_agent: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String(30), default="general")  # general, web, files, code, data, custom
     version: Mapped[str] = mapped_column(String(20), default="1.0.0")
     code: Mapped[str] = mapped_column(Text, nullable=False, default="")

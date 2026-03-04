@@ -7,6 +7,7 @@ class SkillCreate(BaseModel):
     name: str
     display_name: str
     description: str = ""
+    description_for_agent: str = ""
     category: str = "general"
     version: str = "1.0.0"
     code: str = ""
@@ -19,6 +20,7 @@ class SkillUpdate(BaseModel):
     name: str | None = None
     display_name: str | None = None
     description: str | None = None
+    description_for_agent: str | None = None
     category: str | None = None
     version: str | None = None
     code: str | None = None
@@ -32,6 +34,7 @@ class SkillResponse(BaseModel):
     name: str
     display_name: str
     description: str
+    description_for_agent: str
     category: str
     version: str
     code: str
@@ -44,6 +47,38 @@ class SkillResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ----- Skill Files (filesystem) -----
+
+class SkillFileInfo(BaseModel):
+    name: str
+    path: str  # relative to skill dir
+    is_dir: bool
+    size: int = 0
+    language: str = "text"
+
+
+class SkillFileContent(BaseModel):
+    path: str
+    content: str
+    language: str = "text"
+
+
+class SkillFileWrite(BaseModel):
+    path: str
+    content: str
+
+
+class SkillFileCreate(BaseModel):
+    path: str
+    content: str = ""
+    is_dir: bool = False
+
+
+class SkillFileRename(BaseModel):
+    old_path: str
+    new_path: str
 
 
 class AgentSkillCreate(BaseModel):

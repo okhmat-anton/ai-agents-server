@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     CORS_ORIGINS: list[str] = ["http://localhost:4200", "http://localhost:4700"]
 
+    # Skills
+    SKILLS_DIR: str = "./data/skills"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

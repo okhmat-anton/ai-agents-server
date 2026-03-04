@@ -11,6 +11,7 @@ from app.schemas.skill import (
     SkillCreate, SkillUpdate, SkillResponse, AgentSkillCreate, AgentSkillResponse,
 )
 from app.schemas.common import MessageResponse
+from app.api.skill_files import init_skill_directory, delete_skill_directory, duplicate_skill_directory
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 agent_skill_router = APIRouter(prefix="/api/agents/{agent_id}/skills", tags=["agent-skills"])
@@ -50,6 +51,10 @@ async def create_skill(
     db.add(skill)
     await db.flush()
     await db.refresh(skill)
+
+    # Create skill directory + manifest + default entry file
+    init_skill_directory(skill)
+
     return skill
 
 
@@ -112,7 +117,12 @@ async def delete_skill(
         usage = await db.execute(select(AgentSkill).where(AgentSkill.skill_id == skill_id))
         if usage.scalars().first():
             raise HTTPException(status_code=409, detail="Skill is in use. Use force=true to delete")
+    skill_name = skill.name
     await db.delete(skill)
+
+    # Remove skill directory from filesystem
+    delete_skill_directory(skill_name)
+
     return MessageResponse(message="Skill deleted")
 
 
@@ -162,6 +172,7 @@ async def duplicate_skill(
         name=f"{skill.name}_copy",
         display_name=f"{skill.display_name} (copy)",
         description=skill.description,
+        description_for_agent=skill.description_for_agent,
         category=skill.category,
         version=skill.version,
         code=skill.code,
@@ -171,6 +182,10 @@ async def duplicate_skill(
     db.add(new_skill)
     await db.flush()
     await db.refresh(new_skill)
+
+    # Copy entire skill directory
+    duplicate_skill_directory(skill.name, new_skill.name)
+
     return new_skill
 
 

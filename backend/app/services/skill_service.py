@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.skill import Skill
 from sqlalchemy import select
+from app.api.skill_files import init_skill_directory
 
 
 SYSTEM_SKILLS = [
@@ -113,4 +114,10 @@ async def create_system_skills(db: AsyncSession):
             is_shared=True,
         )
         db.add(skill)
+        await db.flush()
+        await db.refresh(skill)
+
+        # Create filesystem directory + manifest
+        init_skill_directory(skill)
+
     await db.commit()
