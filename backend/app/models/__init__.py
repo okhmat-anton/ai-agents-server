@@ -7,9 +7,11 @@ from app.models.log import SystemLog, AgentLog
 from app.models.api_key import ApiKey
 from app.models.skill import Skill, AgentSkill
 from app.models.memory import Memory, MemoryLink
+from app.models.system_setting import SystemSetting
 
 __all__ = [
     "User", "ModelConfig", "Agent", "AgentModel", "Task",
     "SystemLog", "AgentLog", "ApiKey",
     "Skill", "AgentSkill", "Memory", "MemoryLink",
+    "SystemSetting",
 ]

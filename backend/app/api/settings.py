@@ -8,10 +8,12 @@ from app.core.security import hash_password, verify_password, generate_api_key, 
 from app.models.user import User
 from app.models.model_config import ModelConfig
 from app.models.api_key import ApiKey
+from app.models.system_setting import SystemSetting
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.settings import (
     ModelConfigCreate, ModelConfigUpdate, ModelConfigResponse,
     ApiKeyCreate, ApiKeyResponse, ApiKeyCreatedResponse,
+    SystemSettingResponse, SystemSettingUpdate,
 )
 from app.schemas.common import MessageResponse
 
@@ -202,3 +204,57 @@ async def delete_api_key(
         raise HTTPException(status_code=404, detail="API key not found")
     await db.delete(api_key)
     return MessageResponse(message="API key deleted")
+
+
+# --- System Settings ---
+
+# Default settings seeded on first access
+_DEFAULT_SETTINGS = {
+    "filesystem_access_enabled": {"value": "false", "description": "Allow full filesystem access (read/write/delete files on host)"},
+}
+
+
+async def _ensure_defaults(db: AsyncSession):
+    """Seed default system settings if missing."""
+    result = await db.execute(select(SystemSetting))
+    existing = {s.key for s in result.scalars().all()}
+    for key, cfg in _DEFAULT_SETTINGS.items():
+        if key not in existing:
+            db.add(SystemSetting(key=key, value=cfg["value"], description=cfg.get("description")))
+    await db.flush()
+
+
+async def get_setting_value(db: AsyncSession, key: str) -> str | None:
+    """Helper to read a single setting value."""
+    await _ensure_defaults(db)
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+    setting = result.scalar_one_or_none()
+    return setting.value if setting else None
+
+
+@router.get("/system", response_model=list[SystemSettingResponse])
+async def list_system_settings(
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_defaults(db)
+    result = await db.execute(select(SystemSetting).order_by(SystemSetting.key))
+    return result.scalars().all()
+
+
+@router.put("/system/{key}", response_model=SystemSettingResponse)
+async def update_system_setting(
+    key: str,
+    body: SystemSettingUpdate,
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _ensure_defaults(db)
+    result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+    setting = result.scalar_one_or_none()
+    if not setting:
+        raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
+    setting.value = body.value
+    await db.flush()
+    await db.refresh(setting)
+    return setting

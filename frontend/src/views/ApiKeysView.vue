@@ -24,6 +24,13 @@
       </v-data-table>
     </v-card>
 
+    <ConfirmDeleteDialog
+      v-model="deleteDialog"
+      title="Delete API Key"
+      :message="`Are you sure you want to delete API key &quot;${deleteTarget?.name}&quot;?`"
+      @confirm="confirmDelete"
+    />
+
     <!-- Create dialog -->
     <v-dialog v-model="showCreate" max-width="500">
       <v-card>
@@ -63,6 +70,7 @@
 <script setup>
 import { ref, inject } from 'vue'
 import { useSettingsStore } from '../stores/settings'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 const settingsStore = useSettingsStore()
 const showSnackbar = inject('showSnackbar')
@@ -71,6 +79,8 @@ const showKey = ref(false)
 const creating = ref(false)
 const createdKey = ref('')
 const form = ref({ name: '', description: '' })
+const deleteDialog = ref(false)
+const deleteTarget = ref(null)
 
 const headers = [
   { title: 'Name', key: 'name' },
@@ -97,9 +107,14 @@ const handleCreate = async () => {
   }
 }
 
-const handleDelete = async (item) => {
-  if (!confirm(`Delete API key "${item.name}"?`)) return
-  await settingsStore.deleteApiKey(item.id)
+const handleDelete = (item) => {
+  deleteTarget.value = item
+  deleteDialog.value = true
+}
+
+const confirmDelete = async () => {
+  await settingsStore.deleteApiKey(deleteTarget.value.id)
+  deleteDialog.value = false
   showSnackbar('API key deleted')
 }
 

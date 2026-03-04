@@ -41,23 +41,19 @@
     </v-card>
 
     <!-- Delete confirm -->
-    <v-dialog v-model="deleteDialog" max-width="400">
-      <v-card>
-        <v-card-title>Delete Agent</v-card-title>
-        <v-card-text>Are you sure you want to delete "{{ deleteTarget?.name }}"?</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn @click="deleteDialog = false">Cancel</v-btn>
-          <v-btn color="error" @click="confirmDelete">Delete</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDeleteDialog
+      v-model="deleteDialog"
+      title="Delete Agent"
+      :message="`Are you sure you want to delete &quot;${deleteTarget?.name}&quot;?`"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, inject } from 'vue'
 import { useAgentsStore } from '../stores/agents'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 const store = useAgentsStore()
 const showSnackbar = inject('showSnackbar')

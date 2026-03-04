@@ -28,21 +28,31 @@
             <v-btn v-if="item.status === 'pending'" icon="mdi-play" size="small" variant="text" color="success" @click="run(item)" />
             <v-btn v-if="item.status === 'running'" icon="mdi-cancel" size="small" variant="text" color="warning" @click="cancel(item)" />
             <v-btn icon="mdi-pencil" size="small" variant="text" @click="$router.push(`/tasks/${item.id}`)" />
-            <v-btn icon="mdi-delete" size="small" variant="text" color="error" @click="remove(item)" />
+            <v-btn icon="mdi-delete" size="small" variant="text" color="error" @click="handleDelete(item)" />
           </template>
         </v-data-table>
       </v-card-text>
     </v-card>
+
+    <ConfirmDeleteDialog
+      v-model="deleteDialog"
+      title="Delete Task"
+      :message="`Are you sure you want to delete &quot;${deleteTarget?.title}&quot;?`"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, watch, onMounted } from 'vue'
 import { useTasksStore } from '../stores/tasks'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 const store = useTasksStore()
 const filterStatus = ref('all')
 const filterPriority = ref('all')
+const deleteDialog = ref(false)
+const deleteTarget = ref(null)
 
 const headers = [
   { title: 'Title', key: 'title' },
@@ -68,5 +78,13 @@ onMounted(load)
 
 const run = (t) => store.runTask(t.id).then(load)
 const cancel = (t) => store.cancelTask(t.id).then(load)
-const remove = (t) => store.deleteTask(t.id)
+const handleDelete = (t) => {
+  deleteTarget.value = t
+  deleteDialog.value = true
+}
+const confirmDelete = async () => {
+  await store.deleteTask(deleteTarget.value.id)
+  deleteDialog.value = false
+  load()
+}
 </script>

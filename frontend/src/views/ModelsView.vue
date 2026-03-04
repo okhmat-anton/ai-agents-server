@@ -59,12 +59,20 @@
         <v-card-actions><v-spacer /><v-btn @click="availDialog = false">Close</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
+
+    <ConfirmDeleteDialog
+      v-model="deleteDialog"
+      title="Delete Model"
+      :message="`Are you sure you want to delete &quot;${deleteTarget?.name}&quot;?`"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, inject } from 'vue'
 import { useSettingsStore } from '../stores/settings'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 const settingsStore = useSettingsStore()
 const showSnackbar = inject('showSnackbar')
@@ -73,6 +81,8 @@ const editItem = ref(null)
 const saving = ref(false)
 const availDialog = ref(false)
 const availModels = ref([])
+const deleteDialog = ref(false)
+const deleteTarget = ref(null)
 
 const headers = [
   { title: 'Name', key: 'name' },
@@ -110,8 +120,13 @@ const handleSave = async () => {
 }
 
 const handleDelete = async (item) => {
-  if (!confirm(`Delete model "${item.name}"?`)) return
-  await settingsStore.deleteModel(item.id)
+  deleteTarget.value = item
+  deleteDialog.value = true
+}
+
+const confirmDelete = async () => {
+  await settingsStore.deleteModel(deleteTarget.value.id)
+  deleteDialog.value = false
   showSnackbar('Model deleted')
 }
 

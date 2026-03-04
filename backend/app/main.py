@@ -19,6 +19,7 @@ from app.api.system import router as system_router
 from app.api.memory import router as memory_router
 from app.api.websocket import router as ws_router
 from app.api.ollama import router as ollama_router
+from app.api.filesystem import router as fs_router
 
 settings = get_settings()
 
@@ -97,6 +98,7 @@ app.include_router(system_router)
 app.include_router(memory_router)
 app.include_router(ws_router)
 app.include_router(ollama_router)
+app.include_router(fs_router)
 
 
 @app.get("/")

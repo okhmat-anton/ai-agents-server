@@ -53,3 +53,16 @@ class ApiKeyResponse(BaseModel):
 
 class ApiKeyCreatedResponse(ApiKeyResponse):
     key: str  # Full key shown only once
+
+
+# --- System Settings ---
+class SystemSettingResponse(BaseModel):
+    key: str
+    value: str
+    description: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class SystemSettingUpdate(BaseModel):
+    value: str

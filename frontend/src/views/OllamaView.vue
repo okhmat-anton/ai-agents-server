@@ -335,29 +335,20 @@
     </v-dialog>
 
     <!-- Delete Confirmation -->
-    <v-dialog v-model="deleteDialog" max-width="450">
-      <v-card>
-        <v-card-title class="text-error">
-          <v-icon class="mr-2" color="error">mdi-alert</v-icon>
-          Delete Model
-        </v-card-title>
-        <v-card-text>
-          Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong>?
-          This will free {{ deleteTarget?.size_hr }} of disk space.
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn @click="deleteDialog = false">Cancel</v-btn>
-          <v-btn color="error" :loading="deleting" @click="deleteModel">Delete</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDeleteDialog
+      v-model="deleteDialog"
+      title="Delete Model"
+      :message="`Are you sure you want to delete ${deleteTarget?.name}? This will free ${deleteTarget?.size_hr} of disk space.`"
+      :loading="deleting"
+      @confirm="deleteModel"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import api from '../api'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 // State
 const status = ref({ running: false, base_url: '', models_count: 0 })

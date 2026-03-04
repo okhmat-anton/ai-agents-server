@@ -29,21 +29,31 @@
             <v-btn v-if="!item.is_shared && !item.is_system" icon="mdi-share" size="small" variant="text" color="success" @click="share(item)" title="Share" />
             <v-btn v-if="item.is_shared && !item.is_system" icon="mdi-share-off" size="small" variant="text" color="grey" @click="unshare(item)" title="Unshare" />
             <v-btn icon="mdi-content-copy" size="small" variant="text" @click="duplicate(item)" />
-            <v-btn v-if="!item.is_system" icon="mdi-delete" size="small" variant="text" color="error" @click="remove(item)" />
+            <v-btn v-if="!item.is_system" icon="mdi-delete" size="small" variant="text" color="error" @click="handleDelete(item)" />
           </template>
         </v-data-table>
       </v-card-text>
     </v-card>
+
+    <ConfirmDeleteDialog
+      v-model="deleteDialog"
+      title="Delete Skill"
+      :message="`Are you sure you want to delete &quot;${deleteTarget?.display_name}&quot;?`"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, watch, onMounted } from 'vue'
 import api from '../api'
+import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 
 const skills = ref([])
 const loading = ref(false)
 const filterCategory = ref('all')
+const deleteDialog = ref(false)
+const deleteTarget = ref(null)
 
 const headers = [
   { title: 'Name', key: 'display_name' },
@@ -72,5 +82,13 @@ onMounted(load)
 const share = async (s) => { await api.post(`/skills/${s.id}/share`); load() }
 const unshare = async (s) => { await api.post(`/skills/${s.id}/unshare`); load() }
 const duplicate = async (s) => { await api.post(`/skills/${s.id}/duplicate`); load() }
-const remove = async (s) => { await api.delete(`/skills/${s.id}`); load() }
+const handleDelete = (s) => {
+  deleteTarget.value = s
+  deleteDialog.value = true
+}
+const confirmDelete = async () => {
+  await api.delete(`/skills/${deleteTarget.value.id}`)
+  deleteDialog.value = false
+  load()
+}
 </script>

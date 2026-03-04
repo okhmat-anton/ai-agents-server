@@ -5,10 +5,27 @@ export const useSettingsStore = defineStore('settings', {
   state: () => ({
     models: [],
     apiKeys: [],
+    systemSettings: {},
     loading: false,
   }),
 
   actions: {
+    // --- System settings ---
+    async fetchSystemSettings() {
+      const { data } = await api.get('/settings/system')
+      const map = {}
+      for (const s of data) {
+        map[s.key] = s
+      }
+      this.systemSettings = map
+    },
+
+    async updateSystemSetting(key, value) {
+      const { data } = await api.put(`/settings/system/${key}`, { value })
+      this.systemSettings[key] = data
+      return data
+    },
+
     async fetchModels() {
       const { data } = await api.get('/settings/models')
       this.models = data
