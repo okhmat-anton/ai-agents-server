@@ -317,6 +317,7 @@ function newChat() {
   systemPrompt.value = ''
   temperature.value = 0.7
   messageInput.value = ''
+  sessionsExpanded.value = true
 }
 
 async function handleSend() {
@@ -349,6 +350,7 @@ async function loadSession(sessionId) {
     multiModel.value = chatStore.currentSession.multi_model || false
     systemPrompt.value = chatStore.currentSession.system_prompt || ''
     temperature.value = chatStore.currentSession.temperature ?? 0.7
+    sessionsExpanded.value = false
   }
   await nextTick()
   scrollToBottom()

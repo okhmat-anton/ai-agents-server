@@ -145,6 +145,12 @@ async def _resolve_model(model_id_str: str, db: AsyncSession) -> tuple[str, str,
     mc = result.scalar_one_or_none()
     if not mc:
         raise HTTPException(status_code=404, detail=f"Model config {model_id_str} not found")
+
+    # For ollama models, always use current OLLAMA_BASE_URL (may differ between Docker / dev)
+    if mc.provider == "ollama":
+        settings = get_settings()
+        return (mc.provider, settings.OLLAMA_BASE_URL, mc.model_id, mc.api_key)
+
     return (mc.provider, mc.base_url, mc.model_id, mc.api_key)
 
 

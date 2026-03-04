@@ -9,7 +9,7 @@ export const useChatStore = defineStore('chat', {
     availableModels: [],
     loading: false,
     sending: false,
-    panelOpen: false,
+    panelOpen: localStorage.getItem('chat_panel_open') === 'true',
     showSessionList: false,
   }),
 
@@ -31,12 +31,15 @@ export const useChatStore = defineStore('chat', {
   actions: {
     togglePanel() {
       this.panelOpen = !this.panelOpen
+      localStorage.setItem('chat_panel_open', this.panelOpen)
     },
     openPanel() {
       this.panelOpen = true
+      localStorage.setItem('chat_panel_open', 'true')
     },
     closePanel() {
       this.panelOpen = false
+      localStorage.setItem('chat_panel_open', 'false')
     },
 
     async fetchAvailableModels() {
