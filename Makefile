@@ -1,0 +1,101 @@
+.PHONY: install run run-dev stop restart update test lint logs migrate clean
+
+install:
+	@echo "=== AI Agents Server — Installation ==="
+	@echo ""
+	@echo "1. Checking Docker..."
+	@which docker > /dev/null 2>&1 || (echo "   Docker not found. Install: https://docs.docker.com/get-docker/" && exit 1)
+	@docker info > /dev/null 2>&1 || (echo "   Docker daemon is not running. Please start Docker Desktop and try again." && exit 1)
+	@echo "   Docker OK"
+	@echo ""
+	@echo "2. Checking Ollama..."
+	@if which ollama > /dev/null 2>&1; then \
+		echo "   Ollama OK"; \
+		echo ""; \
+		echo "3. Checking if Ollama is running..."; \
+		if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then \
+			echo "   Ollama already running"; \
+		else \
+			echo "   Starting Ollama..."; \
+			ollama serve > /dev/null 2>&1 & sleep 3 || true; \
+		fi; \
+		echo ""; \
+		echo "4. Checking models..."; \
+		if ollama list 2>/dev/null | grep -q "qwen2.5-coder:14b"; then \
+			echo "   qwen2.5-coder:14b already installed"; \
+		else \
+			read -p "   Download default model qwen2.5-coder:14b (~9GB RAM needed)? [Y/n] " ans; \
+			if [ "$$ans" != "n" ] && [ "$$ans" != "N" ]; then \
+				echo "   Downloading qwen2.5-coder:14b..."; \
+				ollama pull qwen2.5-coder:14b; \
+			else \
+				read -p "   Enter model name to download (or 'skip'): " model; \
+				if [ "$$model" != "skip" ]; then \
+					ollama pull $$model; \
+				fi; \
+			fi; \
+		fi; \
+	else \
+		echo "   Ollama not found."; \
+		echo "   Install later: https://ollama.com/download"; \
+		echo "   Skipping model setup."; \
+	fi
+	@echo ""
+	@echo "5. Building and starting services..."
+	docker compose up -d --build
+	@echo ""
+	@echo "=== Installation Complete ==="
+	@echo "Frontend: http://localhost:4200"
+	@echo "Backend:  http://localhost:4700"
+	@echo "API Docs: http://localhost:4700/docs"
+	@echo "Login:    admin / admin123"
+
+run:
+	docker compose up -d --build
+
+run-dev:
+	@echo "=== Starting dev mode (infra in Docker, backend+frontend local) ==="
+	docker compose up -d postgres redis chromadb
+	@echo "Waiting for Postgres & Redis..."
+	@sleep 3
+	@echo ""
+	@echo "Starting backend (uvicorn --reload)..."
+	cd backend && uvicorn app.main:app --host 0.0.0.0 --port 4700 --reload &
+	@echo "Starting frontend (vite dev)..."
+	cd frontend && npm run dev &
+	@echo ""
+	@echo "=== Dev mode running ==="
+	@echo "Frontend: http://localhost:4200"
+	@echo "Backend:  http://localhost:4700"
+	@echo "API Docs: http://localhost:4700/docs"
+	@echo ""
+	@echo "Press Ctrl+C to stop"
+	@wait
+
+stop:
+	docker compose down
+
+restart:
+	docker compose restart
+
+update:
+	git pull
+	docker compose up -d --build
+	@echo "Running migrations..."
+	docker compose exec backend alembic upgrade head
+
+test:
+	docker compose exec backend pytest -v
+
+lint:
+	docker compose exec backend ruff check .
+
+logs:
+	docker compose logs -f backend
+
+migrate:
+	docker compose exec backend alembic upgrade head
+
+clean:
+	docker compose down -v
+	@echo "All volumes removed"
