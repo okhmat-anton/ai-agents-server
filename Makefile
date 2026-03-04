@@ -79,10 +79,14 @@ run:
 run-dev:
 	@echo "=== Starting dev mode (infra in Docker, backend+frontend local) ==="
 	@echo ""
-	@echo "1. Starting infrastructure..."
+	@echo "1. Checking Docker..."
+	@docker info > /dev/null 2>&1 || (echo "   Docker is not running. Please start Docker Desktop and try again." && exit 1)
+	@echo "   Starting infrastructure..."
 	docker compose up -d postgres redis chromadb
-	@echo "   Waiting for Postgres & Redis..."
-	@sleep 3
+	@echo "   Waiting for Postgres to be ready..."
+	@sleep 5
+	@nc -z localhost $${POSTGRES_PORT:-4532} 2>/dev/null || sleep 3
+	@echo "   Postgres ready"
 	@echo ""
 	@echo "2. Setting up backend Python environment..."
 	@if [ ! -d "backend/.venv" ]; then \
@@ -125,10 +129,16 @@ restart:
 
 update:
 	git pull
+	@echo "Installing local frontend dependencies..."
+	@cd frontend && npm install
+	@echo "Installing local backend dependencies..."
+	@if [ -d "backend/.venv" ]; then \
+		backend/.venv/bin/pip install -q -r backend/requirements.txt 2>/dev/null || backend/.venv/bin/pip install -r backend/requirements.txt; \
+	fi
 	docker compose up -d --build
-	@echo "Installing frontend dependencies..."
+	@echo "Installing docker frontend dependencies..."
 	docker compose exec frontend npm install
-	@echo "Installing backend dependencies..."
+	@echo "Installing docker backend dependencies..."
 	docker compose exec backend pip install -r requirements.txt
 	@echo "Running migrations..."
 	docker compose exec backend alembic upgrade head
