@@ -3,16 +3,25 @@
 install:
 	@echo "=== AI Agents Server — Installation ==="
 	@echo ""
-	@echo "1. Checking Docker..."
+	@echo "1. Setting up .env..."
+	@if [ ! -f .env ]; then \
+		cp .env.example .env; \
+		echo "   Created .env from .env.example"; \
+		echo "   Review .env and adjust values if needed"; \
+	else \
+		echo "   .env already exists, skipping"; \
+	fi
+	@echo ""
+	@echo "2. Checking Docker..."
 	@which docker > /dev/null 2>&1 || (echo "   Docker not found. Install: https://docs.docker.com/get-docker/" && exit 1)
 	@docker info > /dev/null 2>&1 || (echo "   Docker daemon is not running. Please start Docker Desktop and try again." && exit 1)
 	@echo "   Docker OK"
 	@echo ""
-	@echo "2. Checking Ollama..."
+	@echo "3. Checking Ollama..."
 	@if which ollama > /dev/null 2>&1; then \
 		echo "   Ollama OK"; \
 		echo ""; \
-		echo "3. Checking if Ollama is running..."; \
+		echo "4. Checking if Ollama is running..."; \
 		if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then \
 			echo "   Ollama already running"; \
 		else \
@@ -20,7 +29,7 @@ install:
 			ollama serve > /dev/null 2>&1 & sleep 3 || true; \
 		fi; \
 		echo ""; \
-		echo "4. Checking models..."; \
+		echo "5. Checking models..."; \
 		if ollama list 2>/dev/null | grep -q "qwen2.5-coder:14b"; then \
 			echo "   qwen2.5-coder:14b already installed"; \
 		else \
@@ -41,7 +50,7 @@ install:
 		echo "   Skipping model setup."; \
 	fi
 	@echo ""
-	@echo "5. Building and starting services..."
+	@echo "6. Building and starting services..."
 	docker compose up -d --build
 	@echo ""
 	@echo "=== Installation Complete ==="
