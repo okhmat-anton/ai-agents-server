@@ -26,8 +26,7 @@
 
 ## 4. Project Structure & Makefile
 **Makefile Commands:**
-- `make build`: Build the Docker image for the project.
-- `make run`: Run the Docker container.
+- `make run`: Build and run the Docker container.
 - `make stop`: Stop the running Docker container.
 - `make update`: Pull the latest changes, update the Docker image, and restart the container.
 - `make restart`: Restart the Docker container.
