@@ -20,6 +20,9 @@ from app.api.memory import router as memory_router
 from app.api.websocket import router as ws_router
 from app.api.ollama import router as ollama_router
 from app.api.filesystem import router as fs_router
+from app.api.terminal import router as terminal_router
+from app.api.processes import router as processes_router
+from app.api.chat import router as chat_router
 
 settings = get_settings()
 
@@ -99,6 +102,9 @@ app.include_router(memory_router)
 app.include_router(ws_router)
 app.include_router(ollama_router)
 app.include_router(fs_router)
+app.include_router(terminal_router)
+app.include_router(processes_router)
+app.include_router(chat_router)
 
 
 @app.get("/")

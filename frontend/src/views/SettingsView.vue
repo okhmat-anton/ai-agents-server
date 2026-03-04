@@ -5,41 +5,69 @@
     <!-- System Settings -->
     <v-card class="mb-6">
       <v-card-title>
-        <v-icon class="mr-2">mdi-cog</v-icon>System Settings
+        <v-icon class="mr-2">mdi-shield-lock</v-icon>System Access Controls
       </v-card-title>
       <v-card-text>
-        <v-row align="center">
+        <!-- File System Access -->
+        <v-row align="center" class="mb-2">
           <v-col cols="auto">
             <v-switch
               v-model="fsAccessEnabled"
               color="error"
               :loading="fsToggling"
               hide-details
-              @update:model-value="onFsToggle"
+              @update:model-value="(v) => onToggle('filesystem_access_enabled', v, 'fs')"
             >
               <template #label>
                 <div>
                   <span class="font-weight-medium">File System Access</span>
                   <div class="text-caption text-medium-emphasis">
-                    Allow the system to read, write, and delete files on this computer
+                    Read, write, and delete files on this computer
                   </div>
                 </div>
               </template>
             </v-switch>
           </v-col>
           <v-col cols="auto">
-            <v-chip
-              :color="fsAccessEnabled ? 'error' : 'grey'"
-              size="small"
-              variant="flat"
-            >
+            <v-chip :color="fsAccessEnabled ? 'error' : 'grey'" size="small" variant="flat">
               {{ fsAccessEnabled ? 'ENABLED' : 'DISABLED' }}
             </v-chip>
           </v-col>
         </v-row>
-        <v-alert v-if="fsAccessEnabled" type="warning" variant="tonal" density="compact" class="mt-3">
-          <strong>Warning:</strong> File system access is enabled. The system can read, modify, and delete any files
-          accessible to the current user. Use with caution.
+
+        <!-- System Access (Terminal + Processes) -->
+        <v-row align="center" class="mb-2">
+          <v-col cols="auto">
+            <v-switch
+              v-model="sysAccessEnabled"
+              color="error"
+              :loading="sysToggling"
+              hide-details
+              @update:model-value="(v) => onToggle('system_access_enabled', v, 'sys')"
+            >
+              <template #label>
+                <div>
+                  <span class="font-weight-medium">System Access</span>
+                  <div class="text-caption text-medium-emphasis">
+                    Execute terminal commands, manage processes, view system info
+                  </div>
+                </div>
+              </template>
+            </v-switch>
+          </v-col>
+          <v-col cols="auto">
+            <v-chip :color="sysAccessEnabled ? 'error' : 'grey'" size="small" variant="flat">
+              {{ sysAccessEnabled ? 'ENABLED' : 'DISABLED' }}
+            </v-chip>
+          </v-col>
+        </v-row>
+
+        <v-alert v-if="fsAccessEnabled || sysAccessEnabled" type="warning" variant="tonal" density="compact" class="mt-3">
+          <strong>Warning:</strong>
+          <span v-if="fsAccessEnabled && sysAccessEnabled">Full system access is enabled — the system can modify files, execute commands and manage processes.</span>
+          <span v-else-if="fsAccessEnabled">File system access is enabled — the system can read, modify, and delete any files.</span>
+          <span v-else>System access is enabled — the system can execute commands and manage processes.</span>
+          Use with caution.
         </v-alert>
       </v-card-text>
     </v-card>
@@ -85,17 +113,16 @@
       </v-col>
     </v-row>
 
-    <!-- Confirmation dialog for enabling FS access -->
+    <!-- Confirmation dialog for enabling dangerous features -->
     <v-dialog v-model="confirmDialog" max-width="520" persistent>
       <v-card>
         <v-card-title class="text-h6">
           <v-icon color="error" class="mr-2">mdi-shield-alert</v-icon>
-          Enable File System Access?
+          {{ confirmTitle }}
         </v-card-title>
         <v-card-text>
           <v-alert type="error" variant="tonal" class="mb-4">
-            This will grant the system <strong>full access</strong> to read, write, and delete files
-            on this computer. This is a potentially dangerous operation.
+            {{ confirmMessage }}
           </v-alert>
           <p class="mb-3">To confirm, type <strong>ENABLE</strong> below:</p>
           <v-text-field
@@ -104,18 +131,18 @@
             variant="outlined"
             density="compact"
             autofocus
-            @keyup.enter="confirmText === 'ENABLE' && doEnableFs()"
+            @keyup.enter="confirmText === 'ENABLE' && doEnable()"
           />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn @click="cancelFsToggle">Cancel</v-btn>
+          <v-btn @click="cancelToggle">Cancel</v-btn>
           <v-btn
             color="error"
             variant="flat"
             :disabled="confirmText !== 'ENABLE'"
-            :loading="fsToggling"
-            @click="doEnableFs"
+            :loading="fsToggling || sysToggling"
+            @click="doEnable"
           >
             Enable Access
           </v-btn>
@@ -137,64 +164,102 @@ const oldPass = ref('')
 const newPass = ref('')
 const saving = ref(false)
 
-// FS access toggle
+// Toggles
 const fsAccessEnabled = ref(false)
+const sysAccessEnabled = ref(false)
 const fsToggling = ref(false)
+const sysToggling = ref(false)
+
+// Confirmation dialog
 const confirmDialog = ref(false)
 const confirmText = ref('')
+const confirmTitle = ref('')
+const confirmMessage = ref('')
+const pendingKey = ref('')
+const pendingType = ref('')
+
+const toggleLabels = {
+  filesystem_access_enabled: {
+    title: 'Enable File System Access?',
+    message: 'This will grant full access to read, write, and delete files on this computer. This is a potentially dangerous operation.',
+    enabledMsg: 'File system access enabled',
+    disabledMsg: 'File system access disabled',
+  },
+  system_access_enabled: {
+    title: 'Enable System Access?',
+    message: 'This will allow executing arbitrary shell commands, managing processes (including killing them), and accessing full system information. This is a potentially dangerous operation.',
+    enabledMsg: 'System access enabled',
+    disabledMsg: 'System access disabled',
+  },
+}
 
 onMounted(async () => {
   try {
     await store.fetchSystemSettings()
     fsAccessEnabled.value = store.systemSettings.filesystem_access_enabled?.value === 'true'
+    sysAccessEnabled.value = store.systemSettings.system_access_enabled?.value === 'true'
   } catch (e) {
     console.error('Failed to load system settings', e)
   }
 })
 
-const onFsToggle = (newVal) => {
+const onToggle = (key, newVal, type) => {
   if (newVal) {
-    // Turning ON: show confirmation dialog, revert toggle until confirmed
-    fsAccessEnabled.value = false
+    // Revert until confirmed
+    if (type === 'fs') fsAccessEnabled.value = false
+    if (type === 'sys') sysAccessEnabled.value = false
+    const labels = toggleLabels[key]
+    confirmTitle.value = labels.title
+    confirmMessage.value = labels.message
+    pendingKey.value = key
+    pendingType.value = type
     confirmText.value = ''
     confirmDialog.value = true
   } else {
-    // Turning OFF: no confirmation needed
-    doDisableFs()
+    doDisable(key, type)
   }
 }
 
-const doEnableFs = async () => {
-  fsToggling.value = true
+const doEnable = async () => {
+  const key = pendingKey.value
+  const type = pendingType.value
+  const labels = toggleLabels[key]
+  const loading = type === 'fs' ? fsToggling : sysToggling
+  loading.value = true
   try {
-    await store.updateSystemSetting('filesystem_access_enabled', 'true')
-    fsAccessEnabled.value = true
+    await store.updateSystemSetting(key, 'true')
+    if (type === 'fs') fsAccessEnabled.value = true
+    if (type === 'sys') sysAccessEnabled.value = true
     confirmDialog.value = false
-    showSnackbar('File system access enabled', 'warning')
+    showSnackbar(labels.enabledMsg, 'warning')
   } catch (e) {
-    showSnackbar(e.response?.data?.detail || 'Error enabling FS access', 'error')
+    showSnackbar(e.response?.data?.detail || 'Error', 'error')
   } finally {
-    fsToggling.value = false
+    loading.value = false
   }
 }
 
-const doDisableFs = async () => {
-  fsToggling.value = true
+const doDisable = async (key, type) => {
+  const labels = toggleLabels[key]
+  const loading = type === 'fs' ? fsToggling : sysToggling
+  loading.value = true
   try {
-    await store.updateSystemSetting('filesystem_access_enabled', 'false')
-    fsAccessEnabled.value = false
-    showSnackbar('File system access disabled')
+    await store.updateSystemSetting(key, 'false')
+    if (type === 'fs') fsAccessEnabled.value = false
+    if (type === 'sys') sysAccessEnabled.value = false
+    showSnackbar(labels.disabledMsg)
   } catch (e) {
-    showSnackbar(e.response?.data?.detail || 'Error disabling FS access', 'error')
-    fsAccessEnabled.value = true
+    showSnackbar(e.response?.data?.detail || 'Error', 'error')
+    // Revert
+    if (type === 'fs') fsAccessEnabled.value = true
+    if (type === 'sys') sysAccessEnabled.value = true
   } finally {
-    fsToggling.value = false
+    loading.value = false
   }
 }
 
-const cancelFsToggle = () => {
+const cancelToggle = () => {
   confirmDialog.value = false
-  fsAccessEnabled.value = false
   confirmText.value = ''
 }
 

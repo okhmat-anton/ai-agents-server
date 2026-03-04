@@ -30,6 +30,8 @@ const routes = [
       { path: 'system/logs', name: 'SystemLogs', component: () => import('../views/SystemLogsView.vue') },
       { path: 'ollama', name: 'Ollama', component: () => import('../views/OllamaView.vue') },
       { path: 'files', name: 'FileBrowser', component: () => import('../views/FileBrowserView.vue') },
+      { path: 'terminal', name: 'Terminal', component: () => import('../views/TerminalView.vue') },
+      { path: 'system', name: 'System', component: () => import('../views/SystemView.vue') },
     ],
   },
 ]

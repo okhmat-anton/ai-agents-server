@@ -211,6 +211,7 @@ async def delete_api_key(
 # Default settings seeded on first access
 _DEFAULT_SETTINGS = {
     "filesystem_access_enabled": {"value": "false", "description": "Allow full filesystem access (read/write/delete files on host)"},
+    "system_access_enabled": {"value": "false", "description": "Allow terminal commands, process management and full system control"},
 }
 
 
