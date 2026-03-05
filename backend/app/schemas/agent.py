@@ -82,7 +82,7 @@ class AgentResponse(BaseModel):
     stop: list[str] | None
     num_thread: int
     num_gpu: int
-    principles: list[str] = []        # from settings.json (filesystem)
+    beliefs: dict = {}                 # from beliefs.json (filesystem)
     created_at: datetime
     updated_at: datetime
     last_run_at: datetime | None

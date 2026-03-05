@@ -99,17 +99,8 @@ def _write_agent_json(agent_dir: Path, agent: Agent):
 
 
 def _write_settings_json(agent_dir: Path, agent: Agent):
-    """Write settings.json — generation params + principles."""
+    """Write settings.json — generation params."""
     settings_path = agent_dir / "settings.json"
-    # Preserve existing principles if file already exists
-    existing_principles = []
-    if settings_path.exists():
-        try:
-            existing = json.loads(settings_path.read_text(encoding="utf-8"))
-            existing_principles = existing.get("principles", [])
-        except (json.JSONDecodeError, OSError):
-            pass
-
     data = {
         "temperature": agent.temperature,
         "top_p": agent.top_p,
@@ -121,7 +112,6 @@ def _write_settings_json(agent_dir: Path, agent: Agent):
         "stop": agent.stop or [],
         "num_thread": agent.num_thread,
         "num_gpu": agent.num_gpu,
-        "principles": existing_principles,
     }
     settings_path.write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -163,12 +153,14 @@ async def _sync_settings_json_to_db(agent: Agent, agent_dir: Path, db: AsyncSess
 
 def init_agent_directory(agent: Agent):
     """Create agent directory structure from a newly-created Agent."""
+    from app.api.agent_beliefs import init_beliefs_file
     _ensure_agents_dir()
     agent_dir = _get_agent_dir(agent.name)
     agent_dir.mkdir(parents=True, exist_ok=True)
     (agent_dir / "data").mkdir(exist_ok=True)
     _write_agent_json(agent_dir, agent)
     _write_settings_json(agent_dir, agent)
+    init_beliefs_file(agent.name)
 
 
 def delete_agent_directory(agent_name: str):
@@ -236,20 +228,13 @@ def write_agent_config(agent_name: str, data: dict):
 
 
 def write_agent_settings(agent_name: str, data: dict):
-    """Write settings.json from dict, preserving principles if not provided."""
+    """Write settings.json from dict."""
     _ensure_agents_dir()
     agent_dir = _get_agent_dir(agent_name)
     agent_dir.mkdir(parents=True, exist_ok=True)
     settings_path = agent_dir / "settings.json"
-    # Preserve existing principles if new data doesn't include them
-    if "principles" not in data and settings_path.exists():
-        try:
-            existing = json.loads(settings_path.read_text(encoding="utf-8"))
-            data["principles"] = existing.get("principles", [])
-        except (json.JSONDecodeError, OSError):
-            data["principles"] = []
-    elif "principles" not in data:
-        data["principles"] = []
+    # Remove legacy principles field if present
+    data.pop("principles", None)
     settings_path.write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -407,7 +392,7 @@ async def delete_agent_file(
     target = _resolve_path(agent_dir, path)
 
     # Protect config files
-    if path in ("agent.json", "settings.json"):
+    if path in ("agent.json", "settings.json", "beliefs.json"):
         raise HTTPException(status_code=403, detail=f"Cannot delete {path}")
     if path == "data":
         raise HTTPException(status_code=403, detail="Cannot delete data folder")
@@ -439,7 +424,7 @@ async def rename_agent_file(
     if not old_path or not new_path:
         raise HTTPException(status_code=400, detail="old_path and new_path required")
 
-    if old_path in ("agent.json", "settings.json", "data"):
+    if old_path in ("agent.json", "settings.json", "beliefs.json", "data"):
         raise HTTPException(status_code=403, detail=f"Cannot rename {old_path}")
 
     old = _resolve_path(agent_dir, old_path)

@@ -26,6 +26,7 @@
     <v-card>
       <v-tabs v-model="tab">
         <v-tab value="info">Info</v-tab>
+        <v-tab value="beliefs">Beliefs</v-tab>
         <v-tab value="files">Files</v-tab>
         <v-tab value="tasks">Tasks</v-tab>
         <v-tab value="logs">Logs</v-tab>
@@ -65,19 +66,70 @@
           </v-list>
 
           <!-- Principles -->
-          <div v-if="agent.principles && agent.principles.length" class="mt-4">
-            <div class="text-subtitle-2 mb-1">Principles</div>
-            <v-list density="compact">
-              <v-list-item v-for="(p, i) in agent.principles" :key="i" class="py-0">
-                <span class="text-grey mr-2">{{ i + 1 }}.</span> {{ p }}
-              </v-list-item>
-            </v-list>
+          <div v-if="agent.beliefs && (agent.beliefs.core?.length || agent.beliefs.additional?.length)" class="mt-4">
+            <div class="text-subtitle-2 mb-1">Beliefs ({{ (agent.beliefs.core?.length || 0) + (agent.beliefs.additional?.length || 0) }})</div>
+            <div class="d-flex flex-wrap ga-1">
+              <v-chip v-for="b in (agent.beliefs.core || [])" :key="b.id" size="small" color="amber" variant="tonal">
+                <v-icon start size="12">mdi-shield-lock</v-icon>{{ b.text }}
+              </v-chip>
+              <v-chip v-for="b in (agent.beliefs.additional || [])" :key="b.id" size="small" color="blue-grey" variant="tonal">
+                {{ b.text }}
+              </v-chip>
+            </div>
           </div>
 
           <div v-if="agent.system_prompt" class="mt-4">
             <div class="text-subtitle-2 mb-1">System Prompt</div>
             <v-sheet rounded class="pa-3 bg-grey-darken-4" style="white-space: pre-wrap; font-family: monospace; font-size: 13px;">{{ agent.system_prompt }}</v-sheet>
           </div>
+        </div>
+
+        <!-- Beliefs Tab -->
+        <div v-if="tab === 'beliefs'">
+          <!-- Core Beliefs -->
+          <div class="d-flex align-center mb-3">
+            <div class="text-subtitle-1 font-weight-bold">
+              <v-icon color="amber" size="20" class="mr-1">mdi-shield-lock</v-icon>
+              Core Beliefs
+            </div>
+            <v-chip size="x-small" class="ml-2" variant="tonal">weight: 1.0 — immutable by agent</v-chip>
+            <v-spacer />
+            <v-btn color="amber" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openBeliefDialog('core')">Add Core</v-btn>
+          </div>
+          <div v-if="beliefs.core.length" class="mb-6">
+            <v-card v-for="b in beliefs.core" :key="b.id" variant="outlined" class="mb-2 pa-3">
+              <div class="d-flex align-center">
+                <v-chip :color="categoryColor(b.category)" size="x-small" variant="flat" class="mr-2">{{ b.category }}</v-chip>
+                <span class="text-body-1 flex-grow-1">{{ b.text }}</span>
+                <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editBelief(b, 'core')" class="mr-1" />
+                <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="confirmDeleteBelief(b, 'core')" />
+              </div>
+            </v-card>
+          </div>
+          <div v-else class="text-center text-grey pa-4 mb-6">No core beliefs defined</div>
+
+          <!-- Additional Beliefs -->
+          <div class="d-flex align-center mb-3">
+            <div class="text-subtitle-1 font-weight-bold">
+              <v-icon color="blue-grey" size="20" class="mr-1">mdi-lightbulb-outline</v-icon>
+              Additional Beliefs
+            </div>
+            <v-chip size="x-small" class="ml-2" variant="tonal">weight: 0.5 — editable by agent</v-chip>
+            <v-spacer />
+            <v-btn color="blue-grey" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openBeliefDialog('additional')">Add</v-btn>
+          </div>
+          <div v-if="beliefs.additional.length">
+            <v-card v-for="b in beliefs.additional" :key="b.id" variant="outlined" class="mb-2 pa-3">
+              <div class="d-flex align-center">
+                <v-chip :color="categoryColor(b.category)" size="x-small" variant="flat" class="mr-2">{{ b.category }}</v-chip>
+                <span class="text-body-1 flex-grow-1">{{ b.text }}</span>
+                <v-chip size="x-small" variant="tonal" class="mr-2">{{ b.created_by }}</v-chip>
+                <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editBelief(b, 'additional')" class="mr-1" />
+                <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="confirmDeleteBelief(b, 'additional')" />
+              </div>
+            </v-card>
+          </div>
+          <div v-else class="text-center text-grey pa-4">No additional beliefs</div>
         </div>
 
         <!-- Tasks Tab -->
@@ -142,7 +194,7 @@
                   <v-icon size="16" :color="node.is_dir ? 'amber' : 'grey'" class="mr-1">{{ fileIcon(node) }}</v-icon>
                   <span class="text-body-2 flex-grow-1" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ node.name }}</span>
                   <v-icon
-                    v-if="!['agent.json', 'settings.json'].includes(node.path) && node.path !== 'data'"
+                    v-if="!['agent.json', 'settings.json', 'beliefs.json'].includes(node.path) && node.path !== 'data'"
                     size="14" class="file-delete-btn" color="grey"
                     @click.stop="confirmDeleteFile(node.path)"
                   >mdi-close</v-icon>
@@ -231,6 +283,35 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Belief Add/Edit Dialog -->
+    <v-dialog v-model="beliefDialog" max-width="550">
+      <v-card>
+        <v-card-title>{{ beliefEditId ? 'Edit' : 'Add' }} {{ beliefDialogType === 'core' ? 'Core' : 'Additional' }} Belief</v-card-title>
+        <v-card-text>
+          <v-textarea v-model="beliefText" label="Belief text" rows="3" autofocus density="compact" class="mb-2" />
+          <v-select v-model="beliefCategory" :items="beliefCategories" label="Category" density="compact" />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="beliefDialog = false">Cancel</v-btn>
+          <v-btn color="primary" @click="saveBelief" :loading="beliefSaving">{{ beliefEditId ? 'Save' : 'Add' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Delete Belief Dialog -->
+    <v-dialog v-model="deleteBeliefDialog" max-width="400">
+      <v-card>
+        <v-card-title>Delete Belief</v-card-title>
+        <v-card-text>"{{ deleteBeliefItem?.text }}"</v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="deleteBeliefDialog = false">Cancel</v-btn>
+          <v-btn color="error" @click="doDeleteBelief">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -265,6 +346,19 @@ const newFilePath = ref('')
 const deleteFileDialog = ref(false)
 const deleteFilePath = ref('')
 const editorArea = ref(null)
+
+// Beliefs tab state
+const beliefs = ref({ core: [], additional: [] })
+const beliefDialog = ref(false)
+const beliefDialogType = ref('core')
+const beliefText = ref('')
+const beliefCategory = ref('other')
+const beliefEditId = ref(null)
+const beliefSaving = ref(false)
+const deleteBeliefDialog = ref(false)
+const deleteBeliefItem = ref(null)
+const deleteBeliefType = ref('core')
+const beliefCategories = ['moral', 'behavioral', 'communication', 'restriction', 'preference', 'goal', 'other']
 
 const id = computed(() => route.params.id)
 
@@ -389,6 +483,10 @@ const saveFile = async () => {
     if (['agent.json', 'settings.json'].includes(currentFilePath.value)) {
       await loadData()
     }
+    if (currentFilePath.value === 'beliefs.json') {
+      await loadBeliefs()
+      await loadData()
+    }
   } catch (e) { alert(e.response?.data?.detail || 'Failed to save') }
   finally { fileSaving.value = false }
 }
@@ -409,6 +507,68 @@ const createFile = async () => {
 
 const confirmDeleteFile = (path) => { deleteFilePath.value = path; deleteFileDialog.value = true }
 
+// ===== Beliefs =====
+const categoryColor = (cat) => ({
+  moral: 'deep-purple', behavioral: 'teal', communication: 'blue',
+  restriction: 'red', preference: 'cyan', goal: 'green', other: 'grey',
+}[cat] || 'grey')
+
+const loadBeliefs = async () => {
+  try {
+    const { data } = await api.get(`/agents/${id.value}/beliefs`)
+    beliefs.value = { core: data.core || [], additional: data.additional || [] }
+  } catch { beliefs.value = { core: [], additional: [] } }
+}
+
+const openBeliefDialog = (type) => {
+  beliefDialogType.value = type
+  beliefText.value = ''
+  beliefCategory.value = 'other'
+  beliefEditId.value = null
+  beliefDialog.value = true
+}
+
+const editBelief = (b, type) => {
+  beliefDialogType.value = type
+  beliefText.value = b.text
+  beliefCategory.value = b.category
+  beliefEditId.value = b.id
+  beliefDialog.value = true
+}
+
+const saveBelief = async () => {
+  if (!beliefText.value.trim()) return
+  beliefSaving.value = true
+  try {
+    const type = beliefDialogType.value
+    const payload = { text: beliefText.value.trim(), category: beliefCategory.value }
+    if (beliefEditId.value) {
+      await api.put(`/agents/${id.value}/beliefs/${type}/${beliefEditId.value}`, payload)
+    } else {
+      await api.post(`/agents/${id.value}/beliefs/${type}`, payload)
+    }
+    beliefDialog.value = false
+    await loadBeliefs()
+    await loadData()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to save belief') }
+  finally { beliefSaving.value = false }
+}
+
+const confirmDeleteBelief = (b, type) => {
+  deleteBeliefItem.value = b
+  deleteBeliefType.value = type
+  deleteBeliefDialog.value = true
+}
+
+const doDeleteBelief = async () => {
+  try {
+    await api.delete(`/agents/${id.value}/beliefs/${deleteBeliefType.value}/${deleteBeliefItem.value.id}`)
+    deleteBeliefDialog.value = false
+    await loadBeliefs()
+    await loadData()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to delete belief') }
+}
+
 const doDeleteFile = async () => {
   try {
     await api.delete(`/agents/${id.value}/files/delete`, { params: { path: deleteFilePath.value } })
@@ -426,6 +586,7 @@ watch(tab, (val) => {
   if (val === 'skills') loadSkills()
   if (val === 'memory') loadMemories()
   if (val === 'files') loadFiles()
+  if (val === 'beliefs') loadBeliefs()
 })
 
 watch(logLevel, () => { if (tab.value === 'logs') loadLogs() })

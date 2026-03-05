@@ -19,6 +19,7 @@ from app.api.agent_files import (
     sync_agent_to_filesystem, read_agent_config, read_agent_settings,
     write_agent_config, write_agent_settings,
 )
+from app.api.agent_beliefs import read_beliefs
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -51,9 +52,10 @@ def _build_agent_response(agent: Agent) -> dict:
                       "repeat_penalty", "num_predict", "stop", "num_thread", "num_gpu"):
             if field in file_settings:
                 data[field] = file_settings[field]
-        data["principles"] = file_settings.get("principles", [])
-    else:
-        data["principles"] = []
+
+    # Beliefs from beliefs.json
+    beliefs = read_beliefs(agent.name)
+    data["beliefs"] = beliefs
 
     agent_models_out = []
     for am in (agent.agent_models or []):

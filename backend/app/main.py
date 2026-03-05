@@ -25,6 +25,7 @@ from app.api.processes import router as processes_router
 from app.api.chat import router as chat_router
 from app.api.skill_files import router as skill_files_router
 from app.api.agent_files import router as agent_files_router
+from app.api.agent_beliefs import router as agent_beliefs_router
 
 settings = get_settings()
 
@@ -95,6 +96,7 @@ app.include_router(auth_router)
 app.include_router(settings_router)
 app.include_router(agents_router)
 app.include_router(agent_files_router)
+app.include_router(agent_beliefs_router)
 app.include_router(tasks_router)
 app.include_router(agent_task_router)
 app.include_router(skills_router)
