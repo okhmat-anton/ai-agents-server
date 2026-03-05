@@ -22,6 +22,7 @@ from app.api.agent_files import (
 from app.api.agent_beliefs import read_beliefs
 
 from app.models.thinking_protocol import ThinkingProtocol
+from app.models.agent_protocol import AgentProtocol
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -34,6 +35,7 @@ async def _load_agent(db: AsyncSession, agent_id) -> Agent | None:
         .options(
             selectinload(Agent.agent_models).selectinload(AgentModel.model_config_rel),
             selectinload(Agent.thinking_protocol),
+            selectinload(Agent.agent_protocols).selectinload(AgentProtocol.protocol),
         )
     )
     return result.scalar_one_or_none()
@@ -60,18 +62,35 @@ def _build_agent_response(agent: Agent) -> dict:
     beliefs = read_beliefs(agent.name)
     data["beliefs"] = beliefs
 
-    # Thinking protocol
+    # Thinking protocol (main)
     if agent.thinking_protocol:
         tp = agent.thinking_protocol
         data["thinking_protocol"] = {
             "id": str(tp.id),
             "name": tp.name,
             "description": tp.description or "",
+            "type": tp.type or "standard",
             "steps": tp.steps or [],
         }
     else:
         data["thinking_protocol"] = None
     data["thinking_protocol_id"] = str(agent.thinking_protocol_id) if agent.thinking_protocol_id else None
+
+    # All assigned protocols (multi-protocol)
+    protocols_out = []
+    for ap in (agent.agent_protocols or []):
+        p = ap.protocol
+        if p:
+            protocols_out.append({
+                "id": str(p.id),
+                "name": p.name,
+                "description": p.description or "",
+                "type": p.type or "standard",
+                "steps": p.steps or [],
+                "is_main": ap.is_main,
+                "priority": ap.priority,
+            })
+    data["protocols"] = protocols_out
 
     agent_models_out = []
     for am in (agent.agent_models or []):
@@ -101,6 +120,7 @@ async def list_agents(
     q = select(Agent).options(
         selectinload(Agent.agent_models).selectinload(AgentModel.model_config_rel),
         selectinload(Agent.thinking_protocol),
+        selectinload(Agent.agent_protocols).selectinload(AgentProtocol.protocol),
     )
     if status:
         q = q.where(Agent.status == status)
@@ -116,7 +136,7 @@ async def create_agent(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    agent_data = body.model_dump(exclude={"models", "thinking_protocol_id"})
+    agent_data = body.model_dump(exclude={"models", "thinking_protocol_id", "protocol_ids"})
     # Handle thinking_protocol_id separately
     if body.thinking_protocol_id:
         agent_data["thinking_protocol_id"] = body.thinking_protocol_id
@@ -134,6 +154,27 @@ async def create_agent(
             priority=entry.priority,
         )
         db.add(am)
+
+    # Create agent_protocol entries (multi-protocol)
+    if body.protocol_ids:
+        for idx, pid in enumerate(body.protocol_ids):
+            ap = AgentProtocol(
+                agent_id=agent.id,
+                protocol_id=UUID(pid),
+                is_main=(pid == body.thinking_protocol_id),
+                priority=idx,
+            )
+            db.add(ap)
+    elif body.thinking_protocol_id:
+        # If only main protocol specified, add it to the join table too
+        ap = AgentProtocol(
+            agent_id=agent.id,
+            protocol_id=UUID(body.thinking_protocol_id),
+            is_main=True,
+            priority=0,
+        )
+        db.add(ap)
+
     await db.flush()
     await db.refresh(agent)
 
@@ -187,7 +228,7 @@ async def update_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    update_data = body.model_dump(exclude_unset=True, exclude={"models"})
+    update_data = body.model_dump(exclude_unset=True, exclude={"models", "protocol_ids"})
     old_name = agent.name
 
     # Update DB identity fields (name, status only)
@@ -209,6 +250,28 @@ async def update_agent(
                 priority=entry.priority,
             )
             db.add(am)
+
+    # If protocol_ids list is provided, replace all agent_protocol entries
+    if body.protocol_ids is not None:
+        await db.execute(delete(AgentProtocol).where(AgentProtocol.agent_id == agent_id))
+        main_id = body.thinking_protocol_id if "thinking_protocol_id" in body.model_dump(exclude_unset=True) else str(agent.thinking_protocol_id) if agent.thinking_protocol_id else None
+        for idx, pid in enumerate(body.protocol_ids):
+            ap = AgentProtocol(
+                agent_id=agent.id,
+                protocol_id=UUID(pid),
+                is_main=(pid == main_id),
+                priority=idx,
+            )
+            db.add(ap)
+    elif "thinking_protocol_id" in update_data:
+        # If only main protocol changed but protocol_ids not provided,
+        # update the is_main flag on existing entries
+        existing_aps = await db.execute(
+            select(AgentProtocol).where(AgentProtocol.agent_id == agent_id)
+        )
+        main_val = update_data["thinking_protocol_id"]
+        for ap in existing_aps.scalars().all():
+            ap.is_main = (str(ap.protocol_id) == main_val) if main_val else False
 
     await db.flush()
     await db.refresh(agent)
@@ -350,7 +413,7 @@ async def duplicate_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     new_name = f"{agent.name} (copy)"
-    new_agent = Agent(name=new_name)
+    new_agent = Agent(name=new_name, thinking_protocol_id=agent.thinking_protocol_id)
     db.add(new_agent)
     await db.flush()
 
@@ -364,6 +427,16 @@ async def duplicate_agent(
             priority=am.priority,
         )
         db.add(new_am)
+
+    # Duplicate agent_protocols
+    for ap in (agent.agent_protocols or []):
+        new_ap = AgentProtocol(
+            agent_id=new_agent.id,
+            protocol_id=ap.protocol_id,
+            is_main=ap.is_main,
+            priority=ap.priority,
+        )
+        db.add(new_ap)
     await db.flush()
 
     # Duplicate filesystem directory (copies all files including settings)

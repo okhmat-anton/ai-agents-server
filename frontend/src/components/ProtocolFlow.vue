@@ -89,6 +89,31 @@
         </div>
       </div>
 
+      <!-- Delegate step -->
+      <div v-else-if="step.type === 'delegate'" class="flow-node flow-delegate-wrapper">
+        <div class="flow-delegate-container">
+          <div class="flow-delegate-header d-flex align-center ga-2">
+            <v-icon size="16" color="amber">mdi-call-split</v-icon>
+            <span class="font-weight-bold text-amber">{{ step.name || 'Delegate' }}</span>
+            <v-chip size="x-small" color="amber" variant="tonal">delegate</v-chip>
+          </div>
+          <div v-if="step.instruction" class="flow-instruction px-3 pb-1">{{ step.instruction }}</div>
+          <div class="flow-delegate-children px-3 pb-2">
+            <div class="text-caption text-grey mb-1">Child protocols:</div>
+            <div class="d-flex flex-wrap ga-1">
+              <v-chip
+                v-for="pid in (step.protocol_ids || [])" :key="pid"
+                size="small" color="deep-purple" variant="tonal"
+              >
+                <v-icon start size="12">mdi-head-cog</v-icon>
+                {{ resolveProtocolName(pid) }}
+              </v-chip>
+              <span v-if="!step.protocol_ids?.length" class="text-caption text-grey-darken-1">No protocols assigned</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div v-if="idx < steps.length - 1" class="flow-connector" />
     </template>
 
@@ -104,9 +129,15 @@
 </template>
 
 <script setup>
-defineProps({
+const props = defineProps({
   steps: { type: Array, default: () => [] },
+  protocols: { type: Array, default: () => [] },  // all available protocols for resolving names
 })
+
+const resolveProtocolName = (pid) => {
+  const found = props.protocols.find(p => p.id === pid)
+  return found ? found.name : pid.slice(0, 8) + '…'
+}
 
 const catColor = (cat) => ({
   analysis: 'deep-purple', planning: 'indigo', execution: 'blue',
@@ -254,4 +285,16 @@ const catColor = (cat) => ({
   font-size: 11px;
   color: rgba(255,152,0,0.7);
 }
+
+/* Delegate step */
+.flow-delegate-wrapper { width: 100%; max-width: 540px; }
+.flow-delegate-container {
+  width: 100%;
+  border: 2px dashed rgba(255,193,7,0.3);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255,193,7,0.03);
+}
+.flow-delegate-header { font-size: 13px; padding: 0 4px; }
+.flow-delegate-children { margin-top: 6px; }
 </style>

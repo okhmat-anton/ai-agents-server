@@ -20,32 +20,71 @@
             </v-col>
           </v-row>
 
-          <!-- ─── Thinking Protocol ─────────────────── -->
-          <div class="text-h6 mt-6 mb-3">Thinking Protocol</div>
+          <!-- ─── Thinking Protocols ─────────────────── -->
+          <div class="text-h6 mt-6 mb-3">Thinking Protocols</div>
           <v-row>
             <v-col cols="12" md="6">
               <v-select
-                v-model="form.thinking_protocol_id"
+                v-model="form.protocol_ids"
                 :items="protocolItems"
                 item-title="name"
                 item-value="id"
-                label="Select Protocol"
-                clearable
+                label="Available Protocols"
+                multiple
+                chips
+                closable-chips
                 density="compact"
-                hint="Defines how the agent reasons step by step"
+                hint="All protocols this agent can use"
                 persistent-hint
               >
                 <template #item="{ item, props }">
                   <v-list-item v-bind="props">
-                    <v-list-item-subtitle>{{ item.raw.description || 'No description' }}</v-list-item-subtitle>
+                    <template #prepend>
+                      <v-icon size="18" :color="item.raw.type === 'orchestrator' ? 'amber' : 'blue-grey'">
+                        {{ item.raw.type === 'orchestrator' ? 'mdi-crown' : 'mdi-head-cog' }}
+                      </v-icon>
+                    </template>
+                    <v-list-item-subtitle>
+                      <v-chip size="x-small" :color="item.raw.type === 'orchestrator' ? 'amber' : 'blue-grey'" variant="tonal" class="mr-1">{{ item.raw.type || 'standard' }}</v-chip>
+                      {{ item.raw.description || 'No description' }}
+                    </v-list-item-subtitle>
                   </v-list-item>
                 </template>
               </v-select>
             </v-col>
             <v-col cols="12" md="6">
-              <v-sheet v-if="selectedProtocolPreview" class="pa-3 rounded bg-grey-darken-4">
-                <div class="text-caption text-grey mb-1">{{ selectedProtocolPreview.name }}</div>
-                <div class="text-caption">{{ selectedProtocolPreview.steps?.length || 0 }} steps · {{ selectedProtocolPreview.steps?.filter(s => s.type === 'loop').length || 0 }} loops</div>
+              <v-select
+                v-model="form.thinking_protocol_id"
+                :items="mainProtocolItems"
+                item-title="name"
+                item-value="id"
+                label="Main Protocol (Orchestrator)"
+                clearable
+                density="compact"
+                hint="The main protocol that orchestrates others"
+                persistent-hint
+              >
+                <template #item="{ item, props }">
+                  <v-list-item v-bind="props">
+                    <template #prepend>
+                      <v-icon size="18" :color="item.raw.type === 'orchestrator' ? 'amber' : 'blue-grey'">
+                        {{ item.raw.type === 'orchestrator' ? 'mdi-crown' : 'mdi-head-cog' }}
+                      </v-icon>
+                    </template>
+                    <v-list-item-subtitle>{{ item.raw.description || 'No description' }}</v-list-item-subtitle>
+                  </v-list-item>
+                </template>
+              </v-select>
+            </v-col>
+          </v-row>
+          <v-row v-if="selectedProtocolPreview">
+            <v-col cols="12">
+              <v-sheet class="pa-3 rounded bg-grey-darken-4">
+                <div class="text-caption text-grey mb-1">
+                  <v-icon size="14" class="mr-1">mdi-eye</v-icon>
+                  Main: {{ selectedProtocolPreview.name }}
+                </div>
+                <div class="text-caption">{{ selectedProtocolPreview.steps?.length || 0 }} steps · {{ selectedProtocolPreview.steps?.filter(s => s.type === 'loop').length || 0 }} loops · {{ selectedProtocolPreview.steps?.filter(s => s.type === 'delegate').length || 0 }} delegates</div>
               </v-sheet>
             </v-col>
           </v-row>
@@ -189,6 +228,9 @@ const protocolsList = ref([])
 const isEdit = computed(() => !!route.params.id)
 const models = computed(() => settingsStore.models)
 const protocolItems = computed(() => protocolsList.value)
+const mainProtocolItems = computed(() =>
+  protocolsList.value.filter(p => form.value.protocol_ids.includes(p.id))
+)
 const selectedProtocolPreview = computed(() =>
   protocolsList.value.find(p => p.id === form.value.thinking_protocol_id) || null
 )
@@ -207,6 +249,7 @@ const form = ref({
   num_gpu: 1,
   models: [],  // array of { model_config_id, task_type, tags, priority }
   thinking_protocol_id: null,
+  protocol_ids: [],           // all selected protocol IDs
 })
 
 const addModel = () => {
@@ -242,6 +285,13 @@ onMounted(async () => {
     })
     // Load thinking_protocol_id
     form.value.thinking_protocol_id = agent.thinking_protocol_id || null
+    // Load protocol_ids from multi-protocol
+    if (agent.protocols && agent.protocols.length) {
+      form.value.protocol_ids = agent.protocols.map(p => p.id)
+    } else if (agent.thinking_protocol_id) {
+      // Backwards compat: single protocol → protocol_ids
+      form.value.protocol_ids = [agent.thinking_protocol_id]
+    }
     // Load agent_models
     if (agent.agent_models && agent.agent_models.length) {
       form.value.models = agent.agent_models.map((am) => ({

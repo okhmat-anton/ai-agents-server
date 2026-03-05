@@ -40,6 +40,7 @@ class Agent(Base):
     # Relationships
     model_config_rel = relationship("ModelConfig", lazy="selectin")
     thinking_protocol = relationship("ThinkingProtocol", lazy="selectin")
+    agent_protocols = relationship("AgentProtocol", back_populates="agent", cascade="all, delete-orphan", lazy="selectin", order_by="AgentProtocol.priority")
     agent_models = relationship("AgentModel", back_populates="agent", cascade="all, delete-orphan", lazy="selectin", order_by="AgentModel.priority")
     tasks = relationship("Task", back_populates="agent", cascade="all, delete-orphan")
     logs = relationship("AgentLog", back_populates="agent", cascade="all, delete-orphan")

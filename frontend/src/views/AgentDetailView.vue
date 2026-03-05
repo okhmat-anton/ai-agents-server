@@ -63,7 +63,25 @@
             <v-list-item><strong>Repeat Penalty:</strong>&nbsp;{{ agent.repeat_penalty }}&nbsp;&nbsp;<strong>Num Predict:</strong>&nbsp;{{ agent.num_predict }}</v-list-item>
             <v-list-item><strong>Threads:</strong>&nbsp;{{ agent.num_thread }}&nbsp;&nbsp;<strong>GPU Layers:</strong>&nbsp;{{ agent.num_gpu }}</v-list-item>
             <v-list-item v-if="agent.description"><strong>Description:</strong>&nbsp;{{ agent.description }}</v-list-item>
-            <v-list-item v-if="agent.thinking_protocol">
+            <!-- Protocols (multi-protocol) -->
+            <v-list-item v-if="agent.protocols && agent.protocols.length">
+              <strong>Protocols:</strong>&nbsp;
+              <div class="d-flex flex-wrap ga-1 ml-1" style="display:inline-flex">
+                <v-chip
+                  v-for="p in agent.protocols" :key="p.id"
+                  size="small"
+                  :color="p.is_main ? 'amber' : 'deep-purple'"
+                  variant="tonal"
+                  @click="toggleProtocolPreview(p)"
+                  style="cursor:pointer"
+                >
+                  <v-icon start size="14">{{ p.is_main ? 'mdi-crown' : 'mdi-head-cog' }}</v-icon>
+                  {{ p.name }}
+                  <v-chip v-if="p.type === 'orchestrator'" size="x-small" color="amber" variant="flat" class="ml-1" label>orch</v-chip>
+                </v-chip>
+              </div>
+            </v-list-item>
+            <v-list-item v-else-if="agent.thinking_protocol">
               <strong>Thinking Protocol:</strong>&nbsp;
               <v-chip size="small" color="deep-purple" variant="tonal" class="ml-1" @click="showProtocolPreview = !showProtocolPreview" style="cursor:pointer">
                 <v-icon start size="14">mdi-head-cog</v-icon>
@@ -74,7 +92,21 @@
           </v-list>
 
           <!-- Protocol preview -->
-          <div v-if="showProtocolPreview && agent.thinking_protocol" class="mt-3 mb-3">
+          <div v-if="previewProtocol" class="mt-3 mb-3">
+            <v-sheet class="pa-4 rounded" color="grey-darken-4">
+              <div class="d-flex align-center mb-2">
+                <v-icon size="18" :color="previewProtocol.is_main ? 'amber' : 'deep-purple'" class="mr-2">
+                  {{ previewProtocol.is_main ? 'mdi-crown' : 'mdi-head-cog' }}
+                </v-icon>
+                <span class="text-subtitle-2">{{ previewProtocol.name }}</span>
+                <v-chip v-if="previewProtocol.type" size="x-small" :color="previewProtocol.type === 'orchestrator' ? 'amber' : 'blue-grey'" variant="tonal" class="ml-2">{{ previewProtocol.type }}</v-chip>
+                <v-spacer />
+                <v-btn icon="mdi-close" size="x-small" variant="text" @click="previewProtocol = null" />
+              </div>
+              <ProtocolFlow :steps="previewProtocol.steps || []" :protocols="agent.protocols" />
+            </v-sheet>
+          </div>
+          <div v-else-if="showProtocolPreview && agent.thinking_protocol" class="mt-3 mb-3">
             <v-sheet class="pa-4 rounded" color="grey-darken-4">
               <ProtocolFlow :steps="agent.thinking_protocol.steps || []" />
             </v-sheet>
@@ -345,6 +377,7 @@ const agent = ref(null)
 const stats = ref({})
 const tasks = ref([])
 const showProtocolPreview = ref(false)
+const previewProtocol = ref(null)
 const logs = ref([])
 const agentSkills = ref([])
 const memories = ref([])
@@ -382,6 +415,10 @@ const id = computed(() => route.params.id)
 const statusColor = (s) => ({ idle: 'grey', running: 'success', paused: 'warning', error: 'error', stopped: 'grey' }[s] || 'grey')
 const taskStatusColor = (s) => ({ pending: 'info', running: 'success', completed: 'success', failed: 'error', cancelled: 'grey' }[s] || 'grey')
 const logColor = (l) => ({ debug: 'grey', info: 'info', warning: 'warning', error: 'error', critical: 'error' }[l] || 'grey')
+
+const toggleProtocolPreview = (p) => {
+  previewProtocol.value = previewProtocol.value?.id === p.id ? null : p
+}
 
 const statItems = computed(() => [
   { label: 'Tasks', value: stats.value.total_tasks || 0 },

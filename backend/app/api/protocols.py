@@ -1,10 +1,15 @@
 """
 Thinking Protocols API — CRUD for step-by-step agent reasoning workflows.
 
+Protocol types:
+  standard     — a regular reasoning protocol (analysis, research, etc.)
+  orchestrator — a meta-protocol that selects and delegates to child protocols
+
 Step types:
   action   — single instruction to execute
   loop     — repeat nested steps up to max_iterations
   decision — evaluate condition and optionally exit loop
+  delegate — select and run a child protocol (orchestrator only)
 """
 
 import uuid
@@ -24,13 +29,14 @@ router = APIRouter(prefix="/api/protocols", tags=["thinking-protocols"], depende
 
 # ---------- Schemas ----------
 
-STEP_TYPES = ("action", "loop", "decision")
+STEP_TYPES = ("action", "loop", "decision", "delegate")
 CATEGORIES = ("analysis", "planning", "execution", "verification", "output", "other")
+PROTOCOL_TYPES = ("standard", "orchestrator")
 
 
 class StepBase(BaseModel):
     id: str | None = None
-    type: Literal["action", "loop", "decision"] = "action"
+    type: Literal["action", "loop", "decision", "delegate"] = "action"
     name: str = ""
     instruction: str = ""
     category: str = "other"
@@ -38,6 +44,8 @@ class StepBase(BaseModel):
     max_iterations: int | None = None
     exit_condition: str | None = None
     steps: list["StepBase"] = []     # nested steps for loops
+    # delegate-specific
+    protocol_ids: list[str] = []     # candidate child protocol IDs to choose from
 
 StepBase.model_rebuild()
 
@@ -45,12 +53,14 @@ StepBase.model_rebuild()
 class ProtocolCreate(BaseModel):
     name: str
     description: str = ""
+    type: str = "standard"  # standard, orchestrator
     steps: list[StepBase] = []
 
 
 class ProtocolUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    type: str | None = None
     steps: list[StepBase] | None = None
 
 
@@ -58,6 +68,7 @@ class ProtocolResponse(BaseModel):
     id: str
     name: str
     description: str
+    type: str
     steps: list
     is_default: bool
     created_at: datetime
@@ -83,6 +94,7 @@ def _to_response(p: ThinkingProtocol) -> dict:
         "id": str(p.id),
         "name": p.name,
         "description": p.description or "",
+        "type": p.type or "standard",
         "steps": p.steps or [],
         "is_default": p.is_default,
         "created_at": p.created_at,
@@ -114,6 +126,7 @@ async def create_protocol(body: ProtocolCreate, db: AsyncSession = Depends(get_d
     p = ThinkingProtocol(
         name=body.name,
         description=body.description,
+        type=body.type if body.type in PROTOCOL_TYPES else "standard",
         steps=steps_raw,
     )
     db.add(p)
@@ -131,6 +144,8 @@ async def update_protocol(protocol_id: str, body: ProtocolUpdate, db: AsyncSessi
         p.name = body.name
     if body.description is not None:
         p.description = body.description
+    if body.type is not None and body.type in PROTOCOL_TYPES:
+        p.type = body.type
     if body.steps is not None:
         steps_raw = [s.model_dump() for s in body.steps]
         steps_raw = _assign_ids(steps_raw)
@@ -160,6 +175,7 @@ async def duplicate_protocol(protocol_id: str, db: AsyncSession = Depends(get_db
     new = ThinkingProtocol(
         name=f"{p.name} (copy)",
         description=p.description,
+        type=p.type,
         steps=p.steps,
         is_default=False,
     )

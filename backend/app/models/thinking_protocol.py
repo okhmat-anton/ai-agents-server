@@ -6,16 +6,22 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
 
+PROTOCOL_TYPES = ("standard", "orchestrator")
+
+
 class ThinkingProtocol(Base):
     """
     A thinking protocol defines a step-by-step reasoning workflow for agents.
-    Steps are stored as JSON array with support for actions, loops, and decisions.
+    Types:
+      standard     — a regular reasoning protocol (analysis, research, etc.)
+      orchestrator — a meta-protocol that selects and delegates to child protocols
     """
     __tablename__ = "thinking_protocols"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
+    type: Mapped[str] = mapped_column(String(20), default="standard")  # standard, orchestrator
     steps: Mapped[dict] = mapped_column(JSONB, default=[])
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

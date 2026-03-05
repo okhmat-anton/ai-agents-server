@@ -44,8 +44,9 @@ class AgentCreate(BaseModel):
     num_gpu: int = 1
     # Multi-model support
     models: list[AgentModelEntry] = []
-    # Thinking protocol
-    thinking_protocol_id: str | None = None
+    # Thinking protocols (multi-protocol)
+    thinking_protocol_id: str | None = None      # main (orchestrator) protocol
+    protocol_ids: list[str] = []                  # all available protocols for the agent
 
 
 class AgentUpdate(BaseModel):
@@ -64,8 +65,9 @@ class AgentUpdate(BaseModel):
     num_gpu: int | None = None
     # Multi-model support (if provided, replaces all)
     models: list[AgentModelEntry] | None = None
-    # Thinking protocol
-    thinking_protocol_id: str | None = None
+    # Thinking protocols (multi-protocol)
+    thinking_protocol_id: str | None = None      # main (orchestrator) protocol
+    protocol_ids: list[str] | None = None         # if provided, replaces all agent_protocols
 
 
 class AgentResponse(BaseModel):
@@ -88,7 +90,8 @@ class AgentResponse(BaseModel):
     num_gpu: int
     beliefs: dict = {}                 # from beliefs.json (filesystem)
     thinking_protocol_id: str | None = None
-    thinking_protocol: dict | None = None  # expanded protocol data
+    thinking_protocol: dict | None = None  # expanded main protocol data
+    protocols: list[dict] = []               # all assigned protocols with is_main flag
     created_at: datetime
     updated_at: datetime
     last_run_at: datetime | None

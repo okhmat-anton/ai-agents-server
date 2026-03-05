@@ -13,6 +13,7 @@ DEFAULT_PROTOCOLS = [
     {
         "name": "Standard Problem Solving",
         "description": "Universal step-by-step reasoning: pick a task → analyze → plan → implement in a loop → output result",
+        "type": "standard",
         "is_default": True,
         "steps": [
             {
@@ -78,6 +79,7 @@ DEFAULT_PROTOCOLS = [
     {
         "name": "Research & Analysis",
         "description": "Deep research protocol: gather information → analyze → synthesize → conclude",
+        "type": "standard",
         "is_default": False,
         "steps": [
             {
@@ -127,6 +129,44 @@ DEFAULT_PROTOCOLS = [
             },
         ],
     },
+    {
+        "name": "Adaptive Orchestrator",
+        "description": "Meta-protocol that analyzes the task and delegates to the most appropriate child protocol",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "o_0_classify",
+                "type": "action",
+                "name": "Classify Task",
+                "category": "analysis",
+                "instruction": "Analyze the incoming task or query. Determine its nature:\n- Is it a problem to solve? (coding, debugging, design)\n- Is it a research/analysis question?\n- Is it a creative/generation task?\n- Is it a multi-step project?\nClassify the task type and complexity.",
+            },
+            {
+                "id": "o_1_select",
+                "type": "decision",
+                "name": "Select Strategy",
+                "category": "planning",
+                "instruction": "Based on the task classification, decide which thinking protocol is best suited. Consider:\n- Task complexity and type\n- Available protocols and their strengths\n- Whether the task needs iterative refinement or deep research",
+                "exit_condition": "Protocol selected based on task type",
+            },
+            {
+                "id": "o_2_delegate",
+                "type": "delegate",
+                "name": "Execute Protocol",
+                "category": "execution",
+                "instruction": "Delegate execution to the selected child protocol. The chosen protocol will handle the actual reasoning and problem-solving process.",
+                "protocol_ids": [],
+            },
+            {
+                "id": "o_3_review",
+                "type": "action",
+                "name": "Review & Synthesize",
+                "category": "verification",
+                "instruction": "Review the output from the delegated protocol:\n- Does the result fully address the original task?\n- Is the quality sufficient?\n- Should a different protocol be tried?\nIf unsatisfied, consider re-delegating to another protocol or refining the result.",
+            },
+        ],
+    },
 ]
 
 
@@ -136,13 +176,32 @@ async def create_default_protocols(db: AsyncSession):
     if result.scalar_one_or_none():
         return  # Protocols already exist
 
+    # First pass: create all protocols
+    proto_map = {}  # name -> ThinkingProtocol instance
     for proto_data in DEFAULT_PROTOCOLS:
         proto = ThinkingProtocol(
             name=proto_data["name"],
             description=proto_data["description"],
+            type=proto_data.get("type", "standard"),
             steps=proto_data["steps"],
             is_default=proto_data.get("is_default", False),
         )
         db.add(proto)
+        proto_map[proto_data["name"]] = proto
+
+    await db.flush()
+
+    # Second pass: wire orchestrator delegate steps to actual protocol IDs
+    orchestrator = proto_map.get("Adaptive Orchestrator")
+    if orchestrator:
+        standard_ids = [
+            str(p.id) for name, p in proto_map.items()
+            if p.type != "orchestrator"
+        ]
+        steps = list(orchestrator.steps)
+        for step in steps:
+            if step.get("type") == "delegate":
+                step["protocol_ids"] = standard_ids
+        orchestrator.steps = steps
 
     await db.commit()
