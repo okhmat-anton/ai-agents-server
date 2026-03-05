@@ -1,7 +1,9 @@
 """
 Chat API — persistent chat sessions with single/multi-model support.
+Integrates protocol execution: orchestrator delegation, todo tracking, skill invocation.
 """
 import asyncio
+import json
 import time
 import uuid
 from typing import Optional
@@ -19,11 +21,22 @@ from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.model_config import ModelConfig
 from app.models.agent import Agent
+from app.models.agent_model import AgentModel
+from app.models.agent_protocol import AgentProtocol
+from app.models.skill import Skill, AgentSkill
 from app.models.chat import ChatSession, ChatMessage
 from app.llm.base import Message, GenerationParams, LLMResponse
 from app.llm.ollama import OllamaProvider
 from app.llm.openai_compatible import OpenAICompatibleProvider
 from app.api.agent_files import read_agent_config, read_agent_settings
+from app.api.agent_beliefs import read_beliefs
+from app.services.protocol_executor import (
+    build_agent_system_prompt,
+    format_child_protocol_prompt,
+    parse_skill_invocations,
+    parse_todo_list,
+    parse_delegate,
+)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -104,6 +117,7 @@ def _session_to_response(session: ChatSession) -> dict:
         "multi_model": session.multi_model,
         "system_prompt": session.system_prompt,
         "temperature": session.temperature,
+        "protocol_state": session.protocol_state,
         "message_count": len(msgs),
         "created_at": session.created_at.isoformat(),
         "updated_at": session.updated_at.isoformat(),
@@ -120,6 +134,7 @@ def _message_to_response(msg: ChatMessage) -> dict:
         "model_responses": msg.model_responses,
         "total_tokens": msg.total_tokens,
         "duration_ms": msg.duration_ms,
+        "metadata": msg.msg_metadata,
         "created_at": msg.created_at.isoformat(),
     }
 
@@ -352,6 +367,83 @@ async def delete_session(
 
 # ── Send Message ─────────────────────────────────────────
 
+async def _load_agent_protocols(agent: Agent, db: AsyncSession) -> list[dict]:
+    """Load all protocols assigned to an agent."""
+    protocols = []
+    for ap in (agent.agent_protocols or []):
+        p = ap.protocol
+        if p:
+            protocols.append({
+                "id": str(p.id),
+                "name": p.name,
+                "description": p.description or "",
+                "type": p.type or "standard",
+                "steps": p.steps or [],
+                "is_main": ap.is_main,
+                "priority": ap.priority,
+            })
+    return protocols
+
+
+async def _load_agent_skills(agent_id: uuid.UUID, db: AsyncSession) -> list[dict]:
+    """Load all enabled skills for an agent."""
+    result = await db.execute(
+        select(AgentSkill)
+        .where(AgentSkill.agent_id == agent_id, AgentSkill.is_enabled == True)
+        .options(selectinload(AgentSkill.skill))
+    )
+    skills = []
+    for ask in result.scalars().all():
+        s = ask.skill
+        if s:
+            skills.append({
+                "id": str(s.id),
+                "name": s.name,
+                "display_name": s.display_name,
+                "description": s.description or "",
+                "description_for_agent": s.description_for_agent or "",
+                "category": s.category,
+                "code": s.code,
+                "input_schema": s.input_schema or {},
+            })
+    return skills
+
+
+async def _execute_skill(skill_name: str, args: dict, agent_skills: list[dict]) -> dict:
+    """Execute a skill by name and return the result."""
+    skill = None
+    for s in agent_skills:
+        if s["name"] == skill_name:
+            skill = s
+            break
+
+    if not skill:
+        return {"error": f"Skill '{skill_name}' not found or not enabled"}
+
+    code = skill.get("code", "")
+    if not code or code.startswith("#"):
+        return {"error": f"Skill '{skill_name}' has no executable code"}
+
+    # Execute skill code in a sandboxed namespace
+    try:
+        namespace = {}
+        exec(code, namespace)
+
+        execute_fn = namespace.get("execute")
+        if not execute_fn:
+            return {"error": f"Skill '{skill_name}' has no execute() function"}
+
+        import asyncio
+        if asyncio.iscoroutinefunction(execute_fn):
+            result = await execute_fn(**args)
+        else:
+            result = execute_fn(**args)
+
+        return {"result": result}
+    except Exception as e:
+        return {"error": f"Skill '{skill_name}' execution failed: {str(e)}"}
+
+
 @router.post("/sessions/{session_id}/messages")
 async def send_message(
     session_id: str,
@@ -359,7 +451,7 @@ async def send_message(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Send a message and get a response (single or multi-model)."""
+    """Send a message and get a response with protocol execution support."""
     result = await db.execute(
         select(ChatSession).where(
             ChatSession.id == uuid.UUID(session_id),
@@ -386,13 +478,17 @@ async def send_message(
     # Build generation params — agent's file settings are source of truth
     gen_params = GenerationParams(temperature=session.temperature)
     system_prompt = session.system_prompt
+    agent_protocols = []
+    agent_skills = []
+    agent_beliefs = None
 
     if session.agent_id and session.agent:
-        agent_name = session.agent.name
+        agent = session.agent
+        agent_name = agent.name
+
         # Read system_prompt from agent.json (filesystem = source of truth)
         agent_config = read_agent_config(agent_name)
-        agent_system_prompt = agent_config.get("system_prompt", "")
-        system_prompt = system_prompt or agent_system_prompt
+        base_system_prompt = agent_config.get("system_prompt", "")
 
         # Read generation params from settings.json (filesystem = source of truth)
         agent_settings = read_agent_settings(agent_name)
@@ -410,6 +506,61 @@ async def send_message(
                 num_gpu=agent_settings.get("num_gpu", 1),
             )
 
+        # Load protocols, skills, beliefs, aspirations
+        agent_protocols = await _load_agent_protocols(agent, db)
+        agent_skills = await _load_agent_skills(agent.id, db)
+        agent_beliefs = read_beliefs(agent_name)
+        from app.api.agent_aspirations import read_aspirations
+        agent_aspirations = read_aspirations(agent_name)
+
+        # Get current protocol state (todo list, active child protocol)
+        protocol_state = session.protocol_state or {}
+        current_todo = protocol_state.get("todo_list")
+        active_child = protocol_state.get("active_child_protocol")
+
+        # Build protocol-enhanced system prompt
+        if agent_protocols:
+            # If there's an active child protocol (from delegation), use it
+            if active_child:
+                child_proto = None
+                for p in agent_protocols:
+                    if p["name"] == active_child or p["id"] == active_child:
+                        child_proto = p
+                        break
+                if child_proto:
+                    system_prompt = build_agent_system_prompt(
+                        base_system_prompt=base_system_prompt,
+                        agent_name=agent_name,
+                        protocols=[{**child_proto, "is_main": True}],
+                        available_skills=agent_skills or None,
+                        current_todo=current_todo,
+                        beliefs=agent_beliefs,
+                        aspirations=agent_aspirations,
+                    )
+                else:
+                    # Child protocol not found, fall back to main
+                    system_prompt = build_agent_system_prompt(
+                        base_system_prompt=base_system_prompt,
+                        agent_name=agent_name,
+                        protocols=agent_protocols,
+                        available_skills=agent_skills or None,
+                        current_todo=current_todo,
+                        beliefs=agent_beliefs,
+                        aspirations=agent_aspirations,
+                    )
+            else:
+                system_prompt = build_agent_system_prompt(
+                    base_system_prompt=base_system_prompt,
+                    agent_name=agent_name,
+                    protocols=agent_protocols,
+                    available_skills=agent_skills or None,
+                    current_todo=current_todo,
+                    beliefs=agent_beliefs,
+                    aspirations=agent_aspirations,
+                )
+        else:
+            system_prompt = system_prompt or base_system_prompt
+
     # Build conversation history
     history = []
     if system_prompt:
@@ -424,12 +575,8 @@ async def send_message(
     start = time.monotonic()
 
     if session.multi_model and len(model_ids) > 1:
-        # ── Multi-model mode ──
-        response_data = await _multi_model_chat(
-            model_ids, history, gen_params, db
-        )
+        response_data = await _multi_model_chat(model_ids, history, gen_params, db)
     else:
-        # ── Single-model mode ──
         model_id = model_ids[0]
         provider, base_url, model_name, api_key = await _resolve_model(model_id, db)
         try:
@@ -449,6 +596,74 @@ async def send_message(
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
+    # ── Protocol response parsing ──
+    msg_metadata = {}
+    llm_content = response_data["content"]
+
+    if session.agent_id and agent_protocols:
+        protocol_state = session.protocol_state or {}
+
+        # 1. Parse todo list updates
+        new_todo = parse_todo_list(llm_content)
+        if new_todo:
+            protocol_state["todo_list"] = new_todo
+            msg_metadata["todo_list"] = new_todo
+
+        # 2. Parse delegation
+        delegate_to = parse_delegate(llm_content)
+        if delegate_to:
+            protocol_state["active_child_protocol"] = delegate_to
+            msg_metadata["delegated_to"] = delegate_to
+
+        # 3. Parse skill invocations
+        skill_calls = parse_skill_invocations(llm_content)
+        if skill_calls and agent_skills:
+            skill_results = []
+            for call in skill_calls:
+                result = await _execute_skill(call["skill_name"], call["args"], agent_skills)
+                skill_results.append({
+                    "skill": call["skill_name"],
+                    "args": call["args"],
+                    "result": result,
+                })
+            msg_metadata["skill_results"] = skill_results
+
+            # If skills were executed, do a follow-up LLM call with results
+            skill_feedback = "\n\n".join(
+                f"**Skill `{sr['skill']}` result:**\n```json\n{json.dumps(sr['result'], ensure_ascii=False, indent=2)}\n```"
+                for sr in skill_results
+            )
+            follow_up_prompt = (
+                f"Skills have been executed. Here are the results:\n\n{skill_feedback}\n\n"
+                "Continue with your protocol steps based on these results."
+            )
+            history.append({"role": "assistant", "content": llm_content})
+            history.append({"role": "user", "content": follow_up_prompt})
+
+            try:
+                model_id = model_ids[0]
+                provider, base_url, model_name, api_key = await _resolve_model(model_id, db)
+                follow_resp = await _chat_with_model(
+                    provider, base_url, model_name, api_key,
+                    history, gen_params,
+                )
+                # Append follow-up content
+                response_data["content"] = llm_content + "\n\n---\n\n" + follow_resp.content
+                response_data["total_tokens"] = response_data.get("total_tokens", 0) + follow_resp.total_tokens
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+
+                # Parse follow-up for more todo updates
+                new_todo2 = parse_todo_list(follow_resp.content)
+                if new_todo2:
+                    protocol_state["todo_list"] = new_todo2
+                    msg_metadata["todo_list"] = new_todo2
+            except Exception:
+                pass  # If follow-up fails, keep original response
+
+        # Save protocol state to session
+        session.protocol_state = protocol_state
+        await db.flush()
+
     # Save assistant message
     assistant_msg = ChatMessage(
         session_id=session.id,
@@ -458,13 +673,14 @@ async def send_message(
         model_responses=response_data.get("model_responses"),
         total_tokens=response_data.get("total_tokens", 0),
         duration_ms=elapsed_ms,
+        msg_metadata=msg_metadata or None,
     )
     db.add(assistant_msg)
     await db.flush()
     await db.refresh(assistant_msg)
 
     # Auto-title: if first user message, summarize to title
-    if len(session.messages) <= 2:  # user + assistant
+    if len(session.messages) <= 2:
         title = body.content[:60]
         if len(body.content) > 60:
             title += "…"

@@ -10,6 +10,7 @@ Step types:
   loop     — repeat nested steps up to max_iterations
   decision — evaluate condition and optionally exit loop
   delegate — select and run a child protocol (orchestrator only)
+  todo     — create a structured task list and follow it step by step
 """
 
 import uuid
@@ -29,14 +30,14 @@ router = APIRouter(prefix="/api/protocols", tags=["thinking-protocols"], depende
 
 # ---------- Schemas ----------
 
-STEP_TYPES = ("action", "loop", "decision", "delegate")
+STEP_TYPES = ("action", "loop", "decision", "delegate", "todo")
 CATEGORIES = ("analysis", "planning", "execution", "verification", "output", "other")
 PROTOCOL_TYPES = ("standard", "orchestrator")
 
 
 class StepBase(BaseModel):
     id: str | None = None
-    type: Literal["action", "loop", "decision", "delegate"] = "action"
+    type: Literal["action", "loop", "decision", "delegate", "todo"] = "action"
     name: str = ""
     instruction: str = ""
     category: str = "other"

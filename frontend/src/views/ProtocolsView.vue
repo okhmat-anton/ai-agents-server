@@ -124,10 +124,11 @@
                   Steps ({{ form.steps.length }})
                 </div>
                 <v-spacer />
-                <div class="d-flex ga-1">
+                <div class="d-flex ga-1 flex-wrap">
                   <v-btn size="x-small" variant="tonal" color="primary" prepend-icon="mdi-plus" @click="addStep('action')" rounded>Action</v-btn>
                   <v-btn size="x-small" variant="tonal" color="orange" prepend-icon="mdi-refresh" @click="addStep('loop')" rounded>Loop</v-btn>
                   <v-btn size="x-small" variant="tonal" color="teal" prepend-icon="mdi-help-circle" @click="addStep('decision')" rounded>Decision</v-btn>
+                  <v-btn size="x-small" variant="tonal" color="light-green" prepend-icon="mdi-format-list-checks" @click="addStep('todo')" rounded>Todo List</v-btn>
                   <v-btn v-if="form.type === 'orchestrator'" size="x-small" variant="tonal" color="amber" prepend-icon="mdi-call-split" @click="addStep('delegate')" rounded>Delegate</v-btn>
                 </div>
               </div>
@@ -311,13 +312,14 @@ const form = ref({
   steps: [],
 })
 
-const stepColor = (type) => ({ action: 'primary', loop: 'orange', decision: 'teal', delegate: 'amber' }[type] || 'grey')
-const stepIcon = (type) => ({ action: 'mdi-play-circle', loop: 'mdi-refresh', decision: 'mdi-help-rhombus', delegate: 'mdi-call-split' }[type] || 'mdi-circle')
+const stepColor = (type) => ({ action: 'primary', loop: 'orange', decision: 'teal', delegate: 'amber', todo: 'light-green' }[type] || 'grey')
+const stepIcon = (type) => ({ action: 'mdi-play-circle', loop: 'mdi-refresh', decision: 'mdi-help-rhombus', delegate: 'mdi-call-split', todo: 'mdi-format-list-checks' }[type] || 'mdi-circle')
 const stepBorderColor = (type) => ({
   action: 'border-s-primary border-s-lg',
   loop: 'border-s-warning border-s-lg',
   decision: 'border-s-teal border-s-lg',
   delegate: 'border-s-amber border-s-lg',
+  todo: 'border-s-light-green border-s-lg',
 }[type] || '')
 
 const stepBorderClass = (type) => ({
@@ -325,6 +327,7 @@ const stepBorderClass = (type) => ({
   loop: 'step-card-loop',
   decision: 'step-card-decision',
   delegate: 'step-card-delegate',
+  todo: 'step-card-todo',
 }[type] || '')
 
 const stepHeaderBg = (type) => ({
@@ -332,6 +335,7 @@ const stepHeaderBg = (type) => ({
   loop: 'background: rgba(255,152,0,0.06)',
   decision: 'background: rgba(0,150,136,0.06)',
   delegate: 'background: rgba(255,193,7,0.06)',
+  todo: 'background: rgba(139,195,74,0.06)',
 }[type] || '')
 
 const catColor = (cat) => ({
@@ -387,6 +391,7 @@ const addStep = (type) => {
   if (type === 'loop') { step.max_iterations = 5; step.exit_condition = '' }
   if (type === 'decision') { step.exit_condition = '' }
   if (type === 'delegate') { step.protocol_ids = [] }
+  if (type === 'todo') { step.category = 'planning' }
   form.value.steps.push(step)
 }
 
@@ -457,6 +462,7 @@ onMounted(load)
 .step-card-loop { border-color: rgba(255,152,0,0.25) !important; }
 .step-card-decision { border-color: rgba(0,150,136,0.25) !important; }
 .step-card-delegate { border-color: rgba(255,193,7,0.25) !important; }
+.step-card-todo { border-color: rgba(139,195,74,0.25) !important; }
 
 .step-header {
   border-bottom: 1px solid rgba(255,255,255,0.04);

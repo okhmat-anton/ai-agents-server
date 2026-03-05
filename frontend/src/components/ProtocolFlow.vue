@@ -114,6 +114,24 @@
         </div>
       </div>
 
+      <!-- Todo list step -->
+      <div v-else-if="step.type === 'todo'" class="flow-node flow-todo-wrapper">
+        <div class="flow-todo-container">
+          <div class="flow-todo-header d-flex align-center ga-2">
+            <v-icon size="16" color="light-green">mdi-format-list-checks</v-icon>
+            <span class="font-weight-bold text-light-green">{{ step.name || 'Create Todo List' }}</span>
+            <v-chip size="x-small" color="light-green" variant="tonal">todo</v-chip>
+          </div>
+          <div v-if="step.instruction" class="flow-instruction px-3 pb-1">{{ step.instruction }}</div>
+          <div class="flow-todo-preview px-3 pb-2">
+            <div class="d-flex align-center ga-1 text-caption text-medium-emphasis">
+              <v-icon size="12" color="light-green">mdi-checkbox-marked-outline</v-icon>
+              <span>Agent will create a task list and track progress</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div v-if="idx < steps.length - 1" class="flow-connector" />
     </template>
 
@@ -297,4 +315,16 @@ const catColor = (cat) => ({
 }
 .flow-delegate-header { font-size: 13px; padding: 0 4px; }
 .flow-delegate-children { margin-top: 6px; }
+
+/* Todo list step */
+.flow-todo-wrapper { width: 100%; max-width: 540px; }
+.flow-todo-container {
+  width: 100%;
+  border: 2px solid rgba(139,195,74,0.3);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(139,195,74,0.04);
+}
+.flow-todo-header { font-size: 13px; padding: 0 4px; }
+.flow-todo-preview { margin-top: 6px; }
 </style>

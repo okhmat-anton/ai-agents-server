@@ -1,0 +1,491 @@
+"""
+Protocol Executor — converts thinking protocols into system prompt instructions
+and handles orchestrator delegation, todo list tracking, and skill invocation.
+
+Architecture:
+  1. Orchestrator protocol → system prompt that drives high-level reasoning
+  2. Child protocols → injected when orchestrator delegates
+  3. Todo step → agent creates a structured task list and follows it
+  4. Skills → agent can invoke skills via <<<SKILL:name>>> markers
+
+The executor formats protocol steps into structured instructions that become
+part of the LLM system prompt. The agent's responses are parsed for:
+  - <<<SKILL:skill_name>>> {json_args} <<<END_SKILL>>> — skill invocation
+  - <<<TODO>>> [...items...] <<<END_TODO>>> — todo list creation/update
+  - <<<DELEGATE:protocol_name>>> — switch to a child protocol
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Optional
+
+
+# ── Constants ──────────────────────────────────────────────
+
+SKILL_PATTERN = re.compile(
+    r"<<<SKILL:(\w+)>>>\s*(.*?)\s*<<<END_SKILL>>>",
+    re.DOTALL,
+)
+
+TODO_PATTERN = re.compile(
+    r"<<<TODO>>>\s*(.*?)\s*<<<END_TODO>>>",
+    re.DOTALL,
+)
+
+DELEGATE_PATTERN = re.compile(
+    r"<<<DELEGATE:(.+?)>>>",
+)
+
+
+# ── Step Formatters ────────────────────────────────────────
+
+def _format_action_step(step: dict, indent: str = "") -> str:
+    """Format an action step into text instruction."""
+    name = step.get("name", "Action")
+    instruction = step.get("instruction", "")
+    category = step.get("category", "")
+    cat_label = f" [{category}]" if category and category != "other" else ""
+    return f"{indent}• **{name}**{cat_label}: {instruction}"
+
+
+def _format_loop_step(step: dict, indent: str = "") -> str:
+    """Format a loop step with nested sub-steps."""
+    name = step.get("name", "Loop")
+    instruction = step.get("instruction", "")
+    max_iter = step.get("max_iterations", 5)
+    exit_cond = step.get("exit_condition", "")
+
+    lines = [f"{indent}🔄 **{name}** (repeat up to {max_iter} times):"]
+    if instruction:
+        lines.append(f"{indent}  Goal: {instruction}")
+    if exit_cond:
+        lines.append(f"{indent}  Exit when: {exit_cond}")
+
+    sub_steps = step.get("steps", [])
+    if sub_steps:
+        lines.append(f"{indent}  Sub-steps:")
+        for i, sub in enumerate(sub_steps, 1):
+            lines.append(_format_step(sub, indent=indent + "    ", number=i))
+
+    return "\n".join(lines)
+
+
+def _format_decision_step(step: dict, indent: str = "") -> str:
+    """Format a decision/branching step."""
+    name = step.get("name", "Decision")
+    instruction = step.get("instruction", "")
+    exit_cond = step.get("exit_condition", "")
+
+    lines = [f"{indent}❓ **{name}**: {instruction}"]
+    if exit_cond:
+        lines.append(f"{indent}  → {exit_cond}")
+    return "\n".join(lines)
+
+
+def _format_delegate_step(step: dict, child_protocols: list[dict], indent: str = "") -> str:
+    """Format a delegate step that references child protocols."""
+    name = step.get("name", "Delegate")
+    instruction = step.get("instruction", "")
+    protocol_ids = step.get("protocol_ids", [])
+
+    lines = [f"{indent}📋 **{name}**: {instruction}"]
+
+    # List available child protocols
+    available = []
+    for cp in child_protocols:
+        if not protocol_ids or cp.get("id") in protocol_ids:
+            available.append(cp)
+
+    if available:
+        lines.append(f"{indent}  Available protocols to delegate to:")
+        for cp in available:
+            lines.append(f"{indent}    - \"{cp['name']}\": {cp.get('description', 'No description')}")
+        lines.append(f"{indent}  To delegate, output: <<<DELEGATE:protocol_name>>>")
+    else:
+        lines.append(f"{indent}  (No child protocols configured)")
+
+    return "\n".join(lines)
+
+
+def _format_todo_step(step: dict, indent: str = "") -> str:
+    """Format a todo list step."""
+    name = step.get("name", "Create Todo List")
+    instruction = step.get("instruction", "")
+
+    lines = [
+        f"{indent}📝 **{name}**: {instruction}",
+        f"{indent}  Create a structured task list for the current request.",
+        f"{indent}  Output your todo list in this format:",
+        f"{indent}  <<<TODO>>>",
+        f'{indent}  [{{"id": 1, "task": "description", "status": "pending"}}]',
+        f"{indent}  <<<END_TODO>>>",
+        f"{indent}  Update the list as you complete tasks (status: \"pending\" → \"in_progress\" → \"done\").",
+        f"{indent}  Always output the full updated todo list after completing each task.",
+    ]
+    return "\n".join(lines)
+
+
+def _format_step(step: dict, indent: str = "", number: int | None = None, child_protocols: list[dict] | None = None) -> str:
+    """Format a single step based on its type."""
+    prefix = f"{number}. " if number else ""
+    step_type = step.get("type", "action")
+
+    if step_type == "action":
+        text = _format_action_step(step, indent)
+    elif step_type == "loop":
+        text = _format_loop_step(step, indent)
+    elif step_type == "decision":
+        text = _format_decision_step(step, indent)
+    elif step_type == "delegate":
+        text = _format_delegate_step(step, child_protocols or [], indent)
+    elif step_type == "todo":
+        text = _format_todo_step(step, indent)
+    else:
+        text = f"{indent}• {step.get('name', 'Step')}: {step.get('instruction', '')}"
+
+    # Insert number prefix after indent
+    if prefix and indent:
+        # Replace first occurrence of indent+marker with indent+number+marker
+        return text
+    elif prefix:
+        return f"{prefix}{text.lstrip('•❓🔄📋📝 ')}"
+
+    return text
+
+
+# ── Protocol Formatters ────────────────────────────────────
+
+def format_protocol_prompt(
+    protocol: dict,
+    child_protocols: list[dict] | None = None,
+    available_skills: list[dict] | None = None,
+    current_todo: list[dict] | None = None,
+) -> str:
+    """
+    Convert a thinking protocol into system prompt instructions.
+
+    Args:
+        protocol: The protocol dict with name, description, type, steps
+        child_protocols: For orchestrators — list of child protocols that can be delegated to
+        available_skills: Skills the agent can invoke
+        current_todo: Current state of the agent's todo list (if any)
+
+    Returns:
+        Formatted system prompt section for the protocol
+    """
+    name = protocol.get("name", "Protocol")
+    description = protocol.get("description", "")
+    proto_type = protocol.get("type", "standard")
+    steps = protocol.get("steps", [])
+
+    sections = []
+
+    # Header
+    sections.append(f"## Thinking Protocol: {name}")
+    if description:
+        sections.append(f"_{description}_")
+    sections.append("")
+
+    # Protocol type info
+    if proto_type == "orchestrator":
+        sections.append("You are operating as an **orchestrator** — your job is to analyze the task, "
+                        "select the best approach, and delegate to specialized protocols when needed.")
+        sections.append("")
+
+    # Steps
+    if steps:
+        sections.append("### Reasoning Steps")
+        sections.append("Follow these steps in order:")
+        sections.append("")
+        for i, step in enumerate(steps, 1):
+            sections.append(f"**Step {i}.**")
+            sections.append(_format_step(step, child_protocols=child_protocols or []))
+            sections.append("")
+
+    # Skills section
+    if available_skills:
+        sections.append("### Available Skills")
+        sections.append("You can invoke skills by outputting the following markers in your response:")
+        sections.append("```")
+        sections.append("<<<SKILL:skill_name>>> {\"param\": \"value\"} <<<END_SKILL>>>")
+        sections.append("```")
+        sections.append("")
+        sections.append("Available skills:")
+        for skill in available_skills:
+            desc = skill.get("description_for_agent") or skill.get("description", "")
+            input_schema = skill.get("input_schema", {})
+            params_info = ""
+            if input_schema and input_schema.get("properties"):
+                param_names = list(input_schema["properties"].keys())
+                params_info = f" — params: {', '.join(param_names)}"
+            sections.append(f"  - **{skill['name']}**: {desc}{params_info}")
+        sections.append("")
+        sections.append("After invoking a skill, wait for the result before continuing.")
+        sections.append("")
+
+    # Current todo list
+    if current_todo:
+        sections.append("### Current Task List")
+        sections.append("Your active todo list (update as you progress):")
+        sections.append("")
+        for item in current_todo:
+            status_icon = {"pending": "⬜", "in_progress": "🔄", "done": "✅", "skipped": "⏭️"}.get(
+                item.get("status", "pending"), "⬜"
+            )
+            sections.append(f"  {status_icon} {item.get('id', '?')}. {item.get('task', 'Unknown task')} [{item.get('status', 'pending')}]")
+        sections.append("")
+
+    # General instructions
+    sections.append("### Output Rules")
+    sections.append("- Think step-by-step following the protocol above")
+    sections.append("- When creating or updating a todo list, use <<<TODO>>>...<<<END_TODO>>> markers")
+    sections.append("- When invoking a skill, use <<<SKILL:name>>> {args} <<<END_SKILL>>> markers")
+    if proto_type == "orchestrator":
+        sections.append("- When delegating to a child protocol, use <<<DELEGATE:protocol_name>>>")
+    sections.append("- Always explain your reasoning before taking actions")
+    sections.append("")
+
+    return "\n".join(sections)
+
+
+def format_child_protocol_prompt(
+    child_protocol: dict,
+    available_skills: list[dict] | None = None,
+    current_todo: list[dict] | None = None,
+    parent_context: str = "",
+) -> str:
+    """
+    Format a child protocol after delegation from an orchestrator.
+
+    Args:
+        child_protocol: The delegated-to protocol
+        available_skills: Skills available
+        current_todo: Current todo list state
+        parent_context: Context from the orchestrator about why this was delegated
+    """
+    sections = []
+
+    if parent_context:
+        sections.append(f"## Orchestrator Context")
+        sections.append(f"The orchestrator has delegated this task to you because: {parent_context}")
+        sections.append("")
+
+    sections.append(format_protocol_prompt(
+        child_protocol,
+        available_skills=available_skills,
+        current_todo=current_todo,
+    ))
+
+    return "\n".join(sections)
+
+
+# ── Response Parsers ───────────────────────────────────────
+
+def parse_skill_invocations(response_text: str) -> list[dict]:
+    """
+    Parse skill invocation markers from the agent's response.
+
+    Returns list of: {"skill_name": str, "args": dict, "raw_match": str}
+    """
+    invocations = []
+    for match in SKILL_PATTERN.finditer(response_text):
+        skill_name = match.group(1)
+        args_text = match.group(2).strip()
+        try:
+            args = json.loads(args_text) if args_text else {}
+        except json.JSONDecodeError:
+            args = {"raw": args_text}
+
+        invocations.append({
+            "skill_name": skill_name,
+            "args": args,
+            "raw_match": match.group(0),
+        })
+    return invocations
+
+
+def parse_todo_list(response_text: str) -> list[dict] | None:
+    """
+    Parse todo list markers from the agent's response.
+
+    Returns the todo list if found, or None.
+    """
+    match = TODO_PATTERN.search(response_text)
+    if not match:
+        return None
+
+    todo_text = match.group(1).strip()
+    try:
+        todo_list = json.loads(todo_text)
+        if isinstance(todo_list, list):
+            return todo_list
+    except json.JSONDecodeError:
+        # Try to parse line-by-line
+        items = []
+        for line in todo_text.split("\n"):
+            line = line.strip()
+            if line and not line.startswith("//"):
+                try:
+                    item = json.loads(line)
+                    items.append(item)
+                except json.JSONDecodeError:
+                    # Try simple format: "1. task description"
+                    m = re.match(r"(\d+)\.\s*(.+)", line)
+                    if m:
+                        items.append({"id": int(m.group(1)), "task": m.group(2), "status": "pending"})
+        if items:
+            return items
+
+    return None
+
+
+def parse_delegate(response_text: str) -> str | None:
+    """
+    Parse delegate marker from the agent's response.
+
+    Returns the protocol name to delegate to, or None.
+    """
+    match = DELEGATE_PATTERN.search(response_text)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def strip_markers(response_text: str) -> str:
+    """Remove all protocol markers from response text for clean display."""
+    text = SKILL_PATTERN.sub("", response_text)
+    text = TODO_PATTERN.sub("", text)
+    text = DELEGATE_PATTERN.sub("", text)
+    return text.strip()
+
+
+# ── Build Full System Prompt ───────────────────────────────
+
+def build_agent_system_prompt(
+    base_system_prompt: str,
+    agent_name: str,
+    protocols: list[dict],
+    available_skills: list[dict] | None = None,
+    current_todo: list[dict] | None = None,
+    beliefs: dict | None = None,
+    aspirations: dict | None = None,
+) -> str:
+    """
+    Build the complete system prompt for an agent, combining:
+    - Base system prompt (from agent.json)
+    - Main/orchestrator protocol
+    - Available skills
+    - Current todo list state
+    - Agent beliefs
+    - Agent aspirations (dreams, desires, goals)
+
+    Args:
+        base_system_prompt: The agent's custom system prompt
+        agent_name: Agent name
+        protocols: All assigned protocols (with is_main flag)
+        available_skills: Skills this agent can use
+        current_todo: Current todo list (persisted in session metadata)
+        beliefs: Agent beliefs
+        aspirations: Agent aspirations (dreams, desires, goals)
+    """
+    sections = []
+
+    # Identity
+    sections.append(f"You are **{agent_name}**, an AI agent.")
+    sections.append("")
+
+    # Base system prompt
+    if base_system_prompt:
+        sections.append(base_system_prompt)
+        sections.append("")
+
+    # Beliefs
+    if beliefs:
+        core = beliefs.get("core", [])
+        additional = beliefs.get("additional", [])
+        if core or additional:
+            sections.append("## Your Beliefs & Principles")
+            for b in core:
+                w = b.get("weight", 1.0)
+                weight_indicator = "🔴" if w >= 0.8 else "🟡" if w >= 0.5 else "⚪"
+                sections.append(f"  {weight_indicator} {b.get('text', '')} (weight: {w})")
+            for b in additional:
+                sections.append(f"  ◦ {b.get('text', '')}")
+            sections.append("")
+
+    # Aspirations (dreams, desires, goals)
+    if aspirations:
+        dreams = aspirations.get("dreams", [])
+        desires = aspirations.get("desires", [])
+        goals = aspirations.get("goals", [])
+        if dreams or desires or goals:
+            sections.append("## Your Aspirations")
+            if dreams:
+                sections.append("### Dreams (long-term visions)")
+                for d in dreams:
+                    lock = "🔒" if d.get("locked") else "🔓"
+                    prio = d.get("priority", "medium")
+                    sections.append(f"  {lock} [{prio}] {d.get('text', '')}")
+            if desires:
+                sections.append("### Desires")
+                for d in desires:
+                    lock = "🔒" if d.get("locked") else "🔓"
+                    prio = d.get("priority", "medium")
+                    sections.append(f"  {lock} [{prio}] {d.get('text', '')}")
+            if goals:
+                sections.append("### Goals (actionable objectives)")
+                for g in goals:
+                    lock = "🔒" if g.get("locked") else "🔓"
+                    prio = g.get("priority", "medium")
+                    status = g.get("status", "active")
+                    deadline = f" (deadline: {g['deadline']})" if g.get("deadline") else ""
+                    sections.append(f"  {lock} [{prio}] [{status}] {g.get('text', '')}{deadline}")
+            sections.append("")
+            sections.append("🔒 = set by user, do NOT contradict or override these")
+            sections.append("🔓 = you may modify, refine, or create new ones that align with locked items")
+            sections.append("")
+
+    # Find main protocol (orchestrator or single standard)
+    main_protocol = None
+    child_protocols = []
+
+    for p in protocols:
+        if p.get("is_main"):
+            main_protocol = p
+        else:
+            child_protocols.append(p)
+
+    # If no main marked, use first orchestrator or first protocol
+    if not main_protocol and protocols:
+        orchestrators = [p for p in protocols if p.get("type") == "orchestrator"]
+        if orchestrators:
+            main_protocol = orchestrators[0]
+            child_protocols = [p for p in protocols if p.get("id") != main_protocol.get("id")]
+        else:
+            main_protocol = protocols[0]
+            child_protocols = protocols[1:]
+
+    # Protocol instructions
+    if main_protocol:
+        sections.append(format_protocol_prompt(
+            main_protocol,
+            child_protocols=child_protocols,
+            available_skills=available_skills,
+            current_todo=current_todo,
+        ))
+
+    # If no protocol but has skills, still list them
+    elif available_skills:
+        sections.append("### Available Skills")
+        sections.append("You can invoke skills by outputting:")
+        sections.append("```")
+        sections.append("<<<SKILL:skill_name>>> {\"param\": \"value\"} <<<END_SKILL>>>")
+        sections.append("```")
+        for skill in available_skills:
+            desc = skill.get("description_for_agent") or skill.get("description", "")
+            sections.append(f"  - **{skill['name']}**: {desc}")
+        sections.append("")
+
+    return "\n".join(sections)

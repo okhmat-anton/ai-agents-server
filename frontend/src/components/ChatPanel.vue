@@ -104,6 +104,45 @@
 
         <div class="message-content text-body-2" v-html="renderMarkdown(msg.content)"></div>
 
+        <!-- Protocol metadata: Todo list -->
+        <div v-if="msg.metadata?.todo_list?.length" class="mt-2 protocol-todo-widget">
+          <div class="d-flex align-center ga-1 mb-1">
+            <v-icon size="14" color="light-green">mdi-format-list-checks</v-icon>
+            <span class="text-caption font-weight-bold text-light-green">Task List</span>
+            <v-chip size="x-small" variant="tonal" color="light-green">
+              {{ msg.metadata.todo_list.filter(t => t.status === 'done').length }}/{{ msg.metadata.todo_list.length }}
+            </v-chip>
+          </div>
+          <div v-for="item in msg.metadata.todo_list" :key="item.id" class="todo-item d-flex align-center ga-1">
+            <v-icon size="14" :color="todoStatusColor(item.status)">{{ todoStatusIcon(item.status) }}</v-icon>
+            <span class="text-caption" :class="{ 'text-decoration-line-through text-medium-emphasis': item.status === 'done' }">
+              {{ item.task }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Protocol metadata: Skill results -->
+        <div v-if="msg.metadata?.skill_results?.length" class="mt-2 protocol-skill-results">
+          <div class="d-flex align-center ga-1 mb-1">
+            <v-icon size="14" color="deep-purple">mdi-lightning-bolt</v-icon>
+            <span class="text-caption font-weight-bold text-deep-purple">Skills Executed</span>
+          </div>
+          <div v-for="(sr, si) in msg.metadata.skill_results" :key="si" class="skill-result-item">
+            <v-chip size="x-small" :color="sr.result?.error ? 'error' : 'success'" variant="tonal" class="mr-1">
+              <v-icon start size="10">{{ sr.result?.error ? 'mdi-alert-circle' : 'mdi-check' }}</v-icon>
+              {{ sr.skill }}
+            </v-chip>
+          </div>
+        </div>
+
+        <!-- Protocol metadata: Delegation -->
+        <div v-if="msg.metadata?.delegated_to" class="mt-2">
+          <v-chip size="x-small" color="amber" variant="tonal">
+            <v-icon start size="12">mdi-call-split</v-icon>
+            Delegated to: {{ msg.metadata.delegated_to }}
+          </v-chip>
+        </div>
+
         <!-- Multi-model individual responses -->
         <v-expand-transition>
           <div v-if="msg.model_responses && expandedResponses[msg.id]" class="mt-2">
@@ -315,8 +354,22 @@ marked.setOptions({ breaks: true, gfm: true })
 
 function renderMarkdown(content) {
   if (!content) return ''
-  try { return DOMPurify.sanitize(marked.parse(content)) }
-  catch { return content }
+  // Strip protocol markers for clean display
+  let clean = content
+    .replace(/<<<SKILL:\w+>>>\s*[\s\S]*?\s*<<<END_SKILL>>>/g, '')
+    .replace(/<<<TODO>>>\s*[\s\S]*?\s*<<<END_TODO>>>/g, '')
+    .replace(/<<<DELEGATE:.+?>>>/g, '')
+    .trim()
+  try { return DOMPurify.sanitize(marked.parse(clean)) }
+  catch { return clean }
+}
+
+// Todo list helpers
+function todoStatusIcon(status) {
+  return { pending: 'mdi-checkbox-blank-outline', in_progress: 'mdi-progress-clock', done: 'mdi-checkbox-marked', skipped: 'mdi-skip-forward' }[status] || 'mdi-checkbox-blank-outline'
+}
+function todoStatusColor(status) {
+  return { pending: 'grey', in_progress: 'orange', done: 'success', skipped: 'grey-darken-1' }[status] || 'grey'
 }
 
 function formatDate(dateStr) {
@@ -599,5 +652,25 @@ watch(() => chatStore.panelOpen, (open) => {
 @keyframes typing {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+/* Protocol widgets */
+.protocol-todo-widget {
+  background: rgba(139,195,74,0.06);
+  border: 1px solid rgba(139,195,74,0.15);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.todo-item {
+  padding: 2px 0;
+}
+.protocol-skill-results {
+  background: rgba(103,58,183,0.06);
+  border: 1px solid rgba(103,58,183,0.15);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.skill-result-item {
+  padding: 2px 0;
 }
 </style>

@@ -27,6 +27,7 @@
       <v-tabs v-model="tab">
         <v-tab value="info">Info</v-tab>
         <v-tab value="beliefs">Beliefs</v-tab>
+        <v-tab value="aspirations">Aspirations</v-tab>
         <v-tab value="files">Files</v-tab>
         <v-tab value="tasks">Tasks</v-tab>
         <v-tab value="logs">Logs</v-tab>
@@ -125,6 +126,25 @@
             </div>
           </div>
 
+          <!-- Aspirations summary -->
+          <div v-if="agent.aspirations && (agent.aspirations.dreams?.length || agent.aspirations.desires?.length || agent.aspirations.goals?.length)" class="mt-4">
+            <div class="text-subtitle-2 mb-1">Aspirations ({{ (agent.aspirations.dreams?.length || 0) + (agent.aspirations.desires?.length || 0) + (agent.aspirations.goals?.length || 0) }})</div>
+            <div class="d-flex flex-wrap ga-1">
+              <v-chip v-for="d in (agent.aspirations.dreams || [])" :key="d.id" size="small" color="deep-purple-lighten-2" variant="tonal">
+                <v-icon start size="12">mdi-weather-night</v-icon>{{ d.text }}
+                <v-icon v-if="d.locked" end size="10" color="amber">mdi-lock</v-icon>
+              </v-chip>
+              <v-chip v-for="d in (agent.aspirations.desires || [])" :key="d.id" size="small" color="pink-lighten-2" variant="tonal">
+                <v-icon start size="12">mdi-heart-outline</v-icon>{{ d.text }}
+                <v-icon v-if="d.locked" end size="10" color="amber">mdi-lock</v-icon>
+              </v-chip>
+              <v-chip v-for="g in (agent.aspirations.goals || [])" :key="g.id" size="small" color="green" variant="tonal">
+                <v-icon start size="12">mdi-flag-checkered</v-icon>{{ g.text }}
+                <v-icon v-if="g.locked" end size="10" color="amber">mdi-lock</v-icon>
+              </v-chip>
+            </div>
+          </div>
+
           <div v-if="agent.system_prompt" class="mt-4">
             <div class="text-subtitle-2 mb-1">System Prompt</div>
             <v-sheet rounded class="pa-3 bg-grey-darken-4" style="white-space: pre-wrap; font-family: monospace; font-size: 13px;">{{ agent.system_prompt }}</v-sheet>
@@ -177,6 +197,83 @@
             </v-card>
           </div>
           <div v-else class="text-center text-grey pa-4">No additional beliefs</div>
+        </div>
+
+        <!-- Aspirations Tab (Dreams, Desires, Goals) -->
+        <div v-if="tab === 'aspirations'">
+          <!-- Dreams -->
+          <div class="d-flex align-center mb-3">
+            <div class="text-subtitle-1 font-weight-bold">
+              <v-icon color="deep-purple-lighten-2" size="20" class="mr-1">mdi-weather-night</v-icon>
+              Dreams
+            </div>
+            <v-chip size="x-small" class="ml-2" variant="tonal" color="deep-purple-lighten-2">long-term visions</v-chip>
+            <v-spacer />
+            <v-btn color="deep-purple-lighten-2" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openAspirationDialog('dreams')">Add Dream</v-btn>
+          </div>
+          <div v-if="aspirations.dreams.length" class="mb-6">
+            <v-card v-for="a in aspirations.dreams" :key="a.id" variant="outlined" class="mb-2 pa-3">
+              <div class="d-flex align-center">
+                <v-icon :color="a.locked ? 'amber' : 'grey'" size="16" class="mr-2">{{ a.locked ? 'mdi-lock' : 'mdi-lock-open-variant' }}</v-icon>
+                <v-chip :color="priorityColor(a.priority)" size="x-small" variant="flat" class="mr-2">{{ a.priority }}</v-chip>
+                <span class="text-body-1 flex-grow-1">{{ a.text }}</span>
+                <v-chip v-if="a.created_by === 'agent'" size="x-small" variant="tonal" color="cyan" class="mr-2">agent</v-chip>
+                <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editAspiration(a, 'dreams')" class="mr-1" />
+                <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="confirmDeleteAspiration(a, 'dreams')" />
+              </div>
+            </v-card>
+          </div>
+          <div v-else class="text-center text-grey pa-4 mb-6">No dreams defined</div>
+
+          <!-- Desires -->
+          <div class="d-flex align-center mb-3">
+            <div class="text-subtitle-1 font-weight-bold">
+              <v-icon color="pink-lighten-2" size="20" class="mr-1">mdi-heart-outline</v-icon>
+              Desires
+            </div>
+            <v-chip size="x-small" class="ml-2" variant="tonal" color="pink-lighten-2">wants & preferences</v-chip>
+            <v-spacer />
+            <v-btn color="pink-lighten-2" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openAspirationDialog('desires')">Add Desire</v-btn>
+          </div>
+          <div v-if="aspirations.desires.length" class="mb-6">
+            <v-card v-for="a in aspirations.desires" :key="a.id" variant="outlined" class="mb-2 pa-3">
+              <div class="d-flex align-center">
+                <v-icon :color="a.locked ? 'amber' : 'grey'" size="16" class="mr-2">{{ a.locked ? 'mdi-lock' : 'mdi-lock-open-variant' }}</v-icon>
+                <v-chip :color="priorityColor(a.priority)" size="x-small" variant="flat" class="mr-2">{{ a.priority }}</v-chip>
+                <span class="text-body-1 flex-grow-1">{{ a.text }}</span>
+                <v-chip v-if="a.created_by === 'agent'" size="x-small" variant="tonal" color="cyan" class="mr-2">agent</v-chip>
+                <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editAspiration(a, 'desires')" class="mr-1" />
+                <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="confirmDeleteAspiration(a, 'desires')" />
+              </div>
+            </v-card>
+          </div>
+          <div v-else class="text-center text-grey pa-4 mb-6">No desires defined</div>
+
+          <!-- Goals -->
+          <div class="d-flex align-center mb-3">
+            <div class="text-subtitle-1 font-weight-bold">
+              <v-icon color="green" size="20" class="mr-1">mdi-flag-checkered</v-icon>
+              Goals
+            </div>
+            <v-chip size="x-small" class="ml-2" variant="tonal" color="green">actionable objectives</v-chip>
+            <v-spacer />
+            <v-btn color="green" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openAspirationDialog('goals')">Add Goal</v-btn>
+          </div>
+          <div v-if="aspirations.goals.length">
+            <v-card v-for="a in aspirations.goals" :key="a.id" variant="outlined" class="mb-2 pa-3">
+              <div class="d-flex align-center">
+                <v-icon :color="a.locked ? 'amber' : 'grey'" size="16" class="mr-2">{{ a.locked ? 'mdi-lock' : 'mdi-lock-open-variant' }}</v-icon>
+                <v-chip :color="priorityColor(a.priority)" size="x-small" variant="flat" class="mr-2">{{ a.priority }}</v-chip>
+                <v-chip :color="goalStatusColor(a.status)" size="x-small" variant="tonal" class="mr-2">{{ a.status || 'active' }}</v-chip>
+                <span class="text-body-1 flex-grow-1">{{ a.text }}</span>
+                <span v-if="a.deadline" class="text-caption text-grey mr-2">{{ a.deadline }}</span>
+                <v-chip v-if="a.created_by === 'agent'" size="x-small" variant="tonal" color="cyan" class="mr-2">agent</v-chip>
+                <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editAspiration(a, 'goals')" class="mr-1" />
+                <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="confirmDeleteAspiration(a, 'goals')" />
+              </div>
+            </v-card>
+          </div>
+          <div v-else class="text-center text-grey pa-4">No goals defined</div>
         </div>
 
         <!-- Tasks Tab -->
@@ -241,7 +338,7 @@
                   <v-icon size="16" :color="node.is_dir ? 'amber' : 'grey'" class="mr-1">{{ fileIcon(node) }}</v-icon>
                   <span class="text-body-2 flex-grow-1" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ node.name }}</span>
                   <v-icon
-                    v-if="!['agent.json', 'settings.json', 'beliefs.json'].includes(node.path) && node.path !== 'data'"
+                    v-if="!['agent.json', 'settings.json', 'beliefs.json', 'aspirations.json'].includes(node.path) && node.path !== 'data'"
                     size="14" class="file-delete-btn" color="grey"
                     @click.stop="confirmDeleteFile(node.path)"
                   >mdi-close</v-icon>
@@ -359,6 +456,46 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Aspiration Add/Edit Dialog -->
+    <v-dialog v-model="aspirationDialog" max-width="600">
+      <v-card>
+        <v-card-title>{{ aspirationEditId ? 'Edit' : 'Add' }} {{ aspirationTypeLabel(aspirationDialogType) }}</v-card-title>
+        <v-card-text>
+          <v-textarea v-model="aspirationText" label="Description" rows="3" autofocus density="compact" class="mb-2" />
+          <v-row>
+            <v-col cols="4">
+              <v-select v-model="aspirationPriority" :items="['low', 'medium', 'high']" label="Priority" density="compact" />
+            </v-col>
+            <v-col cols="4">
+              <v-checkbox v-model="aspirationLocked" label="Locked (immutable by agent)" density="compact" hide-details />
+            </v-col>
+            <v-col v-if="aspirationDialogType === 'goals'" cols="4">
+              <v-select v-model="aspirationStatus" :items="['active', 'in_progress', 'completed', 'abandoned']" label="Status" density="compact" />
+            </v-col>
+          </v-row>
+          <v-text-field v-if="aspirationDialogType === 'goals'" v-model="aspirationDeadline" label="Deadline (optional, e.g. 2026-06-01)" density="compact" class="mt-2" />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="aspirationDialog = false">Cancel</v-btn>
+          <v-btn color="primary" @click="saveAspiration" :loading="aspirationSaving">{{ aspirationEditId ? 'Save' : 'Add' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Delete Aspiration Dialog -->
+    <v-dialog v-model="deleteAspirationDialog" max-width="400">
+      <v-card>
+        <v-card-title>Delete {{ aspirationTypeLabel(deleteAspirationType) }}</v-card-title>
+        <v-card-text>"{{ deleteAspirationItem?.text }}"</v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="deleteAspirationDialog = false">Cancel</v-btn>
+          <v-btn color="error" @click="doDeleteAspiration">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -410,11 +547,29 @@ const deleteBeliefItem = ref(null)
 const deleteBeliefType = ref('core')
 const beliefCategories = ['moral', 'behavioral', 'communication', 'restriction', 'preference', 'goal', 'other']
 
+// Aspirations tab state
+const aspirations = ref({ dreams: [], desires: [], goals: [] })
+const aspirationDialog = ref(false)
+const aspirationDialogType = ref('dreams')
+const aspirationText = ref('')
+const aspirationPriority = ref('medium')
+const aspirationLocked = ref(true)
+const aspirationStatus = ref('active')
+const aspirationDeadline = ref('')
+const aspirationEditId = ref(null)
+const aspirationSaving = ref(false)
+const deleteAspirationDialog = ref(false)
+const deleteAspirationItem = ref(null)
+const deleteAspirationType = ref('dreams')
+
 const id = computed(() => route.params.id)
 
 const statusColor = (s) => ({ idle: 'grey', running: 'success', paused: 'warning', error: 'error', stopped: 'grey' }[s] || 'grey')
 const taskStatusColor = (s) => ({ pending: 'info', running: 'success', completed: 'success', failed: 'error', cancelled: 'grey' }[s] || 'grey')
 const logColor = (l) => ({ debug: 'grey', info: 'info', warning: 'warning', error: 'error', critical: 'error' }[l] || 'grey')
+const priorityColor = (p) => ({ low: 'blue-grey', medium: 'orange', high: 'red' }[p] || 'grey')
+const goalStatusColor = (s) => ({ active: 'blue', in_progress: 'orange', completed: 'green', abandoned: 'grey' }[s] || 'grey')
+const aspirationTypeLabel = (t) => ({ dreams: 'Dream', desires: 'Desire', goals: 'Goal' }[t] || t)
 
 const toggleProtocolPreview = (p) => {
   previewProtocol.value = previewProtocol.value?.id === p.id ? null : p
@@ -623,6 +778,77 @@ const doDeleteBelief = async () => {
   } catch (e) { alert(e.response?.data?.detail || 'Failed to delete belief') }
 }
 
+// ===== Aspirations =====
+const loadAspirations = async () => {
+  try {
+    const { data } = await api.get(`/agents/${id.value}/aspirations`)
+    aspirations.value = { dreams: data.dreams || [], desires: data.desires || [], goals: data.goals || [] }
+  } catch { aspirations.value = { dreams: [], desires: [], goals: [] } }
+}
+
+const openAspirationDialog = (type) => {
+  aspirationDialogType.value = type
+  aspirationText.value = ''
+  aspirationPriority.value = 'medium'
+  aspirationLocked.value = true
+  aspirationStatus.value = 'active'
+  aspirationDeadline.value = ''
+  aspirationEditId.value = null
+  aspirationDialog.value = true
+}
+
+const editAspiration = (item, type) => {
+  aspirationDialogType.value = type
+  aspirationText.value = item.text
+  aspirationPriority.value = item.priority || 'medium'
+  aspirationLocked.value = item.locked
+  aspirationStatus.value = item.status || 'active'
+  aspirationDeadline.value = item.deadline || ''
+  aspirationEditId.value = item.id
+  aspirationDialog.value = true
+}
+
+const saveAspiration = async () => {
+  if (!aspirationText.value.trim()) return
+  aspirationSaving.value = true
+  try {
+    const type = aspirationDialogType.value
+    const payload = {
+      text: aspirationText.value.trim(),
+      priority: aspirationPriority.value,
+      locked: aspirationLocked.value,
+    }
+    if (type === 'goals') {
+      payload.status = aspirationStatus.value
+      payload.deadline = aspirationDeadline.value || null
+    }
+    if (aspirationEditId.value) {
+      await api.put(`/agents/${id.value}/aspirations/${type}/${aspirationEditId.value}`, payload)
+    } else {
+      await api.post(`/agents/${id.value}/aspirations/${type}`, payload)
+    }
+    aspirationDialog.value = false
+    await loadAspirations()
+    await loadData()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to save') }
+  finally { aspirationSaving.value = false }
+}
+
+const confirmDeleteAspiration = (item, type) => {
+  deleteAspirationItem.value = item
+  deleteAspirationType.value = type
+  deleteAspirationDialog.value = true
+}
+
+const doDeleteAspiration = async () => {
+  try {
+    await api.delete(`/agents/${id.value}/aspirations/${deleteAspirationType.value}/${deleteAspirationItem.value.id}`)
+    deleteAspirationDialog.value = false
+    await loadAspirations()
+    await loadData()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to delete') }
+}
+
 const doDeleteFile = async () => {
   try {
     await api.delete(`/agents/${id.value}/files/delete`, { params: { path: deleteFilePath.value } })
@@ -641,6 +867,7 @@ watch(tab, (val) => {
   if (val === 'memory') loadMemories()
   if (val === 'files') loadFiles()
   if (val === 'beliefs') loadBeliefs()
+  if (val === 'aspirations') loadAspirations()
 })
 
 watch(logLevel, () => { if (tab.value === 'logs') loadLogs() })

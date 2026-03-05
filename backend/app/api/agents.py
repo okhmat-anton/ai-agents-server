@@ -62,6 +62,11 @@ def _build_agent_response(agent: Agent) -> dict:
     beliefs = read_beliefs(agent.name)
     data["beliefs"] = beliefs
 
+    # Aspirations from aspirations.json
+    from app.api.agent_aspirations import read_aspirations
+    aspirations = read_aspirations(agent.name)
+    data["aspirations"] = aspirations
+
     # Thinking protocol (main)
     if agent.thinking_protocol:
         tp = agent.thinking_protocol

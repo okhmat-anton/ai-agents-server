@@ -89,6 +89,7 @@ class AgentResponse(BaseModel):
     num_thread: int
     num_gpu: int
     beliefs: dict = {}                 # from beliefs.json (filesystem)
+    aspirations: dict = {}             # from aspirations.json (filesystem)
     thinking_protocol_id: str | None = None
     thinking_protocol: dict | None = None  # expanded main protocol data
     protocols: list[dict] = []               # all assigned protocols with is_main flag

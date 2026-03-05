@@ -17,11 +17,11 @@ DEFAULT_PROTOCOLS = [
         "is_default": True,
         "steps": [
             {
-                "id": "s_0_select",
-                "type": "action",
-                "name": "Select Task",
-                "category": "analysis",
-                "instruction": "Review the available task list. Select the highest priority unfinished task. If no tasks are available, ask the user what they need help with.",
+                "id": "s_0_todo",
+                "type": "todo",
+                "name": "Create Task List",
+                "category": "planning",
+                "instruction": "Break down the request into clear, actionable tasks. Create a structured todo list to track progress through each task.",
             },
             {
                 "id": "s_1_analyze",
