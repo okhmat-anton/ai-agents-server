@@ -120,8 +120,8 @@ stop:
 	docker compose down
 
 stop-dev:
-	@lsof -ti:4700 | xargs kill -9 2>/dev/null || true
-	@lsof -ti:4200 | xargs kill -9 2>/dev/null || true
+	@lsof -ti:4700 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
+	@lsof -ti:4200 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true
 	@echo "Dev processes stopped"
 
 restart:
