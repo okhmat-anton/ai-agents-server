@@ -24,6 +24,7 @@ from app.api.terminal import router as terminal_router
 from app.api.processes import router as processes_router
 from app.api.chat import router as chat_router
 from app.api.skill_files import router as skill_files_router
+from app.api.agent_files import router as agent_files_router
 
 settings = get_settings()
 
@@ -93,6 +94,7 @@ async def log_errors_middleware(request: Request, call_next):
 app.include_router(auth_router)
 app.include_router(settings_router)
 app.include_router(agents_router)
+app.include_router(agent_files_router)
 app.include_router(tasks_router)
 app.include_router(agent_task_router)
 app.include_router(skills_router)

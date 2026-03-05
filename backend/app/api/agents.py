@@ -14,6 +14,11 @@ from app.models.memory import Memory
 from app.models.skill import AgentSkill
 from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentStatsResponse, AgentModelResponse
 from app.schemas.common import MessageResponse
+from app.api.agent_files import (
+    init_agent_directory, delete_agent_directory, duplicate_agent_directory,
+    sync_agent_to_filesystem, read_agent_config, read_agent_settings,
+    write_agent_config, write_agent_settings,
+)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -31,8 +36,25 @@ async def _load_agent(db: AsyncSession, agent_id) -> Agent | None:
 
 
 def _build_agent_response(agent: Agent) -> dict:
-    """Build response dict with resolved model names from agent_models."""
+    """Build response dict — DB identity + filesystem settings as source of truth."""
     data = {c.key: getattr(agent, c.key) for c in agent.__table__.columns}
+
+    # Overlay settings from filesystem (source of truth)
+    config = read_agent_config(agent.name)
+    if config:
+        data["description"] = config.get("description", data.get("description", ""))
+        data["system_prompt"] = config.get("system_prompt", data.get("system_prompt", ""))
+
+    file_settings = read_agent_settings(agent.name)
+    if file_settings:
+        for field in ("temperature", "top_p", "top_k", "max_tokens", "num_ctx",
+                      "repeat_penalty", "num_predict", "stop", "num_thread", "num_gpu"):
+            if field in file_settings:
+                data[field] = file_settings[field]
+        data["principles"] = file_settings.get("principles", [])
+    else:
+        data["principles"] = []
+
     agent_models_out = []
     for am in (agent.agent_models or []):
         mcr = am.model_config_rel
@@ -91,6 +113,30 @@ async def create_agent(
         )
         db.add(am)
     await db.flush()
+    await db.refresh(agent)
+
+    # Write files as source of truth
+    init_agent_directory(agent)
+    # Write config files from the provided data (not from DB defaults)
+    write_agent_config(agent.name, {
+        "name": agent.name,
+        "description": body.description or "",
+        "system_prompt": body.system_prompt or "",
+    })
+    write_agent_settings(agent.name, {
+        "temperature": body.temperature,
+        "top_p": body.top_p,
+        "top_k": body.top_k,
+        "max_tokens": body.max_tokens,
+        "num_ctx": body.num_ctx,
+        "repeat_penalty": body.repeat_penalty,
+        "num_predict": body.num_predict,
+        "stop": body.stop or [],
+        "num_thread": body.num_thread,
+        "num_gpu": body.num_gpu,
+        "principles": [],
+    })
+
     agent = await _load_agent(db, agent.id)
     return _build_agent_response(agent)
 
@@ -120,8 +166,11 @@ async def update_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     update_data = body.model_dump(exclude_unset=True, exclude={"models"})
-    for key, value in update_data.items():
-        setattr(agent, key, value)
+    old_name = agent.name
+
+    # Update DB identity fields (name, status only)
+    if "name" in update_data:
+        agent.name = update_data["name"]
 
     # If models list is provided, replace all agent_model entries
     if body.models is not None:
@@ -137,6 +186,48 @@ async def update_agent(
             db.add(am)
 
     await db.flush()
+    await db.refresh(agent)
+
+    # Handle rename: move directory
+    if agent.name != old_name:
+        import shutil
+        from app.api.agent_files import _get_agent_dir, _ensure_agents_dir
+        _ensure_agents_dir()
+        old_dir = _get_agent_dir(old_name)
+        new_dir = _get_agent_dir(agent.name)
+        if old_dir.exists():
+            shutil.move(str(old_dir), str(new_dir))
+
+    # Write settings to files (source of truth)
+    config = read_agent_config(agent.name)
+    settings_data = read_agent_settings(agent.name)
+
+    # Merge updated fields into file config
+    config_fields = {"name": agent.name}
+    if "description" in update_data:
+        config_fields["description"] = update_data["description"]
+    else:
+        config_fields["description"] = config.get("description", agent.description or "")
+    if "system_prompt" in update_data:
+        config_fields["system_prompt"] = update_data["system_prompt"]
+    else:
+        config_fields["system_prompt"] = config.get("system_prompt", agent.system_prompt or "")
+    write_agent_config(agent.name, config_fields)
+
+    # Merge updated generation params into settings file
+    gen_fields = ("temperature", "top_p", "top_k", "max_tokens", "num_ctx",
+                  "repeat_penalty", "num_predict", "stop", "num_thread", "num_gpu")
+    new_settings = {}
+    for f in gen_fields:
+        if f in update_data:
+            new_settings[f] = update_data[f]
+        elif f in settings_data:
+            new_settings[f] = settings_data[f]
+        else:
+            new_settings[f] = getattr(agent, f)
+    new_settings["principles"] = settings_data.get("principles", [])
+    write_agent_settings(agent.name, new_settings)
+
     agent = await _load_agent(db, agent.id)
     return _build_agent_response(agent)
 
@@ -151,7 +242,9 @@ async def delete_agent(
     agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    agent_name = agent.name
     await db.delete(agent)
+    delete_agent_directory(agent_name)
     return MessageResponse(message="Agent deleted")
 
 
@@ -231,21 +324,8 @@ async def duplicate_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    new_agent = Agent(
-        name=f"{agent.name} (copy)",
-        description=agent.description,
-        system_prompt=agent.system_prompt,
-        temperature=agent.temperature,
-        top_p=agent.top_p,
-        top_k=agent.top_k,
-        max_tokens=agent.max_tokens,
-        num_ctx=agent.num_ctx,
-        repeat_penalty=agent.repeat_penalty,
-        num_predict=agent.num_predict,
-        stop=agent.stop,
-        num_thread=agent.num_thread,
-        num_gpu=agent.num_gpu,
-    )
+    new_name = f"{agent.name} (copy)"
+    new_agent = Agent(name=new_name)
     db.add(new_agent)
     await db.flush()
 
@@ -260,6 +340,14 @@ async def duplicate_agent(
         )
         db.add(new_am)
     await db.flush()
+
+    # Duplicate filesystem directory (copies all files including settings)
+    duplicate_agent_directory(agent.name, new_name)
+    # Update agent.json with new name
+    config = read_agent_config(new_name)
+    config["name"] = new_name
+    write_agent_config(new_name, config)
+
     new_agent = await _load_agent(db, new_agent.id)
     return _build_agent_response(new_agent)
 

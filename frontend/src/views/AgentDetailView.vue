@@ -26,6 +26,7 @@
     <v-card>
       <v-tabs v-model="tab">
         <v-tab value="info">Info</v-tab>
+        <v-tab value="files">Files</v-tab>
         <v-tab value="tasks">Tasks</v-tab>
         <v-tab value="logs">Logs</v-tab>
         <v-tab value="skills">Skills</v-tab>
@@ -56,9 +57,23 @@
               </div>
             </v-list-item>
             <v-list-item><strong>Temperature:</strong>&nbsp;{{ agent.temperature }}</v-list-item>
-            <v-list-item><strong>Context:</strong>&nbsp;{{ agent.num_ctx }}</v-list-item>
+            <v-list-item><strong>Top P:</strong>&nbsp;{{ agent.top_p }}&nbsp;&nbsp;<strong>Top K:</strong>&nbsp;{{ agent.top_k }}</v-list-item>
+            <v-list-item><strong>Context:</strong>&nbsp;{{ agent.num_ctx }}&nbsp;&nbsp;<strong>Max Tokens:</strong>&nbsp;{{ agent.max_tokens }}</v-list-item>
+            <v-list-item><strong>Repeat Penalty:</strong>&nbsp;{{ agent.repeat_penalty }}&nbsp;&nbsp;<strong>Num Predict:</strong>&nbsp;{{ agent.num_predict }}</v-list-item>
+            <v-list-item><strong>Threads:</strong>&nbsp;{{ agent.num_thread }}&nbsp;&nbsp;<strong>GPU Layers:</strong>&nbsp;{{ agent.num_gpu }}</v-list-item>
             <v-list-item v-if="agent.description"><strong>Description:</strong>&nbsp;{{ agent.description }}</v-list-item>
           </v-list>
+
+          <!-- Principles -->
+          <div v-if="agent.principles && agent.principles.length" class="mt-4">
+            <div class="text-subtitle-2 mb-1">Principles</div>
+            <v-list density="compact">
+              <v-list-item v-for="(p, i) in agent.principles" :key="i" class="py-0">
+                <span class="text-grey mr-2">{{ i + 1 }}.</span> {{ p }}
+              </v-list-item>
+            </v-list>
+          </div>
+
           <div v-if="agent.system_prompt" class="mt-4">
             <div class="text-subtitle-2 mb-1">System Prompt</div>
             <v-sheet rounded class="pa-3 bg-grey-darken-4" style="white-space: pre-wrap; font-family: monospace; font-size: 13px;">{{ agent.system_prompt }}</v-sheet>
@@ -103,6 +118,71 @@
           <div v-else class="text-center text-grey pa-6">No skills attached</div>
         </div>
 
+        <!-- Files Tab -->
+        <div v-if="tab === 'files'" class="agent-files-tab">
+          <div class="d-flex" style="height: 500px;">
+            <!-- File tree sidebar -->
+            <div class="file-sidebar" style="width: 260px; min-width: 200px; border-right: 1px solid #3c3c3c; overflow-y: auto;">
+              <div class="d-flex align-center px-2 py-1" style="border-bottom: 1px solid #3c3c3c; height: 36px;">
+                <span class="text-caption text-uppercase font-weight-bold text-grey">Files</span>
+                <v-spacer />
+                <v-btn icon="mdi-file-plus-outline" size="x-small" variant="text" @click="showNewFile(false)" title="New File" />
+                <v-btn icon="mdi-folder-plus-outline" size="x-small" variant="text" @click="showNewFile(true)" title="New Folder" />
+                <v-btn icon="mdi-refresh" size="x-small" variant="text" @click="loadFiles" title="Refresh" />
+              </div>
+              <div class="pa-1">
+                <div
+                  v-for="node in flatFileTree"
+                  :key="node.path"
+                  class="file-node d-flex align-center px-2 py-1"
+                  :class="{ 'file-node-selected': currentFilePath === node.path }"
+                  :style="{ paddingLeft: (node.depth * 16 + 8) + 'px', cursor: 'pointer' }"
+                  @click="node.is_dir ? toggleDir(node.path) : openFile(node)"
+                >
+                  <v-icon size="16" :color="node.is_dir ? 'amber' : 'grey'" class="mr-1">{{ fileIcon(node) }}</v-icon>
+                  <span class="text-body-2 flex-grow-1" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ node.name }}</span>
+                  <v-icon
+                    v-if="!['agent.json', 'settings.json'].includes(node.path) && node.path !== 'data'"
+                    size="14" class="file-delete-btn" color="grey"
+                    @click.stop="confirmDeleteFile(node.path)"
+                  >mdi-close</v-icon>
+                </div>
+                <div v-if="!fileTree.length" class="text-center text-grey pa-4 text-caption">No files</div>
+              </div>
+            </div>
+
+            <!-- Editor area -->
+            <div class="flex-grow-1 d-flex flex-column" style="min-width: 0;">
+              <!-- Tab bar -->
+              <div v-if="currentFilePath" class="d-flex align-center px-3" style="height: 36px; background: #2d2d2d; border-bottom: 1px solid #3c3c3c;">
+                <span class="text-body-2">{{ currentFilePath }}</span>
+                <v-chip v-if="fileModified" color="warning" size="x-small" class="ml-2" variant="flat">modified</v-chip>
+                <v-spacer />
+                <v-btn v-if="fileModified" color="success" size="x-small" variant="flat" @click="saveFile" :loading="fileSaving">Save</v-btn>
+              </div>
+              <!-- Textarea editor -->
+              <div v-if="currentFilePath" class="flex-grow-1" style="overflow: hidden;">
+                <textarea
+                  ref="editorArea"
+                  v-model="fileContent"
+                  class="agent-file-editor"
+                  spellcheck="false"
+                  @input="fileModified = true"
+                  @keydown.ctrl.s.prevent="saveFile"
+                  @keydown.meta.s.prevent="saveFile"
+                />
+              </div>
+              <!-- Empty state -->
+              <div v-else class="d-flex align-center justify-center flex-grow-1">
+                <div class="text-center text-grey">
+                  <v-icon size="48" class="mb-2">mdi-file-document-outline</v-icon>
+                  <div class="text-body-1">Select a file to view or edit</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Memory Tab -->
         <div v-if="tab === 'memory'">
           <v-data-table :headers="memHeaders" :items="memories" density="compact" hover>
@@ -119,6 +199,38 @@
         </div>
       </v-card-text>
     </v-card>
+
+    <!-- New File Dialog -->
+    <v-dialog v-model="newFileDialog" max-width="450">
+      <v-card>
+        <v-card-title>{{ newFileIsDir ? 'New Folder' : 'New File' }}</v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="newFilePath"
+            :label="newFileIsDir ? 'Folder path (e.g. data/reports)' : 'File path (e.g. data/notes.md)'"
+            density="compact" autofocus @keyup.enter="createFile"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="newFileDialog = false">Cancel</v-btn>
+          <v-btn color="primary" @click="createFile">Create</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Delete File Dialog -->
+    <v-dialog v-model="deleteFileDialog" max-width="400">
+      <v-card>
+        <v-card-title>Delete {{ deleteFilePath }}</v-card-title>
+        <v-card-text>This action cannot be undone.</v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="deleteFileDialog = false">Cancel</v-btn>
+          <v-btn color="error" @click="doDeleteFile">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -139,6 +251,20 @@ const logs = ref([])
 const agentSkills = ref([])
 const memories = ref([])
 const logLevel = ref('all')
+
+// Files tab state
+const fileTree = ref([])
+const currentFilePath = ref(null)
+const fileContent = ref('')
+const fileModified = ref(false)
+const fileSaving = ref(false)
+const expandedDirs = ref(new Set())
+const newFileDialog = ref(false)
+const newFileIsDir = ref(false)
+const newFilePath = ref('')
+const deleteFileDialog = ref(false)
+const deleteFilePath = ref('')
+const editorArea = ref(null)
 
 const id = computed(() => route.params.id)
 
@@ -196,11 +322,110 @@ const loadMemories = async () => {
   memories.value = data
 }
 
+// ===== Files =====
+const loadFiles = async () => {
+  try {
+    const { data } = await api.get(`/agents/${id.value}/files`)
+    fileTree.value = data
+    // Auto-expand top-level dirs
+    const autoExpand = (nodes) => {
+      for (const n of nodes) {
+        if (n.is_dir) { expandedDirs.value.add(n.path); if (n.children) autoExpand(n.children) }
+      }
+    }
+    autoExpand(data)
+  } catch { fileTree.value = [] }
+}
+
+const flatFileTree = computed(() => {
+  const result = []
+  const walk = (nodes, depth) => {
+    for (const n of nodes) {
+      result.push({ ...n, depth })
+      if (n.is_dir && expandedDirs.value.has(n.path) && n.children) {
+        walk(n.children, depth + 1)
+      }
+    }
+  }
+  walk(fileTree.value, 0)
+  return result
+})
+
+const toggleDir = (path) => {
+  if (expandedDirs.value.has(path)) expandedDirs.value.delete(path)
+  else expandedDirs.value.add(path)
+}
+
+const fileIcon = (node) => {
+  if (node.is_dir) return expandedDirs.value.has(node.path) ? 'mdi-folder-open' : 'mdi-folder'
+  const ext = node.name.split('.').pop().toLowerCase()
+  const map = {
+    json: 'mdi-code-json', py: 'mdi-language-python', js: 'mdi-language-javascript',
+    md: 'mdi-language-markdown', txt: 'mdi-file-document-outline', sh: 'mdi-console',
+    yaml: 'mdi-file-cog', yml: 'mdi-file-cog', html: 'mdi-language-html5',
+  }
+  return map[ext] || 'mdi-file-outline'
+}
+
+const openFile = async (node) => {
+  if (fileModified.value && currentFilePath.value) {
+    if (!confirm('Unsaved changes will be lost. Continue?')) return
+  }
+  try {
+    const { data } = await api.get(`/agents/${id.value}/files/read`, { params: { path: node.path } })
+    currentFilePath.value = data.path
+    fileContent.value = data.content
+    fileModified.value = false
+  } catch (e) { console.error('Failed to open file:', e) }
+}
+
+const saveFile = async () => {
+  if (!currentFilePath.value) return
+  fileSaving.value = true
+  try {
+    await api.put(`/agents/${id.value}/files/write-json`, { path: currentFilePath.value, content: fileContent.value })
+    fileModified.value = false
+    // Reload agent data if config files changed
+    if (['agent.json', 'settings.json'].includes(currentFilePath.value)) {
+      await loadData()
+    }
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to save') }
+  finally { fileSaving.value = false }
+}
+
+const showNewFile = (isDir) => { newFileIsDir.value = isDir; newFilePath.value = ''; newFileDialog.value = true }
+
+const createFile = async () => {
+  if (!newFilePath.value.trim()) return
+  try {
+    await api.post(`/agents/${id.value}/files/create`, {
+      path: newFilePath.value.trim(), is_dir: newFileIsDir.value, content: '',
+    })
+    newFileDialog.value = false
+    await loadFiles()
+    if (!newFileIsDir.value) await openFile({ path: newFilePath.value.trim(), is_dir: false })
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to create') }
+}
+
+const confirmDeleteFile = (path) => { deleteFilePath.value = path; deleteFileDialog.value = true }
+
+const doDeleteFile = async () => {
+  try {
+    await api.delete(`/agents/${id.value}/files/delete`, { params: { path: deleteFilePath.value } })
+    deleteFileDialog.value = false
+    if (currentFilePath.value === deleteFilePath.value || currentFilePath.value?.startsWith(deleteFilePath.value + '/')) {
+      currentFilePath.value = null; fileContent.value = ''; fileModified.value = false
+    }
+    await loadFiles()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to delete') }
+}
+
 watch(tab, (val) => {
   if (val === 'tasks') loadTasks()
   if (val === 'logs') loadLogs()
   if (val === 'skills') loadSkills()
   if (val === 'memory') loadMemories()
+  if (val === 'files') loadFiles()
 })
 
 watch(logLevel, () => { if (tab.value === 'logs') loadLogs() })
@@ -211,3 +436,40 @@ const createAgentTask = () => router.push(`/tasks/new?agent_id=${id.value}`)
 
 onMounted(loadData)
 </script>
+
+<style scoped>
+.agent-file-editor {
+  width: 100%;
+  height: 100%;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.file-node:hover {
+  background: #2a2d2e;
+}
+
+.file-node-selected {
+  background: #094771 !important;
+}
+
+.file-delete-btn {
+  display: none;
+}
+
+.file-node:hover .file-delete-btn {
+  display: inline-flex;
+}
+
+.file-delete-btn:hover {
+  color: #f44 !important;
+}
+</style>

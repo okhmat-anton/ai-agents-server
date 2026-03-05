@@ -23,6 +23,7 @@ from app.models.chat import ChatSession, ChatMessage
 from app.llm.base import Message, GenerationParams, LLMResponse
 from app.llm.ollama import OllamaProvider
 from app.llm.openai_compatible import OpenAICompatibleProvider
+from app.api.agent_files import read_agent_config, read_agent_settings
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -156,11 +157,12 @@ async def _resolve_model(model_id_str: str, db: AsyncSession) -> tuple[str, str,
 
 async def _chat_with_model(
     provider: str, base_url: str, model_name: str, api_key: str | None,
-    messages: list[dict], temperature: float = 0.7,
+    messages: list[dict], params: GenerationParams | None = None,
 ) -> LLMResponse:
     """Send chat to a single model and return response."""
     llm_messages = [Message(role=m["role"], content=m["content"]) for m in messages]
-    params = GenerationParams(temperature=temperature)
+    if params is None:
+        params = GenerationParams()
 
     if provider == "ollama":
         llm = OllamaProvider(base_url)
@@ -381,12 +383,35 @@ async def send_message(
     db.add(user_msg)
     await db.flush()
 
+    # Build generation params — agent's file settings are source of truth
+    gen_params = GenerationParams(temperature=session.temperature)
+    system_prompt = session.system_prompt
+
+    if session.agent_id and session.agent:
+        agent_name = session.agent.name
+        # Read system_prompt from agent.json (filesystem = source of truth)
+        agent_config = read_agent_config(agent_name)
+        agent_system_prompt = agent_config.get("system_prompt", "")
+        system_prompt = system_prompt or agent_system_prompt
+
+        # Read generation params from settings.json (filesystem = source of truth)
+        agent_settings = read_agent_settings(agent_name)
+        if agent_settings:
+            gen_params = GenerationParams(
+                temperature=agent_settings.get("temperature", session.temperature),
+                top_p=agent_settings.get("top_p", 0.9),
+                top_k=agent_settings.get("top_k", 40),
+                max_tokens=agent_settings.get("max_tokens", 2048),
+                num_ctx=agent_settings.get("num_ctx", 32768),
+                repeat_penalty=agent_settings.get("repeat_penalty", 1.1),
+                num_predict=agent_settings.get("num_predict", -1),
+                stop=agent_settings.get("stop") or None,
+                num_thread=agent_settings.get("num_thread", 8),
+                num_gpu=agent_settings.get("num_gpu", 1),
+            )
+
     # Build conversation history
     history = []
-    system_prompt = session.system_prompt
-    if session.agent_id and session.agent:
-        system_prompt = system_prompt or session.agent.system_prompt
-
     if system_prompt:
         history.append({"role": "system", "content": system_prompt})
 
@@ -401,7 +426,7 @@ async def send_message(
     if session.multi_model and len(model_ids) > 1:
         # ── Multi-model mode ──
         response_data = await _multi_model_chat(
-            model_ids, history, session.temperature, db
+            model_ids, history, gen_params, db
         )
     else:
         # ── Single-model mode ──
@@ -410,7 +435,7 @@ async def send_message(
         try:
             llm_resp = await _chat_with_model(
                 provider, base_url, model_name, api_key,
-                history, session.temperature,
+                history, gen_params,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Model error: {str(e)}")
@@ -452,7 +477,7 @@ async def send_message(
 async def _multi_model_chat(
     model_ids: list[str],
     history: list[dict],
-    temperature: float,
+    params: GenerationParams,
     db: AsyncSession,
 ) -> dict:
     """
@@ -476,7 +501,7 @@ async def _multi_model_chat(
         try:
             resp = await _chat_with_model(
                 provider, base_url, model_name, api_key,
-                history, temperature,
+                history, params,
             )
             return {"model": model_name, "content": resp.content, "tokens": resp.total_tokens}
         except Exception as e:
@@ -525,7 +550,7 @@ async def _multi_model_chat(
         try:
             synth_resp = await _chat_with_model(
                 synth_provider, synth_base_url, synth_model, synth_api_key,
-                synth_history, temperature,
+                synth_history, params,
             )
             total_tokens += synth_resp.total_tokens
 
@@ -581,7 +606,7 @@ async def auto_title_session(
         try:
             provider, base_url, model_name, api_key = await _resolve_model(model_ids[0], db)
             prompt = [{"role": "user", "content": f"Generate a very short title (3-6 words) for this conversation:\n\n{summary}\n\nTitle:"}]
-            resp = await _chat_with_model(provider, base_url, model_name, api_key, prompt, 0.3)
+            resp = await _chat_with_model(provider, base_url, model_name, api_key, prompt, GenerationParams(temperature=0.3))
             new_title = resp.content.strip().strip('"').strip("'")[:100]
             session.title = new_title
             await db.flush()

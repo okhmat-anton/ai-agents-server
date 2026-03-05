@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Skills
     SKILLS_DIR: str = "./data/skills"
 
+    # Agents
+    AGENTS_DIR: str = "./data/agents"
+
     class Config:
         env_file = ".env"
         extra = "ignore"
