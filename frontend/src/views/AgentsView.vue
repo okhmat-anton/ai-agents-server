@@ -15,6 +15,15 @@
           hover
           @click:row="(_, { item }) => $router.push(`/agents/${item.id}/detail`)"
         >
+          <template #item.name="{ item }">
+            <div class="d-flex align-center">
+              <v-avatar :size="32" :color="item.avatar_url ? undefined : 'primary'" variant="tonal" class="mr-2">
+                <v-img v-if="item.avatar_url" :src="item.avatar_url" cover />
+                <span v-else class="text-caption font-weight-bold">{{ item.name?.charAt(0).toUpperCase() }}</span>
+              </v-avatar>
+              {{ item.name }}
+            </div>
+          </template>
           <template #item.status="{ item }">
             <v-chip :color="statusColor(item.status)" size="small" variant="tonal">{{ item.status }}</v-chip>
           </template>

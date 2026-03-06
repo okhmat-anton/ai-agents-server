@@ -33,6 +33,9 @@ class Agent(Base):
     filesystem_access: Mapped[bool] = mapped_column(Boolean, default=False)
     system_access: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Avatar
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True, default=None)
+
     # Self-thinking mode: auto-generate tasks when idle
     self_thinking: Mapped[bool] = mapped_column(Boolean, default=False)
 

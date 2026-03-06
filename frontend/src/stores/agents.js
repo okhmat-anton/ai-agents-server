@@ -63,9 +63,36 @@ export const useAgentsStore = defineStore('agents', {
       return data
     },
 
+    async uploadAvatar(id, file) {
+      const formData = new FormData()
+      formData.append('file', file)
+      const { data } = await api.post(`/agents/${id}/avatar`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      // Update local agent avatar_url
+      if (this.currentAgent && this.currentAgent.id === id) {
+        this.currentAgent.avatar_url = data.avatar_url
+      }
+      this._updateLocalField(id, 'avatar_url', data.avatar_url)
+      return data
+    },
+
+    async deleteAvatar(id) {
+      await api.delete(`/agents/${id}/avatar`)
+      if (this.currentAgent && this.currentAgent.id === id) {
+        this.currentAgent.avatar_url = null
+      }
+      this._updateLocalField(id, 'avatar_url', null)
+    },
+
     _updateLocal(agent) {
       const idx = this.agents.findIndex((a) => a.id === agent.id)
       if (idx >= 0) this.agents[idx] = agent
+    },
+
+    _updateLocalField(id, field, value) {
+      const idx = this.agents.findIndex((a) => a.id === id)
+      if (idx >= 0) this.agents[idx][field] = value
     },
   },
 })

@@ -104,6 +104,7 @@ class AgentResponse(BaseModel):
     filesystem_access: bool = False
     system_access: bool = False
     self_thinking: bool = False
+    avatar_url: str | None = None
     beliefs: dict = {}                 # from beliefs.json (filesystem)
     aspirations: dict = {}             # from aspirations.json (filesystem)
     thinking_protocol_id: str | None = None

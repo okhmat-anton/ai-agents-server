@@ -2,7 +2,14 @@
   <div v-if="agent">
     <div class="d-flex align-center mb-6">
       <v-btn icon="mdi-arrow-left" variant="text" @click="$router.push('/agents')" />
-      <div class="text-h4 font-weight-bold ml-2">{{ agent.name }}</div>
+
+      <!-- Avatar (display only) -->
+      <v-avatar :size="144" :color="agent.avatar_url ? undefined : 'primary'" variant="tonal" class="ml-2 mr-3">
+        <v-img v-if="agent.avatar_url" :src="agent.avatar_url" cover />
+        <span v-else class="text-h3 font-weight-bold">{{ agent.name?.charAt(0).toUpperCase() }}</span>
+      </v-avatar>
+
+      <div class="text-h4 font-weight-bold">{{ agent.name }}</div>
       <v-chip :color="statusColor(agent.status)" class="ml-3" variant="tonal">{{ agent.status }}</v-chip>
       <v-chip v-if="autonomousRun && autonomousRun.status === 'running'" color="green" variant="flat" size="small" class="ml-2">
         <v-icon start size="14">mdi-sync</v-icon>

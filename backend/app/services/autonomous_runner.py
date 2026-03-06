@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1019,7 +1022,7 @@ def _extract_code_fallback(
         calls.append({
             "skill_name": "project_file_write",
             "args": {
-                "slug": slug,
+                "project_slug": slug,
                 "path": path,
                 "content": code_stripped,
             },

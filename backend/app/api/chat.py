@@ -706,6 +706,25 @@ async def _execute_skill(skill_name: str, args: dict, agent_skills: list[dict]) 
         if not execute_fn:
             return {"error": f"Skill '{skill_name}' has no execute() function"}
 
+        # Normalize args: map common LLM mistakes to actual parameter names
+        import inspect
+        sig = inspect.signature(execute_fn)
+        expected_params = set(sig.parameters.keys())
+        normalized = {}
+        # Build alias map from input_schema: e.g. if param is 'project_slug',
+        # also accept 'slug' (last part after underscore split)
+        alias_map = {}
+        for p in expected_params:
+            alias_map[p] = p
+            parts = p.split('_')
+            if len(parts) > 1:
+                alias_map[parts[-1]] = p          # slug -> project_slug
+                alias_map['_'.join(parts[1:])] = p  # project_slug -> project_slug (noop but safe)
+        for k, v in args.items():
+            mapped = alias_map.get(k, k)
+            normalized[mapped] = v
+        args = normalized
+
         import asyncio
         if asyncio.iscoroutinefunction(execute_fn):
             result = await execute_fn(**args)

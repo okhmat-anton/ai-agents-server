@@ -516,7 +516,7 @@ def format_loop_protocol_prompt(
             sections.append("")
             sections.append("**HOW TO SAVE CODE** — you MUST write this exact format in your response:")
             sections.append("```")
-            sections.append(f'<<<SKILL:project_file_write>>> {{"slug": "{first_task_slug}", "path": "solution.py", "content": "# your code here\\nprint(42)"}} <<<END_SKILL>>>')
+            sections.append(f'<<<SKILL:project_file_write>>> {{"project_slug": "{first_task_slug}", "path": "solution.py", "content": "# your code here\\nprint(42)"}} <<<END_SKILL>>>')
             sections.append("```")
             sections.append("⚠️ If you write code as markdown/text WITHOUT the <<<SKILL:project_file_write>>> markers, the code is LOST and NOT saved.")
             sections.append("")

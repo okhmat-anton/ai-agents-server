@@ -8,6 +8,37 @@
     <v-card>
       <v-card-text>
         <v-form @submit.prevent="handleSubmit">
+          <!-- Avatar Upload -->
+          <div class="d-flex align-center mb-4">
+            <div style="position: relative; cursor: pointer;" @click="triggerAvatarUpload">
+              <v-avatar :size="72" :color="avatarPreview || (isEdit && form.avatar_url) ? undefined : 'primary'" variant="tonal">
+                <v-img v-if="avatarPreview" :src="avatarPreview" cover />
+                <v-img v-else-if="form.avatar_url" :src="form.avatar_url" cover />
+                <v-icon v-else size="36">mdi-account</v-icon>
+              </v-avatar>
+              <v-btn
+                icon="mdi-camera"
+                size="x-small"
+                color="primary"
+                variant="flat"
+                style="position: absolute; bottom: -2px; right: -2px;"
+                @click.stop="triggerAvatarUpload"
+              />
+              <input
+                ref="avatarInput"
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                style="display: none;"
+                @change="handleAvatarChange"
+              />
+            </div>
+            <div class="ml-4">
+              <div class="text-body-2 text-grey">Agent Avatar</div>
+              <div class="text-caption text-grey-darken-1">Photos will be resized. GIFs are kept as-is.</div>
+              <v-btn v-if="avatarPreview || form.avatar_url" size="x-small" variant="text" color="error" class="mt-1" @click="removeAvatar">Remove</v-btn>
+            </div>
+          </div>
+
           <v-row>
             <v-col cols="12" md="6">
               <v-text-field v-model="form.name" label="Name" required />
@@ -228,6 +259,32 @@ const settingsStore = useSettingsStore()
 const saving = ref(false)
 const protocolsList = ref([])
 
+// Avatar state
+const avatarInput = ref(null)
+const avatarFile = ref(null)
+const avatarPreview = ref(null)
+const avatarRemoved = ref(false)
+
+const triggerAvatarUpload = () => {
+  avatarInput.value?.click()
+}
+
+const handleAvatarChange = (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+  avatarFile.value = file
+  avatarPreview.value = URL.createObjectURL(file)
+  avatarRemoved.value = false
+}
+
+const removeAvatar = () => {
+  avatarFile.value = null
+  avatarPreview.value = null
+  avatarRemoved.value = true
+  form.value.avatar_url = null
+  if (avatarInput.value) avatarInput.value.value = ''
+}
+
 const isEdit = computed(() => !!route.params.id)
 const models = computed(() => settingsStore.models)
 const protocolItems = computed(() => protocolsList.value)
@@ -254,6 +311,7 @@ const form = ref({
   models: [],  // array of { model_config_id, task_type, tags, priority }
   thinking_protocol_id: null,
   protocol_ids: [],           // all selected protocol IDs
+  avatar_url: null,
 })
 
 const addModel = () => {
@@ -282,7 +340,7 @@ onMounted(async () => {
     // Copy scalar fields
     const scalarKeys = [
       'name', 'description', 'mission', 'system_prompt', 'temperature', 'top_p', 'top_k',
-      'max_tokens', 'num_ctx', 'repeat_penalty', 'num_thread', 'num_gpu',
+      'max_tokens', 'num_ctx', 'repeat_penalty', 'num_thread', 'num_gpu', 'avatar_url',
     ]
     scalarKeys.forEach((key) => {
       if (agent[key] !== undefined && agent[key] !== null) form.value[key] = agent[key]
@@ -315,10 +373,20 @@ onMounted(async () => {
 const handleSubmit = async () => {
   saving.value = true
   try {
+    let agentData
     if (isEdit.value) {
-      await agentsStore.updateAgent(route.params.id, form.value)
+      agentData = await agentsStore.updateAgent(route.params.id, form.value)
     } else {
-      await agentsStore.createAgent(form.value)
+      agentData = await agentsStore.createAgent(form.value)
+    }
+    const agentId = agentData?.id || route.params.id
+    // Upload avatar if a new file was selected
+    if (avatarFile.value && agentId) {
+      await agentsStore.uploadAvatar(agentId, avatarFile.value)
+    }
+    // Delete avatar if removed
+    if (avatarRemoved.value && !avatarFile.value && agentId) {
+      await agentsStore.deleteAvatar(agentId)
     }
     router.push('/agents')
   } finally {

@@ -1,5 +1,7 @@
+import os
+import shutil
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload
@@ -494,3 +496,101 @@ async def agent_stats(
         total_memories=memories,
         total_skills=skills,
     )
+
+
+# --------------- Avatar Upload ---------------
+
+AVATAR_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+AVATAR_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+AVATAR_RESIZE_PX = 256  # Max width/height for non-GIF images
+
+
+@router.post("/{agent_id}/avatar")
+async def upload_avatar(
+    agent_id: UUID,
+    file: UploadFile = File(...),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload or replace agent avatar. Photos are resized; GIFs are kept as-is."""
+    agent = await _load_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Validate content type
+    content_type = file.content_type or ""
+    if content_type not in AVATAR_ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type: {content_type}. Allowed: {', '.join(AVATAR_ALLOWED_TYPES)}")
+
+    # Read file data
+    data = await file.read()
+    if len(data) > AVATAR_MAX_SIZE:
+        raise HTTPException(status_code=400, detail=f"File too large. Max {AVATAR_MAX_SIZE // (1024*1024)} MB")
+
+    is_gif = content_type == "image/gif"
+
+    # Determine extension
+    ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
+    ext = ext_map.get(content_type, "png")
+
+    # Agent avatar directory
+    base_dir = os.path.join("data", "agents", agent.name)
+    os.makedirs(base_dir, exist_ok=True)
+
+    # Remove old avatar files
+    for old in os.listdir(base_dir):
+        if old.startswith("avatar."):
+            os.remove(os.path.join(base_dir, old))
+
+    avatar_filename = f"avatar.{ext}"
+    avatar_path = os.path.join(base_dir, avatar_filename)
+
+    if is_gif:
+        # GIF — save as-is, no resize
+        with open(avatar_path, "wb") as f:
+            f.write(data)
+    else:
+        # Resize photo using Pillow
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(data))
+
+        # Convert RGBA/P to RGB for JPEG
+        if ext == "jpg" and img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        # Resize keeping aspect ratio, fit within AVATAR_RESIZE_PX x AVATAR_RESIZE_PX
+        img.thumbnail((AVATAR_RESIZE_PX, AVATAR_RESIZE_PX), Image.LANCZOS)
+        img.save(avatar_path, quality=90)
+
+    # Build URL relative path (served via /api/uploads/agents/<name>/avatar.<ext>)
+    avatar_url = f"/api/uploads/agents/{agent.name}/{avatar_filename}"
+
+    # Update DB
+    agent.avatar_url = avatar_url
+    await db.commit()
+
+    return {"avatar_url": avatar_url}
+
+
+@router.delete("/{agent_id}/avatar")
+async def delete_avatar(
+    agent_id: UUID,
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove agent avatar."""
+    agent = await _load_agent(db, agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    base_dir = os.path.join("data", "agents", agent.name)
+    if os.path.isdir(base_dir):
+        for old in os.listdir(base_dir):
+            if old.startswith("avatar."):
+                os.remove(os.path.join(base_dir, old))
+
+    agent.avatar_url = None
+    await db.commit()
+
+    return {"detail": "Avatar deleted"}

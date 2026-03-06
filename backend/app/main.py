@@ -1,8 +1,10 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 
 # Configure app-level logging so watchdog and other services can log
@@ -138,6 +140,11 @@ app.include_router(autonomous_router)
 app.include_router(projects_router)
 app.include_router(agent_error_router)
 app.include_router(all_errors_router)
+
+# Serve uploaded files (avatars, etc.) from data/agents/ directory
+_uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "agents")
+os.makedirs(_uploads_dir, exist_ok=True)
+app.mount("/api/uploads/agents", StaticFiles(directory=_uploads_dir), name="uploads_agents")
 
 
 @app.get("/")
