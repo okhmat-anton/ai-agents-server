@@ -36,5 +36,5 @@ async def get_redis() -> aioredis.Redis:
 
 async def init_db():
     async with engine.begin() as conn:
-        from app.models import user, model_config, agent, agent_model, task, log, api_key, skill, memory, system_setting, chat, thinking_protocol, agent_protocol  # noqa
+        from app.models import user, model_config, agent, agent_model, task, log, api_key, skill, memory, system_setting, chat, thinking_protocol, agent_protocol, autonomous_run  # noqa
         await conn.run_sync(Base.metadata.create_all)

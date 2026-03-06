@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/protocols", tags=["thinking-protocols"], depende
 
 STEP_TYPES = ("action", "loop", "decision", "delegate", "todo")
 CATEGORIES = ("analysis", "planning", "execution", "verification", "output", "other")
-PROTOCOL_TYPES = ("standard", "orchestrator")
+PROTOCOL_TYPES = ("standard", "orchestrator", "loop")
 
 
 class StepBase(BaseModel):

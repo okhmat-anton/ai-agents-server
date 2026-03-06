@@ -37,6 +37,7 @@ from app.services.protocol_executor import (
     parse_todo_list,
     parse_delegate,
 )
+from app.services.thinking_log_service import ThinkingTracker
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -567,70 +568,125 @@ async def send_message(
     db.add(user_msg)
     await db.flush()
 
+    # ── Initialize thinking tracker (only for agent sessions) ──
+    tracker = None
+    is_agent_session = bool(session.agent_id and session.agent)
+    if is_agent_session:
+        tracker = ThinkingTracker(db, session.agent_id, session.id, body.content)
+        await tracker.start()
+
     # Build generation params — agent's file settings are source of truth
     gen_params = GenerationParams(temperature=session.temperature)
     system_prompt = session.system_prompt
     agent_protocols = []
     agent_skills = []
     agent_beliefs = None
+    llm_calls_count = 0
+    _resolved_model_name = None
 
-    if session.agent_id and session.agent:
-        agent = session.agent
-        agent_name = agent.name
+    try:
+        if is_agent_session:
+            agent = session.agent
+            agent_name = agent.name
 
-        # Read system_prompt from agent.json (filesystem = source of truth)
-        agent_config = read_agent_config(agent_name)
-        base_system_prompt = agent_config.get("system_prompt", "")
+            # ── Step: Load agent config ──
+            if tracker:
+                tracker.start_step_timer()
+            agent_config = read_agent_config(agent_name)
+            base_system_prompt = agent_config.get("system_prompt", "")
 
-        # Read generation params from settings.json (filesystem = source of truth)
-        agent_settings = read_agent_settings(agent_name)
-        if agent_settings:
-            gen_params = GenerationParams(
-                temperature=agent_settings.get("temperature", session.temperature),
-                top_p=agent_settings.get("top_p", 0.9),
-                top_k=agent_settings.get("top_k", 40),
-                max_tokens=agent_settings.get("max_tokens", 2048),
-                num_ctx=agent_settings.get("num_ctx", 32768),
-                repeat_penalty=agent_settings.get("repeat_penalty", 1.1),
-                num_predict=agent_settings.get("num_predict", -1),
-                stop=agent_settings.get("stop") or None,
-                num_thread=agent_settings.get("num_thread", 8),
-                num_gpu=agent_settings.get("num_gpu", 1),
-            )
+            agent_settings = read_agent_settings(agent_name)
+            if agent_settings:
+                gen_params = GenerationParams(
+                    temperature=agent_settings.get("temperature", session.temperature),
+                    top_p=agent_settings.get("top_p", 0.9),
+                    top_k=agent_settings.get("top_k", 40),
+                    max_tokens=agent_settings.get("max_tokens", 2048),
+                    num_ctx=agent_settings.get("num_ctx", 32768),
+                    repeat_penalty=agent_settings.get("repeat_penalty", 1.1),
+                    num_predict=agent_settings.get("num_predict", -1),
+                    stop=agent_settings.get("stop") or None,
+                    num_thread=agent_settings.get("num_thread", 8),
+                    num_gpu=agent_settings.get("num_gpu", 1),
+                )
 
-        # Load protocols, skills, beliefs, aspirations
-        agent_protocols = await _load_agent_protocols(agent, db)
-        agent_skills = await _load_agent_skills(agent.id, db, agent=agent)
-        agent_beliefs = read_beliefs(agent_name)
-        from app.api.agent_aspirations import read_aspirations
-        agent_aspirations = read_aspirations(agent_name)
+            if tracker:
+                await tracker.step(
+                    "config_load", "Load agent configuration",
+                    input_data={"agent_name": agent_name},
+                    output_data={
+                        "has_system_prompt": bool(base_system_prompt),
+                        "system_prompt_length": len(base_system_prompt),
+                        "gen_params": {
+                            "temperature": gen_params.temperature,
+                            "top_p": gen_params.top_p,
+                            "top_k": gen_params.top_k,
+                            "max_tokens": gen_params.max_tokens,
+                            "num_ctx": gen_params.num_ctx,
+                        },
+                    },
+                    duration_ms=tracker.elapsed_step_ms(),
+                )
 
-        # Get current protocol state (todo list, active child protocol)
-        protocol_state = session.protocol_state or {}
-        current_todo = protocol_state.get("todo_list")
-        active_child = protocol_state.get("active_child_protocol")
+            # ── Step: Load protocols, skills, beliefs, aspirations ──
+            if tracker:
+                tracker.start_step_timer()
+            agent_protocols = await _load_agent_protocols(agent, db)
+            agent_skills = await _load_agent_skills(agent.id, db, agent=agent)
+            agent_beliefs = read_beliefs(agent_name)
+            from app.api.agent_aspirations import read_aspirations
+            agent_aspirations = read_aspirations(agent_name)
 
-        # Build protocol-enhanced system prompt
-        if agent_protocols:
-            # If there's an active child protocol (from delegation), use it
-            if active_child:
-                child_proto = None
-                for p in agent_protocols:
-                    if p["name"] == active_child or p["id"] == active_child:
-                        child_proto = p
-                        break
-                if child_proto:
-                    system_prompt = build_agent_system_prompt(
-                        base_system_prompt=base_system_prompt,
-                        agent_name=agent_name,
-                        protocols=[{**child_proto, "is_main": True}],
-                        available_skills=agent_skills or None,
-                        current_todo=current_todo,
-                        beliefs=agent_beliefs,
-                        aspirations=agent_aspirations,
-                    )
+            if tracker:
+                await tracker.step(
+                    "context_load", "Load protocols, skills, beliefs, aspirations",
+                    output_data={
+                        "protocols_count": len(agent_protocols),
+                        "protocols": [p.get("name", "?") for p in agent_protocols],
+                        "skills_count": len(agent_skills),
+                        "skills": [s.get("name", "?") for s in agent_skills],
+                        "has_beliefs": bool(agent_beliefs),
+                        "has_aspirations": bool(agent_aspirations),
+                    },
+                    duration_ms=tracker.elapsed_step_ms(),
+                )
+
+            # Get current protocol state (todo list, active child protocol)
+            protocol_state = session.protocol_state or {}
+            current_todo = protocol_state.get("todo_list")
+            active_child = protocol_state.get("active_child_protocol")
+
+            # ── Step: Build system prompt ──
+            if tracker:
+                tracker.start_step_timer()
+            if agent_protocols:
+                if active_child:
+                    child_proto = None
+                    for p in agent_protocols:
+                        if p["name"] == active_child or p["id"] == active_child:
+                            child_proto = p
+                            break
+                    if child_proto:
+                        system_prompt = build_agent_system_prompt(
+                            base_system_prompt=base_system_prompt,
+                            agent_name=agent_name,
+                            protocols=[{**child_proto, "is_main": True}],
+                            available_skills=agent_skills or None,
+                            current_todo=current_todo,
+                            beliefs=agent_beliefs,
+                            aspirations=agent_aspirations,
+                        )
+                    else:
+                        system_prompt = build_agent_system_prompt(
+                            base_system_prompt=base_system_prompt,
+                            agent_name=agent_name,
+                            protocols=agent_protocols,
+                            available_skills=agent_skills or None,
+                            current_todo=current_todo,
+                            beliefs=agent_beliefs,
+                            aspirations=agent_aspirations,
+                        )
                 else:
-                    # Child protocol not found, fall back to main
                     system_prompt = build_agent_system_prompt(
                         base_system_prompt=base_system_prompt,
                         agent_name=agent_name,
@@ -641,145 +697,281 @@ async def send_message(
                         aspirations=agent_aspirations,
                     )
             else:
-                system_prompt = build_agent_system_prompt(
-                    base_system_prompt=base_system_prompt,
-                    agent_name=agent_name,
-                    protocols=agent_protocols,
-                    available_skills=agent_skills or None,
-                    current_todo=current_todo,
-                    beliefs=agent_beliefs,
-                    aspirations=agent_aspirations,
+                system_prompt = system_prompt or base_system_prompt
+
+            if tracker:
+                await tracker.step(
+                    "prompt_build", "Build system prompt",
+                    input_data={
+                        "active_child_protocol": active_child,
+                        "has_todo": bool(current_todo),
+                    },
+                    output_data={
+                        "system_prompt_length": len(system_prompt) if system_prompt else 0,
+                        "system_prompt_preview": (system_prompt[:500] + "...") if system_prompt and len(system_prompt) > 500 else system_prompt,
+                    },
+                    duration_ms=tracker.elapsed_step_ms(),
                 )
+
+        # Build conversation history
+        history = []
+        if system_prompt:
+            history.append({"role": "system", "content": system_prompt})
+
+        for msg in session.messages:
+            if msg.role != "system":
+                history.append({"role": msg.role, "content": msg.content})
+        history.append({"role": "user", "content": body.content})
+
+        if tracker:
+            await tracker.step(
+                "history_build", "Build conversation history",
+                output_data={
+                    "history_messages": len(history),
+                    "total_chars": sum(len(m["content"]) for m in history),
+                },
+            )
+
+        start = time.monotonic()
+
+        # ── Step: LLM inference ──
+        if tracker:
+            tracker.start_step_timer()
+
+        if session.multi_model and len(model_ids) > 1:
+            response_data = await _multi_model_chat(model_ids, history, gen_params, db)
+            llm_calls_count = len(model_ids) + 1  # models + synthesis
+            _resolved_model_name = response_data.get("model_name")
         else:
-            system_prompt = system_prompt or base_system_prompt
-
-    # Build conversation history
-    history = []
-    if system_prompt:
-        history.append({"role": "system", "content": system_prompt})
-
-    for msg in session.messages:
-        if msg.role != "system":
-            history.append({"role": msg.role, "content": msg.content})
-    # Add current user message
-    history.append({"role": "user", "content": body.content})
-
-    start = time.monotonic()
-
-    if session.multi_model and len(model_ids) > 1:
-        response_data = await _multi_model_chat(model_ids, history, gen_params, db)
-    else:
-        model_id = model_ids[0]
-        provider, base_url, model_name, api_key = await _resolve_model(model_id, db)
-        try:
-            llm_resp = await _chat_with_model(
-                provider, base_url, model_name, api_key,
-                history, gen_params,
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Model error: {str(e)}")
-
-        response_data = {
-            "content": llm_resp.content,
-            "model_name": model_name,
-            "model_responses": None,
-            "total_tokens": llm_resp.total_tokens,
-        }
-
-    elapsed_ms = int((time.monotonic() - start) * 1000)
-
-    # ── Protocol response parsing ──
-    msg_metadata = {}
-    llm_content = response_data["content"]
-
-    if session.agent_id and agent_protocols:
-        protocol_state = session.protocol_state or {}
-
-        # 1. Parse todo list updates
-        new_todo = parse_todo_list(llm_content)
-        if new_todo:
-            protocol_state["todo_list"] = new_todo
-            msg_metadata["todo_list"] = new_todo
-
-        # 2. Parse delegation
-        delegate_to = parse_delegate(llm_content)
-        if delegate_to:
-            protocol_state["active_child_protocol"] = delegate_to
-            msg_metadata["delegated_to"] = delegate_to
-
-        # 3. Parse skill invocations
-        skill_calls = parse_skill_invocations(llm_content)
-        if skill_calls and agent_skills:
-            skill_results = []
-            for call in skill_calls:
-                result = await _execute_skill(call["skill_name"], call["args"], agent_skills)
-                skill_results.append({
-                    "skill": call["skill_name"],
-                    "args": call["args"],
-                    "result": result,
-                })
-            msg_metadata["skill_results"] = skill_results
-
-            # If skills were executed, do a follow-up LLM call with results
-            skill_feedback = "\n\n".join(
-                f"**Skill `{sr['skill']}` result:**\n```json\n{json.dumps(sr['result'], ensure_ascii=False, indent=2)}\n```"
-                for sr in skill_results
-            )
-            follow_up_prompt = (
-                f"Skills have been executed. Here are the results:\n\n{skill_feedback}\n\n"
-                "Continue with your protocol steps based on these results."
-            )
-            history.append({"role": "assistant", "content": llm_content})
-            history.append({"role": "user", "content": follow_up_prompt})
-
+            model_id = model_ids[0]
+            provider, base_url, model_name, api_key = await _resolve_model(model_id, db)
+            _resolved_model_name = model_name
             try:
-                model_id = model_ids[0]
-                provider, base_url, model_name, api_key = await _resolve_model(model_id, db)
-                follow_resp = await _chat_with_model(
+                llm_resp = await _chat_with_model(
                     provider, base_url, model_name, api_key,
                     history, gen_params,
                 )
-                # Append follow-up content
-                response_data["content"] = llm_content + "\n\n---\n\n" + follow_resp.content
-                response_data["total_tokens"] = response_data.get("total_tokens", 0) + follow_resp.total_tokens
-                elapsed_ms = int((time.monotonic() - start) * 1000)
+            except Exception as e:
+                if tracker:
+                    await tracker.step(
+                        "llm_call", f"LLM call to {model_name}",
+                        input_data={"model": model_name, "provider": provider, "history_len": len(history)},
+                        status="error",
+                        error_message=str(e),
+                        duration_ms=tracker.elapsed_step_ms(),
+                    )
+                    await tracker.fail(f"Model error: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Model error: {str(e)}")
 
-                # Parse follow-up for more todo updates
-                new_todo2 = parse_todo_list(follow_resp.content)
-                if new_todo2:
-                    protocol_state["todo_list"] = new_todo2
-                    msg_metadata["todo_list"] = new_todo2
-            except Exception:
-                pass  # If follow-up fails, keep original response
+            llm_calls_count = 1
+            response_data = {
+                "content": llm_resp.content,
+                "model_name": model_name,
+                "model_responses": None,
+                "total_tokens": llm_resp.total_tokens,
+                "prompt_tokens": getattr(llm_resp, "prompt_tokens", 0),
+                "completion_tokens": getattr(llm_resp, "completion_tokens", 0),
+            }
 
-        # Save protocol state to session
-        session.protocol_state = protocol_state
+        llm_duration_ms = int((time.monotonic() - start) * 1000)
+
+        if tracker:
+            await tracker.step(
+                "llm_call", f"LLM inference ({_resolved_model_name})",
+                input_data={
+                    "model": _resolved_model_name,
+                    "history_messages": len(history),
+                    "multi_model": bool(session.multi_model and len(model_ids) > 1),
+                },
+                output_data={
+                    "response_length": len(response_data["content"]),
+                    "response_preview": response_data["content"][:500],
+                    "total_tokens": response_data.get("total_tokens", 0),
+                    "prompt_tokens": response_data.get("prompt_tokens", 0),
+                    "completion_tokens": response_data.get("completion_tokens", 0),
+                },
+                duration_ms=llm_duration_ms,
+            )
+
+        elapsed_ms = llm_duration_ms
+
+        # ── Protocol response parsing ──
+        msg_metadata = {}
+        llm_content = response_data["content"]
+
+        if session.agent_id and agent_protocols:
+            if tracker:
+                tracker.start_step_timer()
+
+            protocol_state = session.protocol_state or {}
+
+            # 1. Parse todo list updates
+            new_todo = parse_todo_list(llm_content)
+            if new_todo:
+                protocol_state["todo_list"] = new_todo
+                msg_metadata["todo_list"] = new_todo
+
+            # 2. Parse delegation
+            delegate_to = parse_delegate(llm_content)
+            if delegate_to:
+                protocol_state["active_child_protocol"] = delegate_to
+                msg_metadata["delegated_to"] = delegate_to
+
+            # 3. Parse skill invocations
+            skill_calls = parse_skill_invocations(llm_content)
+
+            if tracker:
+                await tracker.step(
+                    "response_parse", "Parse LLM response (todo, delegation, skills)",
+                    output_data={
+                        "todo_found": bool(new_todo),
+                        "delegation_found": bool(delegate_to),
+                        "delegation_target": delegate_to,
+                        "skill_calls_found": len(skill_calls) if skill_calls else 0,
+                        "skill_calls": [c["skill_name"] for c in skill_calls] if skill_calls else [],
+                    },
+                    duration_ms=tracker.elapsed_step_ms(),
+                )
+
+            if skill_calls and agent_skills:
+                # ── Step: Execute skills ──
+                if tracker:
+                    tracker.start_step_timer()
+
+                skill_results = []
+                for call in skill_calls:
+                    result = await _execute_skill(call["skill_name"], call["args"], agent_skills)
+                    skill_results.append({
+                        "skill": call["skill_name"],
+                        "args": call["args"],
+                        "result": result,
+                    })
+                msg_metadata["skill_results"] = skill_results
+
+                if tracker:
+                    await tracker.step(
+                        "skill_exec", f"Execute {len(skill_results)} skill(s)",
+                        input_data={"skills": [c["skill_name"] for c in skill_calls]},
+                        output_data={
+                            "results": [
+                                {"skill": sr["skill"], "has_error": "error" in sr["result"]}
+                                for sr in skill_results
+                            ],
+                        },
+                        duration_ms=tracker.elapsed_step_ms(),
+                    )
+
+                # ── Step: Follow-up LLM call with skill results ──
+                skill_feedback = "\n\n".join(
+                    f"**Skill `{sr['skill']}` result:**\n```json\n{json.dumps(sr['result'], ensure_ascii=False, indent=2)}\n```"
+                    for sr in skill_results
+                )
+                follow_up_prompt = (
+                    f"Skills have been executed. Here are the results:\n\n{skill_feedback}\n\n"
+                    "Continue with your protocol steps based on these results."
+                )
+                history.append({"role": "assistant", "content": llm_content})
+                history.append({"role": "user", "content": follow_up_prompt})
+
+                try:
+                    if tracker:
+                        tracker.start_step_timer()
+
+                    model_id = model_ids[0]
+                    provider, base_url, model_name, api_key = await _resolve_model(model_id, db)
+                    follow_resp = await _chat_with_model(
+                        provider, base_url, model_name, api_key,
+                        history, gen_params,
+                    )
+                    llm_calls_count += 1
+
+                    response_data["content"] = llm_content + "\n\n---\n\n" + follow_resp.content
+                    response_data["total_tokens"] = response_data.get("total_tokens", 0) + follow_resp.total_tokens
+                    elapsed_ms = int((time.monotonic() - start) * 1000)
+
+                    new_todo2 = parse_todo_list(follow_resp.content)
+                    if new_todo2:
+                        protocol_state["todo_list"] = new_todo2
+                        msg_metadata["todo_list"] = new_todo2
+
+                    if tracker:
+                        await tracker.step(
+                            "follow_up_call", f"Follow-up LLM call after skills ({model_name})",
+                            input_data={"model": model_name, "skill_feedback_length": len(skill_feedback)},
+                            output_data={
+                                "response_length": len(follow_resp.content),
+                                "response_preview": follow_resp.content[:500],
+                                "tokens": follow_resp.total_tokens,
+                            },
+                            duration_ms=tracker.elapsed_step_ms(),
+                        )
+                except Exception as e:
+                    if tracker:
+                        await tracker.step(
+                            "follow_up_call", "Follow-up LLM call after skills",
+                            status="error",
+                            error_message=str(e),
+                            duration_ms=tracker.elapsed_step_ms() if tracker._step_start else 0,
+                        )
+
+            # Save protocol state to session
+            if tracker:
+                tracker.start_step_timer()
+            session.protocol_state = protocol_state
+            await db.flush()
+            if tracker:
+                await tracker.step(
+                    "protocol_update", "Save protocol state",
+                    output_data={
+                        "has_todo": bool(protocol_state.get("todo_list")),
+                        "active_child": protocol_state.get("active_child_protocol"),
+                    },
+                    duration_ms=tracker.elapsed_step_ms(),
+                )
+
+        # Save assistant message
+        assistant_msg = ChatMessage(
+            session_id=session.id,
+            role="assistant",
+            content=response_data["content"],
+            model_name=response_data.get("model_name"),
+            model_responses=response_data.get("model_responses"),
+            total_tokens=response_data.get("total_tokens", 0),
+            duration_ms=elapsed_ms,
+            msg_metadata=msg_metadata or None,
+        )
+        db.add(assistant_msg)
         await db.flush()
+        await db.refresh(assistant_msg)
 
-    # Save assistant message
-    assistant_msg = ChatMessage(
-        session_id=session.id,
-        role="assistant",
-        content=response_data["content"],
-        model_name=response_data.get("model_name"),
-        model_responses=response_data.get("model_responses"),
-        total_tokens=response_data.get("total_tokens", 0),
-        duration_ms=elapsed_ms,
-        msg_metadata=msg_metadata or None,
-    )
-    db.add(assistant_msg)
-    await db.flush()
-    await db.refresh(assistant_msg)
+        # ── Complete thinking log ──
+        if tracker:
+            await tracker.complete(
+                response_data["content"],
+                message_id=assistant_msg.id,
+                model_name=_resolved_model_name,
+                total_tokens=response_data.get("total_tokens", 0),
+                prompt_tokens=response_data.get("prompt_tokens", 0),
+                completion_tokens=response_data.get("completion_tokens", 0),
+                llm_calls_count=llm_calls_count,
+            )
 
-    # Auto-title: if first user message, summarize to title
-    if len(session.messages) <= 2:
-        title = body.content[:60]
-        if len(body.content) > 60:
-            title += "…"
-        session.title = title
-        await db.flush()
+        # Auto-title: if first user message, summarize to title
+        if len(session.messages) <= 2:
+            title = body.content[:60]
+            if len(body.content) > 60:
+                title += "…"
+            session.title = title
+            await db.flush()
 
-    return _message_to_response(assistant_msg)
+        return _message_to_response(assistant_msg)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        if tracker:
+            await tracker.fail(str(e))
+        raise
 
 
 async def _multi_model_chat(

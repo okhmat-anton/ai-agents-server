@@ -361,6 +361,156 @@ def strip_markers(response_text: str) -> str:
     return text.strip()
 
 
+# ── Autonomous (loop) stop marker ──────────────────────────
+
+STOP_PATTERN = re.compile(r"<<<STOP(?::(.+?))?\s*>>>")
+
+
+def parse_stop(response_text: str) -> str | None:
+    """Parse <<<STOP>>> or <<<STOP:reason>>> marker. Returns reason or '' if found."""
+    match = STOP_PATTERN.search(response_text)
+    if match:
+        return (match.group(1) or "").strip()
+    return None
+
+
+def format_loop_protocol_prompt(
+    protocol: dict,
+    cycle_number: int,
+    max_cycles: int | None,
+    cycle_state: dict | None = None,
+    available_skills: list[dict] | None = None,
+    beliefs: dict | None = None,
+    aspirations: dict | None = None,
+    agent_name: str = "Agent",
+) -> str:
+    """
+    Build the system prompt for an autonomous loop cycle.
+
+    The loop protocol drives the agent to decide what to do next based on
+    its goals, aspirations, beliefs, memories, and available skills.
+    """
+    sections = []
+
+    name = protocol.get("name", "Autonomous Work")
+    description = protocol.get("description", "")
+    steps = protocol.get("steps", [])
+
+    sections.append(f"You are **{agent_name}**, an AI agent working **autonomously**.")
+    sections.append("")
+    sections.append(f"## Autonomous Work Protocol: {name}")
+    if description:
+        sections.append(f"_{description}_")
+    sections.append("")
+
+    # Cycle info
+    if max_cycles:
+        sections.append(f"**Cycle {cycle_number} of {max_cycles}**")
+    else:
+        sections.append(f"**Cycle {cycle_number}** (continuous mode — will run until you output <<<STOP>>> or are stopped externally)")
+    sections.append("")
+
+    # Previous cycle context
+    if cycle_state:
+        last_output = cycle_state.get("last_output")
+        todo_list = cycle_state.get("todo_list")
+        cycle_summary = cycle_state.get("cycle_summary")
+
+        if cycle_summary:
+            sections.append("### Previous Cycle Summary")
+            sections.append(cycle_summary)
+            sections.append("")
+
+        if last_output:
+            sections.append("### Your Previous Output")
+            preview = last_output[:2000] + "..." if len(last_output) > 2000 else last_output
+            sections.append(preview)
+            sections.append("")
+
+        if todo_list:
+            sections.append("### Current Task List")
+            for item in todo_list:
+                status_icon = {"pending": "⬜", "in_progress": "🔄", "done": "✅", "skipped": "⏭️"}.get(
+                    item.get("status", "pending"), "⬜"
+                )
+                sections.append(f"  {status_icon} {item.get('id', '?')}. {item.get('task', '')} [{item.get('status', 'pending')}]")
+            sections.append("")
+
+    # Beliefs
+    if beliefs:
+        core = beliefs.get("core", [])
+        additional = beliefs.get("additional", [])
+        if core or additional:
+            sections.append("## Your Beliefs & Principles")
+            for b in core:
+                w = b.get("weight", 1.0)
+                weight_indicator = "🔴" if w >= 0.8 else "🟡" if w >= 0.5 else "⚪"
+                sections.append(f"  {weight_indicator} {b.get('text', '')} (weight: {w})")
+            for b in additional:
+                sections.append(f"  ◦ {b.get('text', '')}")
+            sections.append("")
+
+    # Aspirations
+    if aspirations:
+        dreams = aspirations.get("dreams", [])
+        desires = aspirations.get("desires", [])
+        goals = aspirations.get("goals", [])
+        if dreams or desires or goals:
+            sections.append("## Your Aspirations")
+            if dreams:
+                sections.append("### Dreams (long-term visions)")
+                for d in dreams:
+                    lock = "🔒" if d.get("locked") else "🔓"
+                    sections.append(f"  {lock} [{d.get('priority','medium')}] {d.get('text','')}")
+            if desires:
+                sections.append("### Desires")
+                for d in desires:
+                    lock = "🔒" if d.get("locked") else "🔓"
+                    sections.append(f"  {lock} [{d.get('priority','medium')}] {d.get('text','')}")
+            if goals:
+                sections.append("### Goals (actionable objectives)")
+                for g in goals:
+                    lock = "🔒" if g.get("locked") else "🔓"
+                    status = g.get("status", "active")
+                    sections.append(f"  {lock} [{g.get('priority','medium')}] [{status}] {g.get('text','')}")
+            sections.append("")
+
+    # Protocol steps
+    if steps:
+        sections.append("### Protocol Steps")
+        sections.append("Follow these steps for this cycle:")
+        sections.append("")
+        for i, step in enumerate(steps, 1):
+            sections.append(f"**Step {i}.**")
+            sections.append(_format_step(step))
+            sections.append("")
+
+    # Skills section
+    if available_skills:
+        sections.append("### Available Skills")
+        sections.append("Invoke skills with: <<<SKILL:skill_name>>> {\"param\": \"value\"} <<<END_SKILL>>>")
+        sections.append("")
+        for skill in available_skills:
+            desc = skill.get("description_for_agent") or skill.get("description", "")
+            sections.append(f"  - **{skill['name']}**: {desc}")
+        sections.append("")
+
+    # Output rules
+    sections.append("### Output Rules for Autonomous Work")
+    sections.append("1. **Analyze** your current state: goals, progress, available resources")
+    sections.append("2. **Decide** what to do in this cycle based on your protocol steps")
+    sections.append("3. **Execute** using skills or reasoning")
+    sections.append("4. **Update** your todo list with <<<TODO>>>...<<<END_TODO>>> markers")
+    sections.append("5. **Summarize** what you accomplished in this cycle (last paragraph)")
+    sections.append("")
+    sections.append("To **stop** autonomous work (e.g., all goals achieved), output: <<<STOP:reason>>>")
+    sections.append("To create/update a task list: <<<TODO>>> [...] <<<END_TODO>>>")
+    sections.append("To invoke a skill: <<<SKILL:name>>> {args} <<<END_SKILL>>>")
+    sections.append("")
+
+    return "\n".join(sections)
+
+
 # ── Build Full System Prompt ───────────────────────────────
 
 def build_agent_system_prompt(

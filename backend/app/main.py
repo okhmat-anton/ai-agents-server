@@ -29,6 +29,8 @@ from app.api.agent_files import router as agent_files_router
 from app.api.agent_beliefs import router as agent_beliefs_router
 from app.api.agent_aspirations import router as agent_aspirations_router
 from app.api.protocols import router as protocols_router
+from app.api.thinking_logs import agent_thinking_router, session_thinking_router
+from app.api.autonomous import router as autonomous_router
 
 settings = get_settings()
 
@@ -117,6 +119,9 @@ app.include_router(terminal_router)
 app.include_router(processes_router)
 app.include_router(chat_router)
 app.include_router(protocols_router)
+app.include_router(agent_thinking_router)
+app.include_router(session_thinking_router)
+app.include_router(autonomous_router)
 
 
 @app.get("/")

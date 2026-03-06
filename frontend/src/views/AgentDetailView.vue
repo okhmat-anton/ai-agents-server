@@ -4,11 +4,61 @@
       <v-btn icon="mdi-arrow-left" variant="text" @click="$router.push('/agents')" />
       <div class="text-h4 font-weight-bold ml-2">{{ agent.name }}</div>
       <v-chip :color="statusColor(agent.status)" class="ml-3" variant="tonal">{{ agent.status }}</v-chip>
+      <v-chip v-if="autonomousRun && autonomousRun.status === 'running'" color="green" variant="flat" size="small" class="ml-2">
+        <v-icon start size="14">mdi-sync</v-icon>
+        Autonomous · Cycle {{ autonomousRun.completed_cycles }}{{ autonomousRun.max_cycles ? '/' + autonomousRun.max_cycles : '' }}
+      </v-chip>
       <v-spacer />
-      <v-btn v-if="agent.status !== 'running'" color="success" prepend-icon="mdi-play" @click="start" class="mr-2">Start</v-btn>
-      <v-btn v-else color="error" prepend-icon="mdi-stop" @click="stop" class="mr-2">Stop</v-btn>
+      <v-btn-group v-if="agent.status !== 'running'" variant="flat" density="default" class="mr-2">
+        <v-btn color="success" prepend-icon="mdi-play" @click="start">Chat</v-btn>
+        <v-btn color="green-darken-3" prepend-icon="mdi-sync" @click="openAutonomousDialog" :disabled="!hasLoopProtocol">Autonomous</v-btn>
+      </v-btn-group>
+      <v-btn v-if="agent.status === 'running'" color="error" prepend-icon="mdi-stop" @click="stopAgent" class="mr-2">Stop</v-btn>
       <v-btn prepend-icon="mdi-pencil" :to="`/agents/${agent.id}`">Edit</v-btn>
     </div>
+
+    <!-- Autonomous Run Status Banner -->
+    <v-alert
+      v-if="autonomousRun && autonomousRun.status === 'running'"
+      type="info"
+      variant="tonal"
+      class="mb-4"
+      prominent
+      closable
+    >
+      <div class="d-flex align-center">
+        <div class="flex-grow-1">
+          <div class="text-subtitle-2 font-weight-bold">
+            <v-icon size="18" class="mr-1">mdi-sync</v-icon>
+            Autonomous Work in Progress
+          </div>
+          <div class="text-body-2 mt-1">
+            Protocol: <strong>{{ autonomousRun.loop_protocol_name || 'Unknown' }}</strong> ·
+            Mode: <strong>{{ autonomousRun.mode }}</strong> ·
+            Cycles: <strong>{{ autonomousRun.completed_cycles }}{{ autonomousRun.max_cycles ? ' / ' + autonomousRun.max_cycles : '' }}</strong> ·
+            Tokens: <strong>{{ autonomousRun.total_tokens }}</strong> ·
+            Duration: <strong>{{ formatDurationMs(autonomousRun.total_duration_ms) }}</strong>
+          </div>
+          <div v-if="autonomousRun.cycle_state && autonomousRun.cycle_state.cycle_summary" class="text-caption text-grey mt-1">
+            Last: {{ autonomousRun.cycle_state.cycle_summary.substring(0, 200) }}{{ autonomousRun.cycle_state.cycle_summary.length > 200 ? '...' : '' }}
+          </div>
+        </div>
+        <v-btn color="error" variant="tonal" size="small" prepend-icon="mdi-stop" @click="stopAutonomous" :loading="autonomousStopping" class="ml-3">Stop</v-btn>
+      </div>
+    </v-alert>
+
+    <!-- Last Autonomous Run Result -->
+    <v-alert
+      v-else-if="autonomousRun && autonomousRun.status !== 'running' && autonomousRun.completed_cycles > 0"
+      :type="autonomousRun.status === 'error' ? 'error' : autonomousRun.status === 'completed' ? 'success' : 'warning'"
+      variant="tonal"
+      class="mb-4"
+      density="compact"
+      closable
+    >
+      Last autonomous run: {{ autonomousRun.status }} · {{ autonomousRun.completed_cycles }} cycles · {{ autonomousRun.total_tokens }} tokens
+      <span v-if="autonomousRun.error_message"> · {{ autonomousRun.error_message }}</span>
+    </v-alert>
 
     <!-- Stats -->
     <v-row class="mb-4">
@@ -30,6 +80,8 @@
         <v-tab value="aspirations">Aspirations</v-tab>
         <v-tab value="files">Files</v-tab>
         <v-tab value="tasks">Tasks</v-tab>
+        <v-tab value="thinking">Thinking Logs</v-tab>
+        <v-tab value="autonomous">Autonomous</v-tab>
         <v-tab value="logs">Logs</v-tab>
         <v-tab value="skills">Skills</v-tab>
         <v-tab value="memory">Memory</v-tab>
@@ -368,6 +420,169 @@
               <v-chip :color="taskStatusColor(item.status)" size="x-small" variant="tonal">{{ item.status }}</v-chip>
             </template>
           </v-data-table>
+        </div>
+
+        <!-- Thinking Logs Tab -->
+        <div v-if="tab === 'thinking'">
+          <div class="d-flex align-center mb-4">
+            <div class="text-subtitle-1 font-weight-bold">
+              <v-icon size="20" class="mr-1">mdi-head-cog-outline</v-icon>
+              Agent Reasoning Traces
+            </div>
+            <v-spacer />
+            <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-refresh" @click="loadThinkingLogs" :loading="thinkingLogsLoading" class="mr-2">Refresh</v-btn>
+            <v-btn size="small" variant="tonal" color="error" prepend-icon="mdi-delete" @click="clearThinkingLogs" :disabled="!thinkingLogs.length">Clear All</v-btn>
+          </div>
+
+          <v-alert v-if="!thinkingLogsLoading && !thinkingLogs.length" type="info" variant="tonal" density="compact" class="mb-4">
+            No thinking logs yet. Send a message to the agent to generate reasoning traces.
+          </v-alert>
+
+          <div v-for="tl in thinkingLogs" :key="tl.id" class="mb-3">
+            <v-card variant="outlined" :color="tl.status === 'error' ? 'error' : undefined">
+              <v-card-title class="d-flex align-center pa-3 cursor-pointer" @click="toggleThinkingLog(tl.id)" style="min-height: 48px;">
+                <v-icon size="18" class="mr-2" :color="thinkingStatusColor(tl.status)">
+                  {{ tl.status === 'completed' ? 'mdi-check-circle' : tl.status === 'error' ? 'mdi-alert-circle' : 'mdi-progress-clock' }}
+                </v-icon>
+                <div class="flex-grow-1" style="min-width: 0;">
+                  <div class="text-body-2 font-weight-medium text-truncate">{{ tl.user_input }}</div>
+                  <div class="text-caption text-grey d-flex flex-wrap ga-2 mt-1">
+                    <span><v-icon size="12" class="mr-1">mdi-clock-outline</v-icon>{{ formatDuration(tl.total_duration_ms) }}</span>
+                    <span><v-icon size="12" class="mr-1">mdi-counter</v-icon>{{ tl.total_tokens }} tokens</span>
+                    <span><v-icon size="12" class="mr-1">mdi-brain</v-icon>{{ tl.llm_calls_count }} LLM call{{ tl.llm_calls_count !== 1 ? 's' : '' }}</span>
+                    <span><v-icon size="12" class="mr-1">mdi-format-list-numbered</v-icon>{{ tl.steps_count }} steps</span>
+                    <span v-if="tl.model_name"><v-icon size="12" class="mr-1">mdi-chip</v-icon>{{ tl.model_name }}</span>
+                  </div>
+                </div>
+                <span class="text-caption text-grey ml-2 flex-shrink-0">{{ new Date(tl.created_at).toLocaleString() }}</span>
+                <v-icon size="18" class="ml-2">{{ expandedThinkingLogs.has(tl.id) ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+              </v-card-title>
+
+              <!-- Expanded Detail -->
+              <div v-if="expandedThinkingLogs.has(tl.id)">
+                <v-divider />
+                <v-card-text class="pa-3">
+                  <!-- Loading -->
+                  <div v-if="thinkingLogDetails[tl.id] === 'loading'" class="text-center py-4">
+                    <v-progress-circular indeterminate size="32" />
+                  </div>
+                  <!-- Error -->
+                  <v-alert v-else-if="thinkingLogDetails[tl.id] === 'error'" type="error" variant="tonal" density="compact" class="mb-3">
+                    Failed to load thinking log details.
+                  </v-alert>
+                  <!-- Detail loaded -->
+                  <div v-else-if="thinkingLogDetails[tl.id]">
+                    <!-- Agent Output -->
+                    <div v-if="thinkingLogDetails[tl.id].agent_output" class="mb-4">
+                      <div class="text-caption text-grey mb-1">Agent Response:</div>
+                      <v-sheet class="pa-3 rounded bg-grey-darken-4" style="white-space: pre-wrap; font-size: 13px; max-height: 200px; overflow-y: auto;">{{ thinkingLogDetails[tl.id].agent_output }}</v-sheet>
+                    </div>
+
+                    <!-- Error message -->
+                    <v-alert v-if="thinkingLogDetails[tl.id].error_message" type="error" variant="tonal" density="compact" class="mb-4">
+                      {{ thinkingLogDetails[tl.id].error_message }}
+                    </v-alert>
+
+                    <!-- Steps Timeline -->
+                    <div class="text-caption text-grey mb-2">Steps ({{ thinkingLogDetails[tl.id].steps.length }}):</div>
+                    <v-timeline density="compact" side="end" truncate-line="both">
+                      <v-timeline-item
+                        v-for="step in thinkingLogDetails[tl.id].steps"
+                        :key="step.id"
+                        :dot-color="stepTypeColor(step.step_type)"
+                        size="x-small"
+                      >
+                        <div class="d-flex align-center mb-1">
+                          <v-icon size="14" class="mr-1" :color="stepTypeColor(step.step_type)">{{ stepTypeIcon(step.step_type) }}</v-icon>
+                          <span class="text-body-2 font-weight-medium mr-2">{{ step.step_name }}</span>
+                          <v-chip size="x-small" variant="tonal" :color="stepTypeColor(step.step_type)" class="mr-2">{{ step.step_type }}</v-chip>
+                          <v-chip size="x-small" variant="flat" :color="step.status === 'ok' ? 'success' : 'error'">{{ step.duration_ms }}ms</v-chip>
+                          <v-spacer />
+                          <v-btn v-if="step.input_data || step.output_data" icon size="x-small" variant="text" @click.stop="toggleStepDetail(tl.id, step.id)">
+                            <v-icon size="14">{{ expandedSteps.has(tl.id + ':' + step.id) ? 'mdi-code-tags' : 'mdi-code-json' }}</v-icon>
+                          </v-btn>
+                        </div>
+                        <div v-if="step.error_message" class="text-caption text-error">{{ step.error_message }}</div>
+                        <!-- Step Detail (input/output data) -->
+                        <div v-if="expandedSteps.has(tl.id + ':' + step.id)" class="mt-2">
+                          <div v-if="step.input_data && Object.keys(step.input_data).length" class="mb-2">
+                            <div class="text-caption text-grey mb-1">Input:</div>
+                            <v-sheet class="pa-2 rounded bg-grey-darken-4" style="font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 200px; overflow-y: auto;">{{ formatJsonCompact(step.input_data) }}</v-sheet>
+                          </div>
+                          <div v-if="step.output_data && Object.keys(step.output_data).length">
+                            <div class="text-caption text-grey mb-1">Output:</div>
+                            <v-sheet class="pa-2 rounded bg-grey-darken-4" style="font-family: monospace; font-size: 12px; white-space: pre-wrap; max-height: 200px; overflow-y: auto;">{{ formatJsonCompact(step.output_data) }}</v-sheet>
+                          </div>
+                        </div>
+                      </v-timeline-item>
+                    </v-timeline>
+                  </div>
+                </v-card-text>
+              </div>
+            </v-card>
+          </div>
+        </div>
+
+        <!-- Autonomous Tab -->
+        <div v-if="tab === 'autonomous'">
+          <div class="d-flex align-center mb-4">
+            <div class="text-subtitle-1 font-weight-bold">
+              <v-icon size="20" class="mr-1">mdi-sync</v-icon>
+              Autonomous Work History
+            </div>
+            <v-spacer />
+            <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-refresh" @click="loadAutonomousHistory" :loading="autoHistoryLoading" class="mr-2">Refresh</v-btn>
+            <v-btn v-if="agent.status !== 'running'" size="small" variant="flat" color="green" prepend-icon="mdi-play" @click="openAutonomousDialog" :disabled="!hasLoopProtocol">New Run</v-btn>
+          </div>
+
+          <v-alert v-if="!autoHistoryLoading && !autoHistory.length" type="info" variant="tonal" density="compact" class="mb-4">
+            No autonomous runs yet. Start one using the Autonomous button above.
+          </v-alert>
+
+          <div v-for="run in autoHistory" :key="run.id" class="mb-3">
+            <v-card variant="outlined" :color="run.status === 'error' ? 'error' : run.status === 'running' ? 'green' : undefined">
+              <v-card-text class="pa-3">
+                <div class="d-flex align-center">
+                  <v-icon size="20" class="mr-2" :color="autoStatusColor(run.status)">
+                    {{ run.status === 'running' ? 'mdi-sync' : run.status === 'completed' ? 'mdi-check-circle' : run.status === 'error' ? 'mdi-alert-circle' : 'mdi-stop-circle' }}
+                  </v-icon>
+                  <div class="flex-grow-1">
+                    <div class="d-flex align-center">
+                      <v-chip size="x-small" :color="autoStatusColor(run.status)" variant="flat" class="mr-2">{{ run.status }}</v-chip>
+                      <v-chip size="x-small" variant="tonal" class="mr-2">{{ run.mode }}{{ run.max_cycles ? ' (' + run.max_cycles + ')' : '' }}</v-chip>
+                      <span class="text-body-2 font-weight-medium">{{ run.loop_protocol_name || 'Unknown protocol' }}</span>
+                    </div>
+                    <div class="text-caption text-grey d-flex flex-wrap ga-2 mt-1">
+                      <span><v-icon size="12" class="mr-1">mdi-counter</v-icon>{{ run.completed_cycles }} cycles</span>
+                      <span><v-icon size="12" class="mr-1">mdi-clock-outline</v-icon>{{ formatDurationMs(run.total_duration_ms) }}</span>
+                      <span><v-icon size="12" class="mr-1">mdi-brain</v-icon>{{ run.total_tokens }} tokens ({{ run.total_llm_calls }} calls)</span>
+                      <span><v-icon size="12" class="mr-1">mdi-calendar</v-icon>{{ new Date(run.created_at).toLocaleString() }}</span>
+                    </div>
+                    <div v-if="run.error_message" class="text-caption text-error mt-1">{{ run.error_message }}</div>
+                  </div>
+                  <div class="d-flex flex-column align-end">
+                    <v-btn v-if="run.status === 'running'" size="x-small" color="error" variant="tonal" prepend-icon="mdi-stop" @click="stopAutonomous">Stop</v-btn>
+                    <v-btn v-if="run.session_id" size="x-small" variant="text" @click="openAutoSession(run)" class="mt-1">
+                      <v-icon size="14" class="mr-1">mdi-chat</v-icon>View Session
+                    </v-btn>
+                  </div>
+                </div>
+
+                <!-- Cycle state / todo list -->
+                <div v-if="run.cycle_state && run.cycle_state.todo_list && run.cycle_state.todo_list.length" class="mt-3">
+                  <div class="text-caption text-grey mb-1">Tasks ({{ run.cycle_state.todo_list.length }}):</div>
+                  <div class="d-flex flex-wrap ga-1">
+                    <v-chip v-for="t in run.cycle_state.todo_list" :key="t.id" size="x-small"
+                      :color="t.status === 'done' ? 'success' : t.status === 'in_progress' ? 'warning' : 'grey'"
+                      variant="tonal">
+                      <v-icon start size="10">{{ t.status === 'done' ? 'mdi-check' : t.status === 'in_progress' ? 'mdi-sync' : 'mdi-checkbox-blank-outline' }}</v-icon>
+                      {{ t.task ? t.task.substring(0, 60) : 'Task ' + t.id }}
+                    </v-chip>
+                  </div>
+                </div>
+              </v-card-text>
+            </v-card>
+          </div>
         </div>
 
         <!-- Logs Tab -->
@@ -714,11 +929,67 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Autonomous Launch Dialog -->
+    <v-dialog v-model="autonomousDialog" max-width="550">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon color="green" class="mr-2">mdi-sync</v-icon>
+          Start Autonomous Work
+        </v-card-title>
+        <v-card-text>
+          <div class="text-body-2 text-grey mb-4">The agent will work independently, deciding what to do based on its loop protocol, beliefs, aspirations, and available skills.</div>
+
+          <v-select
+            v-model="autoForm.protocolId"
+            :items="loopProtocols"
+            item-title="name"
+            item-value="id"
+            label="Loop Protocol"
+            density="compact"
+            variant="outlined"
+            class="mb-3"
+          >
+            <template #item="{ props, item }">
+              <v-list-item v-bind="props">
+                <template #prepend>
+                  <v-icon color="green" size="18">mdi-sync</v-icon>
+                </template>
+                <template #subtitle>
+                  <span>{{ item.raw.description || 'No description' }}</span>
+                </template>
+              </v-list-item>
+            </template>
+          </v-select>
+
+          <v-radio-group v-model="autoForm.mode" inline class="mb-3">
+            <v-radio label="Continuous (until stopped)" value="continuous" />
+            <v-radio label="Fixed cycles" value="cycles" />
+          </v-radio-group>
+
+          <v-text-field
+            v-if="autoForm.mode === 'cycles'"
+            v-model.number="autoForm.maxCycles"
+            label="Number of cycles"
+            type="number"
+            min="1"
+            max="1000"
+            density="compact"
+            variant="outlined"
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="autonomousDialog = false">Cancel</v-btn>
+          <v-btn color="green" variant="flat" @click="startAutonomous" :loading="autonomousStarting" :disabled="!autoForm.protocolId">Start</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { useAgentsStore } from '../stores/agents'
@@ -740,6 +1011,24 @@ const allAvailableSkills = ref([])
 const memories = ref([])
 const logLevel = ref('all')
 const skillSearch = ref('')
+
+// Thinking Logs state
+const thinkingLogs = ref([])
+const thinkingLogsLoading = ref(false)
+const thinkingLogDetails = ref({})
+const expandedThinkingLogs = ref(new Set())
+const expandedSteps = ref(new Set())
+
+// Autonomous run state
+const autonomousRun = ref(null)
+const autonomousDialog = ref(false)
+const autonomousStarting = ref(false)
+const autonomousStopping = ref(false)
+const autoHistory = ref([])
+const autoHistoryLoading = ref(false)
+const autoForm = ref({ mode: 'continuous', maxCycles: 5, protocolId: null })
+let autoPollingTimer = null
+
 const permSaving = ref(false)
 const globalFsEnabled = ref(false)
 const globalSysEnabled = ref(false)
@@ -798,12 +1087,21 @@ const deleteAspirationType = ref('dreams')
 
 const id = computed(() => route.params.id)
 
+const hasLoopProtocol = computed(() => {
+  return agent.value?.protocols?.some(p => p.type === 'loop') || false
+})
+const loopProtocols = computed(() => {
+  return (agent.value?.protocols || []).filter(p => p.type === 'loop')
+})
+
 const statusColor = (s) => ({ idle: 'grey', running: 'success', paused: 'warning', error: 'error', stopped: 'grey' }[s] || 'grey')
 const taskStatusColor = (s) => ({ pending: 'info', running: 'success', completed: 'success', failed: 'error', cancelled: 'grey' }[s] || 'grey')
 const logColor = (l) => ({ debug: 'grey', info: 'info', warning: 'warning', error: 'error', critical: 'error' }[l] || 'grey')
 const priorityColor = (p) => ({ low: 'blue-grey', medium: 'orange', high: 'red' }[p] || 'grey')
 const goalStatusColor = (s) => ({ active: 'blue', in_progress: 'orange', completed: 'green', abandoned: 'grey' }[s] || 'grey')
 const aspirationTypeLabel = (t) => ({ dreams: 'Dream', desires: 'Desire', goals: 'Goal' }[t] || t)
+
+const autoStatusColor = (s) => ({ running: 'success', paused: 'warning', completed: 'info', stopped: 'grey', error: 'error' }[s] || 'grey')
 
 const toggleProtocolPreview = (p) => {
   previewProtocol.value = previewProtocol.value?.id === p.id ? null : p
@@ -861,6 +1159,93 @@ const loadLogs = async () => {
   const params = logLevel.value !== 'all' ? { level: logLevel.value } : {}
   const { data } = await api.get(`/agents/${id.value}/logs`, { params: { ...params, limit: 100 } })
   logs.value = data
+}
+
+// --- Thinking Logs ---
+const loadThinkingLogs = async () => {
+  thinkingLogsLoading.value = true
+  try {
+    const { data } = await api.get(`/agents/${id.value}/thinking-logs`, { params: { limit: 100 } })
+    thinkingLogs.value = data
+  } catch (e) { console.error('Failed to load thinking logs', e) }
+  thinkingLogsLoading.value = false
+}
+
+const toggleThinkingLog = async (logId) => {
+  if (expandedThinkingLogs.value.has(logId)) {
+    expandedThinkingLogs.value.delete(logId)
+    expandedThinkingLogs.value = new Set(expandedThinkingLogs.value)
+    return
+  }
+  expandedThinkingLogs.value.add(logId)
+  expandedThinkingLogs.value = new Set(expandedThinkingLogs.value)
+  // Load detail if not cached
+  if (!thinkingLogDetails.value[logId] || thinkingLogDetails.value[logId] === 'error') {
+    thinkingLogDetails.value[logId] = 'loading'
+    try {
+      const { data } = await api.get(`/agents/${id.value}/thinking-logs/${logId}`)
+      thinkingLogDetails.value[logId] = data
+    } catch {
+      thinkingLogDetails.value[logId] = 'error'
+    }
+  }
+}
+
+const toggleStepDetail = (logId, stepId) => {
+  const key = logId + ':' + stepId
+  if (expandedSteps.value.has(key)) {
+    expandedSteps.value.delete(key)
+  } else {
+    expandedSteps.value.add(key)
+  }
+  expandedSteps.value = new Set(expandedSteps.value)
+}
+
+const clearThinkingLogs = async () => {
+  if (!confirm('Clear all thinking logs for this agent?')) return
+  try {
+    await api.delete(`/agents/${id.value}/thinking-logs`)
+    thinkingLogs.value = []
+    thinkingLogDetails.value = {}
+    expandedThinkingLogs.value = new Set()
+  } catch (e) { console.error('Failed to clear thinking logs', e) }
+}
+
+const thinkingStatusColor = (s) => ({ completed: 'success', error: 'error', started: 'warning' }[s] || 'grey')
+
+const stepTypeColor = (t) => ({
+  config_load: 'blue-grey',
+  context_load: 'purple',
+  prompt_build: 'indigo',
+  history_build: 'teal',
+  llm_call: 'amber',
+  response_parse: 'cyan',
+  skill_exec: 'green',
+  follow_up_call: 'orange',
+  protocol_update: 'deep-purple',
+  error: 'red',
+}[t] || 'grey')
+
+const stepTypeIcon = (t) => ({
+  config_load: 'mdi-cog',
+  context_load: 'mdi-database',
+  prompt_build: 'mdi-text-box-outline',
+  history_build: 'mdi-history',
+  llm_call: 'mdi-brain',
+  response_parse: 'mdi-code-braces',
+  skill_exec: 'mdi-lightning-bolt',
+  follow_up_call: 'mdi-brain',
+  protocol_update: 'mdi-sync',
+  error: 'mdi-alert-circle',
+}[t] || 'mdi-circle-small')
+
+const formatDuration = (ms) => {
+  if (ms < 1000) return ms + 'ms'
+  return (ms / 1000).toFixed(1) + 's'
+}
+
+const formatJsonCompact = (obj) => {
+  try { return JSON.stringify(obj, null, 2) } catch { return String(obj) }
 }
 
 const loadSkills = async () => {
@@ -1169,6 +1554,8 @@ const doDeleteFile = async () => {
 
 watch(tab, (val) => {
   if (val === 'tasks') loadTasks()
+  if (val === 'thinking') loadThinkingLogs()
+  if (val === 'autonomous') loadAutonomousHistory()
   if (val === 'logs') loadLogs()
   if (val === 'skills') loadSkills()
   if (val === 'memory') loadMemories()
@@ -1179,11 +1566,130 @@ watch(tab, (val) => {
 
 watch(logLevel, () => { if (tab.value === 'logs') loadLogs() })
 
+// --- Autonomous functions ---
+
+const formatDurationMs = (ms) => {
+  if (!ms) return '0s'
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rs = s % 60
+  if (m < 60) return `${m}m ${rs}s`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m`
+}
+
+const loadAutonomousStatus = async () => {
+  try {
+    const { data } = await api.get(`/agents/${id.value}/autonomous/status`)
+    autonomousRun.value = data
+    if (data && data.status === 'running') {
+      startAutoPolling()
+    } else {
+      stopAutoPolling()
+    }
+  } catch (e) {
+    if (e.response?.status !== 404) console.error('Failed to load autonomous status', e)
+    autonomousRun.value = null
+    stopAutoPolling()
+  }
+}
+
+const loadAutonomousHistory = async () => {
+  autoHistoryLoading.value = true
+  try {
+    const { data } = await api.get(`/agents/${id.value}/autonomous/history`, { params: { limit: 50 } })
+    autoHistory.value = data.items || data
+  } catch (e) { console.error('Failed to load autonomous history', e) }
+  autoHistoryLoading.value = false
+}
+
+const openAutonomousDialog = () => {
+  const lp = loopProtocols.value
+  autoForm.value = {
+    mode: 'continuous',
+    maxCycles: 5,
+    protocolId: lp.length ? lp[0].id : null
+  }
+  autonomousDialog.value = true
+}
+
+const startAutonomous = async () => {
+  autonomousStarting.value = true
+  try {
+    const payload = {
+      mode: autoForm.value.mode,
+      loop_protocol_id: autoForm.value.protocolId
+    }
+    if (autoForm.value.mode === 'cycles') {
+      payload.max_cycles = autoForm.value.maxCycles
+    }
+    await api.post(`/agents/${id.value}/autonomous/start`, payload)
+    autonomousDialog.value = false
+    await loadData()
+    await loadAutonomousStatus()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to start autonomous run')
+  }
+  autonomousStarting.value = false
+}
+
+const stopAutonomous = async () => {
+  autonomousStopping.value = true
+  try {
+    await api.post(`/agents/${id.value}/autonomous/stop`)
+    await loadData()
+    await loadAutonomousStatus()
+    if (tab.value === 'autonomous') await loadAutonomousHistory()
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to stop autonomous run')
+  }
+  autonomousStopping.value = false
+}
+
+const openAutoSession = (run) => {
+  if (run.session_id) {
+    // Navigate to chat with the session
+    router.push(`/chat?session=${run.session_id}`)
+  }
+}
+
+const startAutoPolling = () => {
+  if (autoPollingTimer) return
+  autoPollingTimer = setInterval(async () => {
+    await loadAutonomousStatus()
+    if (tab.value === 'autonomous') await loadAutonomousHistory()
+  }, 5000)
+}
+
+const stopAutoPolling = () => {
+  if (autoPollingTimer) {
+    clearInterval(autoPollingTimer)
+    autoPollingTimer = null
+  }
+}
+
+// --- End Autonomous functions ---
+
 const start = async () => { await agentsStore.startAgent(id.value); await loadData() }
 const stop = async () => { await agentsStore.stopAgent(id.value); await loadData() }
+const stopAgent = async () => {
+  if (autonomousRun.value?.status === 'running') {
+    await stopAutonomous()
+  } else {
+    await stop()
+  }
+}
 const createAgentTask = () => router.push(`/tasks/new?agent_id=${id.value}`)
 
-onMounted(loadData)
+onMounted(async () => {
+  await loadData()
+  await loadAutonomousStatus()
+})
+
+onUnmounted(() => {
+  stopAutoPolling()
+})
 </script>
 
 <style scoped>
@@ -1220,5 +1726,9 @@ onMounted(loadData)
 
 .file-delete-btn:hover {
   color: #f44 !important;
+}
+
+.cursor-pointer {
+  cursor: pointer;
 }
 </style>

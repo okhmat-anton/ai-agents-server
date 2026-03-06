@@ -13,10 +13,10 @@
           <v-card-text class="d-flex align-center">
             <div class="flex-grow-1">
               <div class="d-flex align-center ga-2">
-                <v-icon :color="p.is_default ? 'amber' : (p.type === 'orchestrator' ? 'orange' : 'blue-grey')" size="20">{{ p.is_default ? 'mdi-star' : (p.type === 'orchestrator' ? 'mdi-crown' : 'mdi-head-cog') }}</v-icon>
+                <v-icon :color="p.is_default ? 'amber' : (p.type === 'orchestrator' ? 'orange' : p.type === 'loop' ? 'green' : 'blue-grey')" size="20">{{ p.is_default ? 'mdi-star' : (p.type === 'orchestrator' ? 'mdi-crown' : p.type === 'loop' ? 'mdi-sync' : 'mdi-head-cog') }}</v-icon>
                 <span class="text-subtitle-1 font-weight-bold">{{ p.name }}</span>
                 <v-chip v-if="p.is_default" size="x-small" color="amber" variant="tonal">default</v-chip>
-                <v-chip size="x-small" :color="p.type === 'orchestrator' ? 'orange' : 'blue-grey'" variant="tonal">{{ p.type || 'standard' }}</v-chip>
+                <v-chip size="x-small" :color="p.type === 'orchestrator' ? 'orange' : p.type === 'loop' ? 'green' : 'blue-grey'" variant="tonal">{{ p.type || 'standard' }}</v-chip>
               </div>
               <div class="text-caption text-grey mt-1">{{ p.description || 'No description' }}</div>
               <div class="text-caption text-grey mt-1">{{ stepsCount(p) }} steps · {{ loopsCount(p) }} loops{{ delegateCount(p) ? ' · ' + delegateCount(p) + ' delegates' : '' }}</div>
@@ -303,7 +303,7 @@ const deleteDialog = ref(false)
 const deleteTarget = ref(null)
 
 const categories = ['analysis', 'planning', 'execution', 'verification', 'output', 'other']
-const protocolTypes = ['standard', 'orchestrator']
+const protocolTypes = ['standard', 'orchestrator', 'loop']
 
 const form = ref({
   name: '',
