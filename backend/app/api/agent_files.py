@@ -87,10 +87,19 @@ def _scan_dir(base_dir: Path, current_dir: Path) -> list[dict]:
 # ===== JSON config helpers =====
 
 def _write_agent_json(agent_dir: Path, agent: Agent):
-    """Write agent.json — profile/description."""
+    """Write agent.json — profile/description. Preserves mission from existing file."""
+    # Read existing mission from file (mission is file-only, not in DB)
+    existing = {}
+    json_path = agent_dir / "agent.json"
+    if json_path.exists():
+        try:
+            existing = json.loads(json_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
     data = {
         "name": agent.name,
         "description": agent.description or "",
+        "mission": existing.get("mission", ""),
         "system_prompt": agent.system_prompt or "",
     }
     (agent_dir / "agent.json").write_text(

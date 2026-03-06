@@ -197,6 +197,14 @@
             </div>
           </div>
 
+          <div v-if="agent.mission" class="mt-4">
+            <div class="text-subtitle-2 mb-1">
+              <v-icon size="16" class="mr-1">mdi-flag-checkered</v-icon>
+              Моя основная миссия
+            </div>
+            <v-sheet rounded class="pa-3 bg-grey-darken-4" style="white-space: pre-wrap; font-size: 14px;">{{ agent.mission }}</v-sheet>
+          </div>
+
           <div v-if="agent.system_prompt" class="mt-4">
             <div class="text-subtitle-2 mb-1">System Prompt</div>
             <v-sheet rounded class="pa-3 bg-grey-darken-4" style="white-space: pre-wrap; font-family: monospace; font-size: 13px;">{{ agent.system_prompt }}</v-sheet>

@@ -16,6 +16,9 @@
               <v-textarea v-model="form.description" label="Description" rows="2" />
             </v-col>
             <v-col cols="12">
+              <v-textarea v-model="form.mission" label="Моя основная миссия" rows="3" hint="Это задаётся пользователем и не может быть изменено агентом" persistent-hint />
+            </v-col>
+            <v-col cols="12">
               <v-textarea v-model="form.system_prompt" label="System Prompt" rows="4" />
             </v-col>
           </v-row>
@@ -238,6 +241,7 @@ const selectedProtocolPreview = computed(() =>
 const form = ref({
   name: '',
   description: '',
+  mission: '',
   system_prompt: '',
   temperature: 0.7,
   top_p: 0.9,
@@ -277,7 +281,7 @@ onMounted(async () => {
     const agent = await agentsStore.fetchAgent(route.params.id)
     // Copy scalar fields
     const scalarKeys = [
-      'name', 'description', 'system_prompt', 'temperature', 'top_p', 'top_k',
+      'name', 'description', 'mission', 'system_prompt', 'temperature', 'top_p', 'top_k',
       'max_tokens', 'num_ctx', 'repeat_penalty', 'num_thread', 'num_gpu',
     ]
     scalarKeys.forEach((key) => {

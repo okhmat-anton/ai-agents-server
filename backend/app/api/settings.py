@@ -9,11 +9,13 @@ from app.models.user import User
 from app.models.model_config import ModelConfig
 from app.models.api_key import ApiKey
 from app.models.system_setting import SystemSetting
+from app.models.model_role import ModelRoleAssignment, MODEL_ROLES, MODEL_ROLE_LABELS
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.settings import (
     ModelConfigCreate, ModelConfigUpdate, ModelConfigResponse,
     ApiKeyCreate, ApiKeyResponse, ApiKeyCreatedResponse,
     SystemSettingResponse, SystemSettingUpdate,
+    RoleAssignmentResponse, RoleAssignmentUpdate, RolesListResponse,
 )
 from app.schemas.common import MessageResponse
 
@@ -152,6 +154,70 @@ async def list_available_models(
         return {"models": models}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- Model Roles ---
+@router.get("/model-roles/available")
+async def get_available_roles(
+    _user: User = Depends(get_current_user),
+):
+    """Return the list of all available roles with labels."""
+    return [{"role": r, "label": MODEL_ROLE_LABELS.get(r, r)} for r in MODEL_ROLES]
+
+
+@router.get("/model-roles", response_model=RolesListResponse)
+async def get_model_roles(
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all current role->model assignments."""
+    result = await db.execute(
+        select(ModelRoleAssignment).order_by(ModelRoleAssignment.role)
+    )
+    assignments = result.scalars().all()
+    return RolesListResponse(
+        assignments=[RoleAssignmentResponse(
+            role=a.role,
+            label=MODEL_ROLE_LABELS.get(a.role, a.role),
+            model_config_id=a.model_config_id,
+        ) for a in assignments],
+        available_roles=[{"role": r, "label": MODEL_ROLE_LABELS.get(r, r)} for r in MODEL_ROLES],
+    )
+
+
+@router.put("/model-roles", response_model=RolesListResponse)
+async def update_model_roles(
+    body: RoleAssignmentUpdate,
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk update role assignments. Expects {assignments: [{role, model_config_id}]}."""
+    # Validate roles
+    for a in body.assignments:
+        if a.role not in MODEL_ROLES:
+            raise HTTPException(status_code=400, detail=f"Unknown role: {a.role}")
+
+    # Delete all existing assignments
+    await db.execute(delete(ModelRoleAssignment))
+
+    # Insert new
+    for a in body.assignments:
+        db.add(ModelRoleAssignment(role=a.role, model_config_id=a.model_config_id))
+    await db.flush()
+
+    # Return updated list
+    result = await db.execute(
+        select(ModelRoleAssignment).order_by(ModelRoleAssignment.role)
+    )
+    assignments = result.scalars().all()
+    return RolesListResponse(
+        assignments=[RoleAssignmentResponse(
+            role=a.role,
+            label=MODEL_ROLE_LABELS.get(a.role, a.role),
+            model_config_id=a.model_config_id,
+        ) for a in assignments],
+        available_roles=[{"role": r, "label": MODEL_ROLE_LABELS.get(r, r)} for r in MODEL_ROLES],
+    )
 
 
 # --- API Keys ---

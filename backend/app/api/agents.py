@@ -49,6 +49,7 @@ def _build_agent_response(agent: Agent) -> dict:
     config = read_agent_config(agent.name)
     if config:
         data["description"] = config.get("description", data.get("description", ""))
+        data["mission"] = config.get("mission", data.get("mission", ""))
         data["system_prompt"] = config.get("system_prompt", data.get("system_prompt", ""))
 
     file_settings = read_agent_settings(agent.name)
@@ -141,7 +142,7 @@ async def create_agent(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    agent_data = body.model_dump(exclude={"models", "thinking_protocol_id", "protocol_ids"})
+    agent_data = body.model_dump(exclude={"models", "thinking_protocol_id", "protocol_ids", "mission"})
     # Handle thinking_protocol_id separately
     if body.thinking_protocol_id:
         agent_data["thinking_protocol_id"] = body.thinking_protocol_id
@@ -189,6 +190,7 @@ async def create_agent(
     write_agent_config(agent.name, {
         "name": agent.name,
         "description": body.description or "",
+        "mission": body.mission or "",
         "system_prompt": body.system_prompt or "",
     })
     write_agent_settings(agent.name, {
@@ -305,6 +307,10 @@ async def update_agent(
         config_fields["description"] = update_data["description"]
     else:
         config_fields["description"] = config.get("description", agent.description or "")
+    if "mission" in update_data:
+        config_fields["mission"] = update_data["mission"]
+    else:
+        config_fields["mission"] = config.get("mission", "")
     if "system_prompt" in update_data:
         config_fields["system_prompt"] = update_data["system_prompt"]
     else:

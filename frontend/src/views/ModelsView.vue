@@ -35,31 +35,28 @@
       <!-- ═══════════ Tab 1: Registered Models ═══════════ -->
       <v-window-item value="models">
 
-        <!-- Running in memory (quick overview) -->
-        <v-card v-if="ollamaRunningModels.length" class="mb-4">
-          <v-card-title class="text-subtitle-1">
-            <v-icon class="mr-2" color="success" size="20">mdi-lightning-bolt</v-icon>
-            Running in Memory
-          </v-card-title>
-          <v-card-text class="pt-0">
-            <v-chip
-              v-for="m in ollamaRunningModels" :key="m.name"
-              color="success" variant="tonal" class="mr-2 mb-1"
-            >
-              <v-icon start size="14">mdi-play-circle</v-icon>
-              {{ m.name }}
-              <span class="text-caption ml-1">({{ m.size_hr }})</span>
-            </v-chip>
-          </v-card-text>
-        </v-card>
-
         <v-card>
-          <v-data-table :headers="modelHeaders" :items="settingsStore.models" hover>
+          <v-card-title class="d-flex align-center">
+            <span>Active Models</span>
+            <v-chip class="ml-2" size="small" variant="tonal">{{ displayedModels.length }}</v-chip>
+            <v-spacer />
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-tag-multiple" @click="rolesDialog = true" class="mr-2">Assign Roles</v-btn>
+          </v-card-title>
+          <v-data-table :headers="modelHeaders" :items="displayedModels" hover>
             <template #item.provider="{ item }">
               <v-chip
                 size="small" variant="tonal"
                 :color="item.provider === 'ollama' ? 'green' : item.provider === 'openai_compatible' ? 'blue' : 'grey'"
               >{{ item.provider }}</v-chip>
+            </template>
+            <template #item.roles="{ item }">
+              <v-chip v-if="isBaseModel(item)" size="x-small" color="amber" variant="flat" class="mr-1 mb-1">
+                <v-icon start size="10">mdi-star</v-icon>base
+              </v-chip>
+              <v-chip v-for="r in getModelRoles(item)" :key="r.role" size="x-small" :color="roleColor(r.role)" variant="tonal" class="mr-1 mb-1">
+                {{ r.label }}
+              </v-chip>
+              <span v-if="!isBaseModel(item) && !getModelRoles(item).length" class="text-caption text-grey">—</span>
             </template>
             <template #item.is_active="{ item }">
               <v-chip :color="item.is_active ? 'success' : 'grey'" size="small" variant="tonal">{{ item.is_active ? 'Active' : 'Inactive' }}</v-chip>
@@ -423,6 +420,65 @@
       :loading="ollamaDeleting"
       @confirm="deleteOllamaModel"
     />
+
+    <!-- Roles Assignment Dialog -->
+    <v-dialog v-model="rolesDialog" max-width="800" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2" color="primary">mdi-tag-multiple</v-icon>
+          Assign Model Roles
+        </v-card-title>
+        <v-card-subtitle>Each role can be assigned to one model. A model can have multiple roles.</v-card-subtitle>
+        <v-card-text style="max-height: 60vh">
+          <v-table density="comfortable">
+            <thead>
+              <tr>
+                <th style="width: 40%">Role</th>
+                <th>Model</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in availableRoles" :key="r.role" :class="{ 'bg-amber-darken-4': r.role === 'base' }">
+                <td>
+                  <div class="d-flex align-center">
+                    <v-icon v-if="r.role === 'base'" size="16" color="amber" class="mr-2">mdi-star</v-icon>
+                    <v-chip v-else size="x-small" :color="roleColor(r.role)" variant="tonal" class="mr-2">{{ r.role }}</v-chip>
+                    <span class="font-weight-medium">{{ r.label }}</span>
+                  </div>
+                </td>
+                <td>
+                  <v-select
+                    :model-value="roleAssignments[r.role] || null"
+                    @update:model-value="v => setRoleAssignment(r.role, v)"
+                    :items="activeModels"
+                    item-title="name"
+                    item-value="id"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    clearable
+                    placeholder="Not assigned"
+                  >
+                    <template #item="{ item, props }">
+                      <v-list-item v-bind="props">
+                        <template #subtitle>
+                          <span class="text-caption">{{ item.raw.model_id }} · {{ item.raw.provider }}</span>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="rolesDialog = false">Cancel</v-btn>
+          <v-btn color="primary" :loading="savingRoles" @click="saveRoles">Save Roles</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -448,8 +504,8 @@ const deleteTarget = ref(null)
 const modelHeaders = [
   { title: 'Name', key: 'name' },
   { title: 'Model ID', key: 'model_id', width: 200 },
-  { title: 'Provider', key: 'provider', width: 150 },
-  { title: 'Base URL', key: 'base_url' },
+  { title: 'Provider', key: 'provider', width: 120 },
+  { title: 'Roles', key: 'roles', sortable: false, width: 250 },
   { title: 'Status', key: 'is_active', width: 100 },
   { title: 'Actions', key: 'actions', sortable: false, width: 180 },
 ]
@@ -506,6 +562,74 @@ const listModels = async (item) => {
     availDialog.value = true
   } catch (e) {
     showSnackbar(e.response?.data?.detail || 'Error', 'error')
+  }
+}
+
+// ═══════════ Model Roles ═══════════
+const rolesDialog = ref(false)
+const savingRoles = ref(false)
+const availableRoles = ref([])
+const roleAssignments = ref({})  // { role: model_config_id }
+
+const activeModels = computed(() => settingsStore.models.filter(m => m.is_active))
+
+// Models shown on first tab: only running Ollama models + all API models
+const runningOllamaNames = computed(() => new Set(ollamaRunningModels.value.map(m => m.name)))
+const displayedModels = computed(() => settingsStore.models.filter(m => {
+  if (m.provider !== 'ollama') return true
+  return runningOllamaNames.value.has(m.model_id)
+}))
+
+const roleColorMap = {
+  understanding: 'blue', planning: 'indigo', code_generation: 'deep-purple',
+  text_documents: 'teal', data_analysis: 'cyan', embedding: 'orange',
+  json_output: 'lime', creative: 'pink', validation: 'green',
+  photo_analysis: 'light-blue', video_analysis: 'purple', sound_generation: 'deep-orange',
+  speech_recognition: 'brown', translation: 'blue-grey', dialog: 'grey', base: 'amber',
+}
+const roleColor = (role) => roleColorMap[role] || 'grey'
+
+const getModelRoles = (model) => {
+  return availableRoles.value.filter(r => r.role !== 'base' && roleAssignments.value[r.role] === model.id)
+}
+const isBaseModel = (model) => roleAssignments.value['base'] === model.id
+
+const setRoleAssignment = (role, modelId) => {
+  if (modelId) {
+    roleAssignments.value[role] = modelId
+  } else {
+    delete roleAssignments.value[role]
+  }
+}
+
+const fetchRoles = async () => {
+  try {
+    const { data } = await api.get('/settings/model-roles')
+    availableRoles.value = data.available_roles
+    roleAssignments.value = {}
+    for (const a of data.assignments) {
+      roleAssignments.value[a.role] = a.model_config_id
+    }
+  } catch (e) { console.error('Failed to fetch roles:', e) }
+}
+
+const saveRoles = async () => {
+  savingRoles.value = true
+  try {
+    const assignments = Object.entries(roleAssignments.value)
+      .filter(([_, v]) => v)
+      .map(([role, model_config_id]) => ({ role, model_config_id }))
+    const { data } = await api.put('/settings/model-roles', { assignments })
+    roleAssignments.value = {}
+    for (const a of data.assignments) {
+      roleAssignments.value[a.role] = a.model_config_id
+    }
+    rolesDialog.value = false
+    showSnackbar('Roles saved')
+  } catch (e) {
+    showSnackbar(e.response?.data?.detail || 'Failed to save roles', 'error')
+  } finally {
+    savingRoles.value = false
   }
 }
 
@@ -843,6 +967,7 @@ const sendChat = async () => {
 // ═══════════ Init ═══════════
 onMounted(async () => {
   settingsStore.fetchModels()
+  fetchRoles()
   await fetchOllamaStatus()
   await Promise.all([fetchOllamaModels(), fetchOllamaRunning()])
 })

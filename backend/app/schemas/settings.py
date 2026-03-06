@@ -35,6 +35,27 @@ class ModelConfigResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# --- Model Roles ---
+class RoleAssignmentItem(BaseModel):
+    role: str
+    model_config_id: UUID
+
+
+class RoleAssignmentResponse(BaseModel):
+    role: str
+    label: str
+    model_config_id: UUID
+
+
+class RoleAssignmentUpdate(BaseModel):
+    assignments: list[RoleAssignmentItem]
+
+
+class RolesListResponse(BaseModel):
+    assignments: list[RoleAssignmentResponse]
+    available_roles: list[dict]
+
+
 class ApiKeyCreate(BaseModel):
     name: str
     description: str | None = None

@@ -174,6 +174,23 @@
                         </v-col>
                       </v-row>
                       <v-textarea v-model="step.instruction" label="Instruction" rows="2" density="compact" class="mt-3" hide-details variant="outlined" />
+
+                      <!-- Model Role selector -->
+                      <v-select
+                        v-model="step.model_role"
+                        :items="modelRoleItems"
+                        item-title="label"
+                        item-value="role"
+                        label="Model Role"
+                        density="compact"
+                        class="mt-3"
+                        hide-details
+                        variant="outlined"
+                        clearable
+                        placeholder="Default (agent model)"
+                        prepend-inner-icon="mdi-brain"
+                      />
+
                       <v-text-field v-if="step.type === 'loop' || step.type === 'decision'" v-model="step.exit_condition" label="Exit / Branch Condition" density="compact" class="mt-3" hide-details variant="outlined" prepend-inner-icon="mdi-help-circle-outline" />
 
                       <!-- Delegate: protocol selector -->
@@ -231,7 +248,14 @@
                               <v-col cols="6"><v-select v-model="sub.type" :items="['action','decision']" label="Type" density="compact" hide-details variant="outlined" /></v-col>
                             </v-row>
                             <v-textarea v-model="sub.instruction" label="Instruction" rows="1" density="compact" class="mt-2" hide-details variant="outlined" />
-                            <v-text-field v-if="sub.type === 'decision'" v-model="sub.exit_condition" label="Exit Condition" density="compact" class="mt-2" hide-details variant="outlined" />
+                            <v-row dense class="mt-2">
+                              <v-col cols="6">
+                                <v-select v-model="sub.model_role" :items="modelRoleItems" item-title="label" item-value="role" label="Model Role" density="compact" hide-details variant="outlined" clearable placeholder="Default" prepend-inner-icon="mdi-brain" />
+                              </v-col>
+                              <v-col cols="6">
+                                <v-text-field v-if="sub.type === 'decision'" v-model="sub.exit_condition" label="Exit Condition" density="compact" hide-details variant="outlined" />
+                              </v-col>
+                            </v-row>
                           </v-card>
                         </div>
                       </div>
@@ -301,6 +325,9 @@ const editingId = ref(null)
 const saving = ref(false)
 const deleteDialog = ref(false)
 const deleteTarget = ref(null)
+const modelRoles = ref([])  // [{role, label}]
+
+const modelRoleItems = computed(() => modelRoles.value.filter(r => r.role !== 'base'))
 
 const categories = ['analysis', 'planning', 'execution', 'verification', 'output', 'other']
 const protocolTypes = ['standard', 'orchestrator', 'loop']
@@ -360,8 +387,12 @@ const delegatableProtocols = computed(() =>
 const load = async () => {
   loading.value = true
   try {
-    const { data } = await api.get('/protocols')
-    protocols.value = data
+    const [protoRes, rolesRes] = await Promise.all([
+      api.get('/protocols'),
+      api.get('/settings/model-roles/available').catch(() => ({ data: [] })),
+    ])
+    protocols.value = protoRes.data
+    modelRoles.value = rolesRes.data
   } finally { loading.value = false }
 }
 
@@ -387,7 +418,7 @@ const openEdit = (p) => {
 }
 
 const addStep = (type) => {
-  const step = { type, name: '', instruction: '', category: 'other', steps: [] }
+  const step = { type, name: '', instruction: '', category: 'other', model_role: null, steps: [] }
   if (type === 'loop') { step.max_iterations = 5; step.exit_condition = '' }
   if (type === 'decision') { step.exit_condition = '' }
   if (type === 'delegate') { step.protocol_ids = [] }

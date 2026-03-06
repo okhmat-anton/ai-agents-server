@@ -31,6 +31,7 @@ class AgentModelResponse(BaseModel):
 class AgentCreate(BaseModel):
     name: str
     description: str | None = None
+    mission: str = ""
     system_prompt: str = ""
     temperature: float = 0.7
     top_p: float = 0.9
@@ -55,6 +56,7 @@ class AgentCreate(BaseModel):
 class AgentUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    mission: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
     top_p: float | None = None
@@ -80,6 +82,7 @@ class AgentResponse(BaseModel):
     id: UUID
     name: str
     description: str | None
+    mission: str = ""
     model_id: UUID | None = None      # legacy, may be null
     model_name: str | None = None     # legacy, may be null
     system_prompt: str
