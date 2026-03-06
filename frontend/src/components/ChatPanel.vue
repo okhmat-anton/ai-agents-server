@@ -49,8 +49,8 @@
             :class="{ active: chatStore.currentSession?.id === session.id }"
             @click="editingSessionId !== session.id && loadSession(session.id)"
           >
-            <v-icon size="14" class="mr-2 flex-shrink-0" :color="session.multi_model ? 'warning' : 'primary'">
-              {{ session.multi_model ? 'mdi-brain' : 'mdi-chat-outline' }}
+            <v-icon size="14" class="mr-2 flex-shrink-0" :color="(session.agent_ids?.length > 1) ? 'success' : session.multi_model ? 'warning' : 'primary'">
+              {{ (session.agent_ids?.length > 1) ? 'mdi-robot-outline' : session.multi_model ? 'mdi-brain' : 'mdi-chat-outline' }}
             </v-icon>
             <div class="flex-grow-1 text-truncate">
               <input
@@ -235,7 +235,7 @@
         >
           <v-icon size="16">mdi-brain</v-icon>
           <v-tooltip activator="parent" location="top">
-            {{ multiModel ? 'Multi-Model ON' : 'Multi-Model OFF' }}
+            {{ multiModel ? 'Multi-Model / Multi-Agent ON' : 'Multi-Model / Multi-Agent OFF' }}
           </v-tooltip>
         </v-btn>
         <v-btn
@@ -419,6 +419,7 @@ function goBackToList() {
   chatStore.currentSession = null
   chatStore.messages = []
   sessionsExpanded.value = true
+  localStorage.removeItem('chat_current_session_id')
 }
 
 async function handleSend() {
@@ -431,8 +432,11 @@ async function handleSend() {
 
   // If no active session, create one first
   if (!chatStore.currentSession) {
+    // Extract agent IDs from selected models for multi-agent support
+    const agentIds = models.filter(id => id.startsWith('agent:'))
     await chatStore.createSession({
       model_ids: models,
+      agent_ids: agentIds,
       multi_model: multiModel.value,
       system_prompt: systemPrompt.value || null,
       temperature: temperature.value,
@@ -459,8 +463,21 @@ async function loadSession(sessionId) {
   await chatStore.loadSession(sessionId)
   // Sync local controls with loaded session
   if (chatStore.currentSession) {
-    selectedModels.value = chatStore.currentSession.model_ids || []
-    multiModel.value = chatStore.currentSession.multi_model || false
+    // For multi-agent sessions, reconstruct agent:UUID selection
+    const agentIds = chatStore.currentSession.agent_ids || []
+    if (agentIds.length > 1) {
+      selectedModels.value = agentIds.map(id => `agent:${id}`)
+      multiModel.value = true
+    } else if (agentIds.length === 1) {
+      // Single agent — use agent: prefix so selector matches available-models
+      const agentId = `agent:${agentIds[0]}`
+      const modelIds = chatStore.currentSession.model_ids || []
+      selectedModels.value = multiModel.value ? [agentId, ...modelIds] : agentId
+      multiModel.value = chatStore.currentSession.multi_model || false
+    } else {
+      selectedModels.value = chatStore.currentSession.model_ids || []
+      multiModel.value = chatStore.currentSession.multi_model || false
+    }
     systemPrompt.value = chatStore.currentSession.system_prompt || ''
     temperature.value = chatStore.currentSession.temperature ?? 0.7
     sessionsExpanded.value = false
@@ -534,9 +551,16 @@ function stopModelPolling() {
 onMounted(async () => {
   await chatStore.fetchAvailableModels()
   await chatStore.fetchSessions()
-  // Pre-select first model if available
-  if (chatStore.availableModels.length && !selectedModels.value.length) {
-    selectedModels.value = multiModel.value ? [] : chatStore.availableModels[0].id
+
+  // Restore last active session from localStorage
+  const savedSessionId = localStorage.getItem('chat_current_session_id')
+  if (savedSessionId && chatStore.sessions.find(s => s.id === savedSessionId)) {
+    await loadSession(savedSessionId)
+  } else {
+    // Pre-select first model if available
+    if (chatStore.availableModels.length && !selectedModels.value.length) {
+      selectedModels.value = multiModel.value ? [] : chatStore.availableModels[0].id
+    }
   }
   if (chatStore.panelOpen) startModelPolling()
 })

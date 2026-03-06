@@ -4,7 +4,7 @@ ChatSession and ChatMessage models for persistent chat history.
 import uuid
 from datetime import datetime
 from sqlalchemy import String, Text, DateTime, func, Integer, Float, ForeignKey, Boolean, JSON
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -19,6 +19,8 @@ class ChatSession(Base):
     model_ids: Mapped[list | None] = mapped_column(ARRAY(String), default=[])
     # Agent ID if chatting with a specific agent
     agent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
+    # Multiple agent IDs for multi-agent mode
+    agent_ids: Mapped[list | None] = mapped_column(JSONB, default=[], server_default="'[]'::jsonb")
     # Multi-model mode
     multi_model: Mapped[bool] = mapped_column(Boolean, default=False)
     # System prompt override

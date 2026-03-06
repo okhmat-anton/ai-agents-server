@@ -69,6 +69,7 @@ export const useChatStore = defineStore('chat', {
           title: params.title || 'New Chat',
           model_ids: params.model_ids || [],
           agent_id: params.agent_id || null,
+          agent_ids: params.agent_ids || [],
           multi_model: params.multi_model || false,
           system_prompt: params.system_prompt || null,
           temperature: params.temperature ?? 0.7,
@@ -76,6 +77,7 @@ export const useChatStore = defineStore('chat', {
         this.sessions.unshift(data)
         this.currentSession = data
         this.messages = []
+        localStorage.setItem('chat_current_session_id', data.id)
         return data
       } catch (e) {
         console.error('Failed to create session:', e)
@@ -90,6 +92,7 @@ export const useChatStore = defineStore('chat', {
         this.currentSession = data
         this.messages = data.messages || []
         this.showSessionList = false
+        localStorage.setItem('chat_current_session_id', sessionId)
       } catch (e) {
         console.error('Failed to load session:', e)
       } finally {
@@ -119,6 +122,7 @@ export const useChatStore = defineStore('chat', {
         if (this.currentSession?.id === sessionId) {
           this.currentSession = null
           this.messages = []
+          localStorage.removeItem('chat_current_session_id')
         }
       } catch (e) {
         console.error('Failed to delete session:', e)
@@ -143,35 +147,62 @@ export const useChatStore = defineStore('chat', {
       }
       this.messages.push(userMsg)
 
+      const MAX_RETRIES = 2
+
       try {
-        const { data } = await api.post(
-          `/chat/sessions/${this.currentSession.id}/messages`,
-          { content, model_ids: modelIds },
-          { timeout: 120000 }
-        )
-        this.messages.push(data)
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            const { data } = await api.post(
+              `/chat/sessions/${this.currentSession.id}/messages`,
+              { content, model_ids: modelIds },
+              { timeout: 300000 }
+            )
+            this.messages.push(data)
 
-        // Update session in list
-        const idx = this.sessions.findIndex(s => s.id === this.currentSession.id)
-        if (idx >= 0) {
-          this.sessions[idx].last_message = data.content?.substring(0, 100)
-          this.sessions[idx].message_count = this.messages.length
-          this.sessions[idx].updated_at = new Date().toISOString()
+            // Update session in list
+            const idx = this.sessions.findIndex(s => s.id === this.currentSession.id)
+            if (idx >= 0) {
+              this.sessions[idx].last_message = data.content?.substring(0, 100)
+              this.sessions[idx].message_count = this.messages.length
+              this.sessions[idx].updated_at = new Date().toISOString()
+            }
+
+            return data
+          } catch (e) {
+            const isNetworkError = !e.response && e.message === 'Network Error'
+            const isTimeout = e.code === 'ECONNABORTED'
+
+            // Retry only on transient network errors (not HTTP errors)
+            if ((isNetworkError || isTimeout) && attempt < MAX_RETRIES) {
+              console.warn(`Chat request failed (attempt ${attempt + 1}), retrying...`, e.message)
+              await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+              continue
+            }
+
+            // Build human-readable error message
+            let errorText
+            if (isNetworkError) {
+              errorText = 'Cannot connect to server. Check that the backend is running and try again.'
+            } else if (isTimeout) {
+              errorText = 'Request timed out. The model may be overloaded — try again later.'
+            } else if (e.response?.data?.detail) {
+              errorText = e.response.data.detail
+            } else {
+              errorText = e.message
+            }
+
+            this.messages.push({
+              id: 'error-' + Date.now(),
+              role: 'assistant',
+              content: `**Error:** ${errorText}`,
+              model_name: 'system',
+              total_tokens: 0,
+              duration_ms: 0,
+              created_at: new Date().toISOString(),
+            })
+            throw e
+          }
         }
-
-        return data
-      } catch (e) {
-        // Add error message
-        this.messages.push({
-          id: 'error-' + Date.now(),
-          role: 'assistant',
-          content: `**Error:** ${e.response?.data?.detail || e.message}`,
-          model_name: 'system',
-          total_tokens: 0,
-          duration_ms: 0,
-          created_at: new Date().toISOString(),
-        })
-        throw e
       } finally {
         this.sending = false
       }
@@ -194,6 +225,7 @@ export const useChatStore = defineStore('chat', {
       this.currentSession = null
       this.messages = []
       this.showSessionList = false
+      localStorage.removeItem('chat_current_session_id')
     },
   },
 })

@@ -12,6 +12,7 @@ export default defineConfig({
       '/api': {
         target: backendUrl,
         changeOrigin: true,
+        timeout: 300000,
       },
       '/ws': {
         target: backendUrl.replace('http', 'ws'),

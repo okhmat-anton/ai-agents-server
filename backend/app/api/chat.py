@@ -49,6 +49,7 @@ class ChatSessionCreate(BaseModel):
     title: str = "New Chat"
     model_ids: list[str] = []          # model_config UUIDs or "ollama:modelname"
     agent_id: Optional[str] = None
+    agent_ids: list[str] = []          # multiple agent UUIDs for multi-agent mode
     multi_model: bool = False
     system_prompt: Optional[str] = None
     temperature: float = 0.7
@@ -67,6 +68,7 @@ class ChatSessionResponse(BaseModel):
     title: str
     model_ids: list[str]
     agent_id: Optional[str] = None
+    agent_ids: list[str] = []
     multi_model: bool
     system_prompt: Optional[str] = None
     temperature: float
@@ -116,6 +118,7 @@ def _session_to_response(session: ChatSession) -> dict:
         "title": session.title,
         "model_ids": session.model_ids or [],
         "agent_id": str(session.agent_id) if session.agent_id else None,
+        "agent_ids": session.agent_ids or [],
         "multi_model": session.multi_model,
         "system_prompt": session.system_prompt,
         "temperature": session.temperature,
@@ -279,40 +282,55 @@ async def create_session(
 ):
     """Create a new chat session."""
     agent_id = None
+    agent_ids_raw = []
     model_ids = list(body.model_ids)
 
-    # Extract agent_id from explicit field
-    if body.agent_id and body.agent_id.startswith("agent:"):
+    # Collect all agent: prefixed IDs from model_ids
+    for mid in model_ids:
+        if mid.startswith("agent:"):
+            try:
+                agent_ids_raw.append(str(uuid.UUID(mid[6:])))
+            except ValueError:
+                pass
+
+    # Also from explicit fields
+    if body.agent_ids:
+        for aid in body.agent_ids:
+            cleaned = aid.replace("agent:", "")
+            try:
+                aid_str = str(uuid.UUID(cleaned))
+                if aid_str not in agent_ids_raw:
+                    agent_ids_raw.append(aid_str)
+            except ValueError:
+                pass
+
+    if body.agent_id:
+        cleaned = body.agent_id.replace("agent:", "")
         try:
-            agent_id = uuid.UUID(body.agent_id[6:])
+            aid_str = str(uuid.UUID(cleaned))
+            if aid_str not in agent_ids_raw:
+                agent_ids_raw.append(aid_str)
         except ValueError:
             pass
-    elif body.agent_id:
-        try:
-            agent_id = uuid.UUID(body.agent_id)
-        except ValueError:
-            pass
 
-    # Also detect agent: prefix inside model_ids
-    if not agent_id:
-        for mid in model_ids:
-            if mid.startswith("agent:"):
-                try:
-                    agent_id = uuid.UUID(mid[6:])
-                except ValueError:
-                    pass
-                break
+    # Remove agent: entries from model_ids
+    model_ids = [m for m in model_ids if not m.startswith("agent:")]
 
-    # If agent selected, resolve the agent's actual model(s) for LLM calls
-    if agent_id:
-        # Remove agent: entries from model_ids
-        model_ids = [m for m in model_ids if not m.startswith("agent:")]
+    # Set primary agent_id (first agent for backward compat)
+    if agent_ids_raw:
+        agent_id = uuid.UUID(agent_ids_raw[0])
 
-        # If no real models left, resolve from agent's configuration
+    # Multi-agent mode: if 2+ agents selected, it's always multi_model
+    is_multi_agent = len(agent_ids_raw) > 1
+    if is_multi_agent:
+        body.multi_model = True
+
+    # If agents selected, resolve model(s) for LLM calls
+    if agent_ids_raw:
         if not model_ids:
-            agent = await db.get(Agent, agent_id)
+            # Resolve model from first agent's configuration
+            agent = await db.get(Agent, uuid.UUID(agent_ids_raw[0]))
             if agent:
-                # Use agent_models (multi-model support) or fallback to agent.model_id
                 if agent.agent_models:
                     model_ids = [str(am.model_config_id) for am in sorted(agent.agent_models, key=lambda x: x.priority)]
                 elif agent.model_id:
@@ -332,6 +350,7 @@ async def create_session(
         title=body.title,
         model_ids=model_ids,
         agent_id=agent_id,
+        agent_ids=agent_ids_raw,
         multi_model=body.multi_model,
         system_prompt=body.system_prompt,
         temperature=body.temperature,
@@ -759,7 +778,24 @@ async def send_message(
         if tracker:
             tracker.start_step_timer()
 
-        if session.multi_model and len(model_ids) > 1:
+        # Check for multi-agent mode
+        is_multi_agent = len(session.agent_ids or []) > 1
+
+        if is_multi_agent:
+            # Multi-agent chat: each agent responds independently, first synthesizes
+            # Build conversation history without system prompt (each agent adds its own)
+            bare_history = []
+            for msg in session.messages:
+                if msg.role != "system":
+                    bare_history.append({"role": msg.role, "content": msg.content})
+            bare_history.append({"role": "user", "content": body.content})
+
+            response_data = await _multi_agent_chat(
+                session.agent_ids, body.content, bare_history, db, session.temperature
+            )
+            llm_calls_count = len(session.agent_ids) + 1  # agents + synthesis
+            _resolved_model_name = response_data.get("model_name")
+        elif session.multi_model and len(model_ids) > 1:
             response_data = await _multi_model_chat(model_ids, history, gen_params, db)
             llm_calls_count = len(model_ids) + 1  # models + synthesis
             _resolved_model_name = response_data.get("model_name")
@@ -951,9 +987,12 @@ async def send_message(
                 )
 
         # Save assistant message
-        # For agent sessions, prefix model_name with agent name
+        # For multi-agent, model_name already set by _multi_agent_chat
+        # For single agent sessions, prefix model_name with agent name
         display_model_name = response_data.get("model_name")
-        if is_agent_session and session.agent:
+        if is_multi_agent:
+            pass  # already formatted as "multi-agent(...)"
+        elif is_agent_session and session.agent:
             agent_display = session.agent.name
             if display_model_name:
                 display_model_name = f"{agent_display} ({display_model_name})"
@@ -1103,6 +1142,207 @@ async def _multi_model_chat(
         "model_name": "multi",
         "model_responses": model_responses,
         "total_tokens": total_tokens,
+    }
+
+
+async def _build_agent_context(agent_id_str: str, db: AsyncSession, session_temperature: float = 0.7) -> dict:
+    """Build full agent context (system prompt, gen params, model) for multi-agent chat."""
+    agent = await db.get(Agent, uuid.UUID(agent_id_str))
+    if not agent:
+        return None
+
+    agent_name = agent.name
+    agent_config = read_agent_config(agent_name)
+    base_system_prompt = agent_config.get("system_prompt", "")
+
+    agent_settings = read_agent_settings(agent_name)
+    gen_params = GenerationParams(temperature=session_temperature)
+    if agent_settings:
+        gen_params = GenerationParams(
+            temperature=agent_settings.get("temperature", session_temperature),
+            top_p=agent_settings.get("top_p", 0.9),
+            top_k=agent_settings.get("top_k", 40),
+            max_tokens=agent_settings.get("max_tokens", 2048),
+            num_ctx=agent_settings.get("num_ctx", 32768),
+            repeat_penalty=agent_settings.get("repeat_penalty", 1.1),
+            num_predict=agent_settings.get("num_predict", -1),
+            stop=agent_settings.get("stop") or None,
+            num_thread=agent_settings.get("num_thread", 8),
+            num_gpu=agent_settings.get("num_gpu", 1),
+        )
+
+    protocols = await _load_agent_protocols(agent, db)
+    skills = await _load_agent_skills(agent.id, db, agent=agent)
+    beliefs = read_beliefs(agent_name)
+    from app.api.agent_aspirations import read_aspirations
+    aspirations = read_aspirations(agent_name)
+
+    if protocols:
+        system_prompt = build_agent_system_prompt(
+            base_system_prompt=base_system_prompt,
+            agent_name=agent_name,
+            protocols=protocols,
+            available_skills=skills or None,
+            beliefs=beliefs,
+            aspirations=aspirations,
+        )
+    else:
+        system_prompt = base_system_prompt
+
+    # Resolve model for this agent
+    model_id = None
+    if agent.agent_models:
+        model_id = str(sorted(agent.agent_models, key=lambda x: x.priority)[0].model_config_id)
+    elif agent.model_id:
+        model_id = str(agent.model_id)
+
+    if not model_id:
+        base_model = await resolve_model_for_role(db, "base")
+        if base_model:
+            model_id = str(base_model.id)
+
+    return {
+        "agent_id": agent_id_str,
+        "agent_name": agent_name,
+        "system_prompt": system_prompt,
+        "gen_params": gen_params,
+        "model_id": model_id,
+    }
+
+
+async def _multi_agent_chat(
+    agent_ids: list[str],
+    user_content: str,
+    conversation_history: list[dict],
+    db: AsyncSession,
+    session_temperature: float = 0.7,
+) -> dict:
+    """
+    Multi-agent mode (like GROK multi-model):
+    1. Each agent answers independently with its own system prompt
+    2. First agent synthesizes all responses into a final answer
+    """
+    # Build context for each agent
+    agent_contexts = []
+    for aid in agent_ids:
+        ctx = await _build_agent_context(aid, db, session_temperature)
+        if ctx and ctx.get("model_id"):
+            agent_contexts.append(ctx)
+
+    if not agent_contexts:
+        raise HTTPException(status_code=400, detail="No agents could be resolved")
+
+    # Query each agent in parallel
+    async def query_agent(ctx: dict):
+        try:
+            # Build per-agent history with agent's own system prompt
+            history = []
+            if ctx["system_prompt"]:
+                history.append({"role": "system", "content": ctx["system_prompt"]})
+            # Add previous conversation (without system messages)
+            for msg in conversation_history:
+                if msg["role"] != "system":
+                    history.append(msg)
+
+            provider, base_url, model_name, api_key = await _resolve_model(ctx["model_id"], db)
+            resp = await _chat_with_model(
+                provider, base_url, model_name, api_key,
+                history, ctx["gen_params"],
+            )
+            return {
+                "agent_name": ctx["agent_name"],
+                "model": model_name,
+                "content": resp.content,
+                "tokens": resp.total_tokens,
+            }
+        except Exception as e:
+            return {
+                "agent_name": ctx["agent_name"],
+                "model": ctx.get("model_id", "?"),
+                "content": f"[Error: {str(e)}]",
+                "tokens": 0,
+                "error": True,
+            }
+
+    tasks = [query_agent(ctx) for ctx in agent_contexts]
+    results = await asyncio.gather(*tasks)
+
+    # Build model_responses dict (agent_name -> response)
+    agent_responses = {}
+    total_tokens = 0
+    for r in results:
+        agent_responses[r["agent_name"]] = r["content"]
+        total_tokens += r.get("tokens", 0)
+
+    successful = [r for r in results if not r.get("error")]
+
+    # If only 1 agent succeeded, return directly
+    if len(successful) == 1:
+        return {
+            "content": successful[0]["content"],
+            "model_name": f"{successful[0]['agent_name']} ({successful[0]['model']})",
+            "model_responses": agent_responses,
+            "total_tokens": total_tokens,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
+
+    # Synthesize using the first agent's context
+    if successful:
+        synth_ctx = agent_contexts[0]
+        synth_provider, synth_base_url, synth_model, synth_api_key = await _resolve_model(
+            synth_ctx["model_id"], db
+        )
+
+        # Build synthesis prompt
+        synthesis_parts = []
+        for r in successful:
+            synthesis_parts.append(f"=== Response from agent \"{r['agent_name']}\" ===\n{r['content']}")
+
+        synthesis_prompt = (
+            f"You are {synth_ctx['agent_name']}. "
+            "Below are responses from multiple AI agents to the same user question. "
+            "Analyze all responses, combine the best insights, resolve any contradictions, "
+            "and produce a single comprehensive answer. Be concise but thorough.\n\n"
+            + "\n\n".join(synthesis_parts)
+            + "\n\n=== Your synthesized answer ==="
+        )
+
+        synth_history = []
+        if synth_ctx["system_prompt"]:
+            synth_history.append({"role": "system", "content": synth_ctx["system_prompt"]})
+        synth_history.append({"role": "user", "content": synthesis_prompt})
+
+        try:
+            synth_resp = await _chat_with_model(
+                synth_provider, synth_base_url, synth_model, synth_api_key,
+                synth_history, synth_ctx["gen_params"],
+            )
+            total_tokens += synth_resp.total_tokens
+
+            agent_names = ", ".join(r["agent_name"] for r in successful)
+            return {
+                "content": synth_resp.content,
+                "model_name": f"multi-agent({agent_names})",
+                "model_responses": agent_responses,
+                "total_tokens": total_tokens,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+            }
+        except Exception:
+            pass
+
+    # Fallback: format all responses
+    formatted = "\n\n".join(
+        f"**🤖 {r['agent_name']}:**\n{r['content']}" for r in results
+    )
+    return {
+        "content": formatted,
+        "model_name": "multi-agent",
+        "model_responses": agent_responses,
+        "total_tokens": total_tokens,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
     }
 
 
