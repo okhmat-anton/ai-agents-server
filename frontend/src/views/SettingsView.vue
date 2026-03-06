@@ -99,7 +99,7 @@
             <v-icon class="mr-2">mdi-brain</v-icon>Models
           </v-card-title>
           <v-card-text>Manage LLM provider connections</v-card-text>
-          <v-card-actions><v-btn to="/settings/models" color="primary">Manage Models</v-btn></v-card-actions>
+          <v-card-actions><v-btn to="/models" color="primary">Manage Models</v-btn></v-card-actions>
         </v-card>
       </v-col>
       <v-col cols="6">
