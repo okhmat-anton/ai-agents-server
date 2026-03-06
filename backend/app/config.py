@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Agents
     AGENTS_DIR: str = "./data/agents"
 
+    # Projects (code storage for agents)
+    PROJECTS_DIR: str = "./data/projects"
+
     class Config:
         env_file = ".env"
         extra = "ignore"

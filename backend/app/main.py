@@ -36,6 +36,7 @@ from app.api.agent_aspirations import router as agent_aspirations_router
 from app.api.protocols import router as protocols_router
 from app.api.thinking_logs import agent_thinking_router, session_thinking_router
 from app.api.autonomous import router as autonomous_router
+from app.api.projects import router as projects_router
 
 from app.services.ollama_watchdog import start_watchdog, stop_watchdog
 
@@ -133,6 +134,7 @@ app.include_router(protocols_router)
 app.include_router(agent_thinking_router)
 app.include_router(session_thinking_router)
 app.include_router(autonomous_router)
+app.include_router(projects_router)
 
 
 @app.get("/")

@@ -34,6 +34,8 @@ const routes = [
       { path: 'files', name: 'FileBrowser', component: () => import('../views/FileBrowserView.vue') },
       { path: 'terminal', name: 'Terminal', component: () => import('../views/TerminalView.vue') },
       { path: 'system', name: 'System', component: () => import('../views/SystemView.vue') },
+      { path: 'projects', name: 'Projects', component: () => import('../views/ProjectsView.vue') },
+      { path: 'projects/:slug', name: 'ProjectDetail', component: () => import('../views/ProjectDetailView.vue') },
     ],
   },
 ]
