@@ -29,3 +29,21 @@ class LogQuery(BaseModel):
     date_to: datetime | None = None
     limit: int = 50
     offset: int = 0
+
+
+class AgentErrorResponse(BaseModel):
+    id: UUID
+    agent_id: UUID
+    error_type: str
+    source: str
+    message: str
+    context: dict | None = None
+    resolved: bool
+    resolution: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AgentErrorResolve(BaseModel):
+    resolution: str = ""

@@ -530,6 +530,7 @@ async def update_task(
                 raise HTTPException(status_code=400, detail=f"Invalid priority: {update_data['priority']}")
 
             old_status = t.get("status")
+            old_assignee = t.get("assignee")
             t.update(update_data)
             t["updated_at"] = datetime.now(timezone.utc).isoformat()
             tasks[i] = t
@@ -538,6 +539,12 @@ async def update_task(
             if "status" in update_data and old_status != update_data["status"]:
                 _add_log(project_dir, "info",
                          f"Task {t.get('key')} moved: {old_status} → {update_data['status']}",
+                         source="user")
+
+            if "assignee" in update_data and old_assignee != update_data.get("assignee"):
+                new_assignee = update_data.get("assignee") or "unassigned"
+                _add_log(project_dir, "info",
+                         f"Task {t.get('key')} assigned to: {new_assignee}",
                          source="user")
 
             return t
@@ -560,6 +567,121 @@ async def delete_task(
         raise HTTPException(status_code=404, detail="Task not found")
     _write_tasks_json(project_dir, tasks)
     return MessageResponse(message="Task deleted")
+
+
+# ══════════════════════════════════════════════════════════
+# ── TASK COMMENTS ───────────────────────────────────────
+# ══════════════════════════════════════════════════════════
+
+class TaskCommentCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=5000)
+    author: str = "user"  # "user", agent name, or "system"
+
+
+@router.get("/{slug}/tasks/{task_id}/comments")
+async def list_task_comments(
+    slug: str,
+    task_id: str,
+    _user: User = Depends(get_current_user),
+):
+    """List all comments on a task."""
+    project_dir, _ = _get_project_or_404(slug)
+    tasks = _read_tasks_json(project_dir)
+    for t in tasks:
+        if t.get("id") == task_id:
+            return {"items": t.get("comments", []), "total": len(t.get("comments", []))}
+    raise HTTPException(status_code=404, detail="Task not found")
+
+
+@router.post("/{slug}/tasks/{task_id}/comments", status_code=201)
+async def add_task_comment(
+    slug: str,
+    task_id: str,
+    body: TaskCommentCreate,
+    _user: User = Depends(get_current_user),
+):
+    """Add a comment to a task."""
+    project_dir, _ = _get_project_or_404(slug)
+    tasks = _read_tasks_json(project_dir)
+
+    for i, t in enumerate(tasks):
+        if t.get("id") == task_id:
+            if "comments" not in t:
+                t["comments"] = []
+            comment = {
+                "id": uuid.uuid4().hex[:12],
+                "content": body.content,
+                "author": body.author,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            t["comments"].append(comment)
+            t["updated_at"] = datetime.now(timezone.utc).isoformat()
+            tasks[i] = t
+            _write_tasks_json(project_dir, tasks)
+            _add_log(project_dir, "info",
+                     f"Comment added to task {t.get('key')} by {body.author}",
+                     source=body.author)
+            return comment
+
+    raise HTTPException(status_code=404, detail="Task not found")
+
+
+@router.delete("/{slug}/tasks/{task_id}/comments/{comment_id}")
+async def delete_task_comment(
+    slug: str,
+    task_id: str,
+    comment_id: str,
+    _user: User = Depends(get_current_user),
+):
+    """Delete a comment from a task."""
+    project_dir, _ = _get_project_or_404(slug)
+    tasks = _read_tasks_json(project_dir)
+
+    for i, t in enumerate(tasks):
+        if t.get("id") == task_id:
+            comments = t.get("comments", [])
+            original = len(comments)
+            comments = [c for c in comments if c.get("id") != comment_id]
+            if len(comments) == original:
+                raise HTTPException(status_code=404, detail="Comment not found")
+            t["comments"] = comments
+            tasks[i] = t
+            _write_tasks_json(project_dir, tasks)
+            return MessageResponse(message="Comment deleted")
+
+    raise HTTPException(status_code=404, detail="Task not found")
+
+
+# ══════════════════════════════════════════════════════════
+# ── TASK LOGS (filtered project logs) ───────────────────
+# ══════════════════════════════════════════════════════════
+
+@router.get("/{slug}/tasks/{task_id}/logs")
+async def get_task_logs(
+    slug: str,
+    task_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    _user: User = Depends(get_current_user),
+):
+    """Get project logs related to a specific task."""
+    project_dir, _ = _get_project_or_404(slug)
+    tasks = _read_tasks_json(project_dir)
+
+    task = None
+    for t in tasks:
+        if t.get("id") == task_id:
+            task = t
+            break
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task_key = task.get("key", "")
+    logs = _read_logs_json(project_dir)
+
+    # Filter logs that reference this task key
+    task_logs = [l for l in logs if task_key and task_key in l.get("message", "")]
+    task_logs.reverse()
+    return {"items": task_logs[:limit], "total": len(task_logs)}
 
 
 # ══════════════════════════════════════════════════════════

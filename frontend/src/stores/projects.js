@@ -81,6 +81,27 @@ export const useProjectsStore = defineStore('projects', {
       this.currentTasks = this.currentTasks.filter(t => t.id !== taskId)
     },
 
+    // Task Comments
+    async fetchTaskComments(slug, taskId) {
+      const { data } = await api.get(`/projects/${slug}/tasks/${taskId}/comments`)
+      return data.items || []
+    },
+
+    async addTaskComment(slug, taskId, payload) {
+      const { data } = await api.post(`/projects/${slug}/tasks/${taskId}/comments`, payload)
+      return data
+    },
+
+    async deleteTaskComment(slug, taskId, commentId) {
+      await api.delete(`/projects/${slug}/tasks/${taskId}/comments/${commentId}`)
+    },
+
+    // Task Logs
+    async fetchTaskLogs(slug, taskId, params = {}) {
+      const { data } = await api.get(`/projects/${slug}/tasks/${taskId}/logs`, { params })
+      return data.items || []
+    },
+
     // Files
     async fetchFiles(slug) {
       const { data } = await api.get(`/projects/${slug}/files`)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -48,6 +49,98 @@ from app.services.log_service import syslog_bg
 # ── Global registry of active runs ──
 # Maps run_id -> asyncio.Task
 active_runs: dict[str, asyncio.Task] = {}
+
+# ── Status mapping: TODO statuses → Task statuses ──
+_TODO_STATUS_TO_TASK = {
+    "pending": "pending",
+    "in_progress": "running",
+    "done": "completed",
+    "skipped": "cancelled",
+}
+_TASK_STATUS_TO_TODO = {v: k for k, v in _TODO_STATUS_TO_TASK.items()}
+
+
+async def sync_todos_to_tasks(
+    db: AsyncSession,
+    agent_id: uuid.UUID,
+    todo_items: list[dict],
+    todo_task_map: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """
+    Synchronise the agent's TODO list (from <<<TODO>>> markers) with the
+    persistent tasks table so that every TODO item is visible in the Tasks tab.
+
+    Parameters
+    ----------
+    db          – active async session (caller commits)
+    agent_id    – the agent owning these tasks
+    todo_items  – parsed TODO list from the LLM output
+    todo_task_map – existing mapping {todo_id_str: task_uuid_str} from cycle_state
+
+    Returns
+    -------
+    Updated todo_task_map dict.
+    """
+    from app.models.task import Task
+
+    mapping = dict(todo_task_map or {})
+
+    for item in todo_items:
+        todo_id = str(item.get("id", ""))
+        title = (item.get("task") or item.get("title") or f"Task {todo_id}")[:500]
+        status = _TODO_STATUS_TO_TASK.get(item.get("status", "pending"), "pending")
+
+        existing_task_id = mapping.get(todo_id)
+
+        if existing_task_id:
+            # Update existing Task
+            result = await db.execute(
+                select(Task).where(Task.id == uuid.UUID(existing_task_id))
+            )
+            task = result.scalar_one_or_none()
+            if task:
+                if task.title != title:
+                    task.title = title
+                if task.status != status:
+                    task.status = status
+                    if status == "completed" and not task.completed_at:
+                        task.completed_at = datetime.now(timezone.utc)
+                    elif status == "running" and not task.started_at:
+                        task.started_at = datetime.now(timezone.utc)
+            else:
+                # Task was deleted — re-create
+                new_task = Task(
+                    agent_id=agent_id,
+                    title=title,
+                    description="Auto-created from agent TODO list",
+                    type="one_time",
+                    status=status,
+                    priority="normal",
+                )
+                db.add(new_task)
+                await db.flush()
+                mapping[todo_id] = str(new_task.id)
+        else:
+            # Create new Task
+            new_task = Task(
+                agent_id=agent_id,
+                title=title,
+                description="Auto-created from agent TODO list",
+                type="one_time",
+                status=status,
+                priority="normal",
+            )
+            if status == "running":
+                new_task.started_at = datetime.now(timezone.utc)
+            elif status == "completed":
+                new_task.started_at = datetime.now(timezone.utc)
+                new_task.completed_at = datetime.now(timezone.utc)
+            db.add(new_task)
+            await db.flush()
+            mapping[todo_id] = str(new_task.id)
+
+    await db.flush()
+    return mapping
 
 
 async def start_autonomous_run(
@@ -269,6 +362,20 @@ async def _run_autonomous_loop(run_id: str, agent_id_str: str):
                     run.error_message = f"{e}\n{error_tb}"[:2000]
                     run.completed_at = datetime.now(timezone.utc)
                     agent.status = "error"
+
+                    # Log AgentError for unexpected cycle failures
+                    try:
+                        from app.api.chat import create_agent_error
+                        await create_agent_error(
+                            db, agent.id,
+                            error_type="unknown",
+                            message=f"Autonomous cycle {run.completed_cycles + 1} failed: {e}",
+                            source="autonomous",
+                            context={"run_id": run_id, "cycle": run.completed_cycles + 1, "traceback": error_tb[:1000]},
+                        )
+                    except Exception:
+                        pass
+
                     await db.commit()
                     await syslog_bg("error", f"Autonomous cycle error: {e}\n{error_tb}",
                                     source="autonomous",
@@ -369,6 +476,27 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         # Load assigned projects with their pending tasks
         assigned_projects = _load_assigned_projects(str(agent.id))
 
+        # Load agent's persistent tasks from DB and populate cycle_state.todo_list
+        from app.models.task import Task as TaskModel
+        task_result = await db.execute(
+            select(TaskModel)
+            .where(TaskModel.agent_id == agent.id,
+                   TaskModel.status.in_(["pending", "running"]))
+            .order_by(TaskModel.created_at)
+        )
+        agent_db_tasks = task_result.scalars().all()
+        if agent_db_tasks and not (run.cycle_state or {}).get("todo_list"):
+            # Seed the cycle todo_list from DB tasks
+            run.cycle_state = run.cycle_state or {}
+            seeded_todo = []
+            seeded_map = run.cycle_state.get("todo_task_map", {})
+            for idx, t in enumerate(agent_db_tasks, 1):
+                todo_status = _TASK_STATUS_TO_TODO.get(t.status, "pending")
+                seeded_todo.append({"id": idx, "task": t.title, "status": todo_status})
+                seeded_map[str(idx)] = str(t.id)
+            run.cycle_state["todo_list"] = seeded_todo
+            run.cycle_state["todo_task_map"] = seeded_map
+
         # Load the loop protocol
         result = await db.execute(select(ThinkingProtocol).where(ThinkingProtocol.id == run.loop_protocol_id))
         loop_protocol = result.scalar_one_or_none()
@@ -442,10 +570,22 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
 
         # Add the autonomous cycle prompt as user message
         cycle_prompt = f"Execute cycle {cycle_num}. Analyze your current state and decide what to do."
+
+        # Always prioritize project work first
+        if assigned_projects:
+            project_names = [p.get("name", "") for p in assigned_projects]
+            has_project_tasks = any(p.get("pending_tasks") for p in assigned_projects)
+            if has_project_tasks:
+                cycle_prompt += (
+                    f"\n\n🚨 **PROJECT WORK IS YOUR TOP PRIORITY.** You have assigned projects: {', '.join(project_names)}. "
+                    "Work on pending project tasks FIRST. Use `project_file_write` skill to save code to project files. "
+                    "Do NOT just write code in your response — it won't be saved. You MUST use the skill."
+                )
+
         if cycle_state.get("todo_list"):
             pending = [t for t in cycle_state["todo_list"] if t.get("status") in ("pending", "in_progress")]
             if pending:
-                cycle_prompt += f" You have {len(pending)} pending tasks."
+                cycle_prompt += f" You have {len(pending)} pending tasks in your todo list."
 
         # Self-thinking mode: suggest task generation when idle
         if agent.self_thinking:
@@ -467,7 +607,7 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
                 cycle_prompt += (
                     "\n\n🧠 **Self-Thinking Mode:** Your personal todo list is empty, "
                     "but you have project tasks waiting. Pick the highest-priority project task "
-                    "to work on, or generate supporting tasks aligned with project goals."
+                    "to work on. Use `project_file_write` skill to save your code!"
                 )
 
         history.append({"role": "user", "content": cycle_prompt})
@@ -525,6 +665,16 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         skill_calls = parse_skill_invocations(llm_content)
         stop_reason = parse_stop(llm_content)
 
+        # ── Fallback: auto-extract code from markdown if agent forgot SKILL markers ──
+        if not skill_calls and assigned_projects:
+            fallback_calls = _extract_code_fallback(llm_content, assigned_projects)
+            if fallback_calls:
+                skill_calls = fallback_calls
+                logger.info(
+                    "Auto-extracted %d code block(s) from markdown as fallback skill call(s)",
+                    len(fallback_calls),
+                )
+
         await tracker.step(
             "response_parse", "Parse autonomous cycle response",
             output_data={
@@ -540,10 +690,60 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         if skill_calls and agent_skills:
             tracker.start_step_timer()
 
-            from app.api.chat import _execute_skill
+            from app.api.chat import _execute_skill, create_agent_error
             skill_results = []
+            errors_in_cycle = []
             for call in skill_calls:
                 result_val = await _execute_skill(call["skill_name"], call["args"], agent_skills)
+
+                # ── Error handling: log AgentError and project log ──
+                if "error" in result_val:
+                    err_msg = result_val["error"]
+                    is_not_found = "not found" in err_msg.lower()
+                    error_type = "skill_not_found" if is_not_found else "skill_exec_error"
+
+                    # Determine project context for logging
+                    project_slug = None
+                    if assigned_projects:
+                        # Pick the first project the agent is lead of, or first assigned
+                        for p in assigned_projects:
+                            if p.get("is_lead"):
+                                project_slug = p.get("slug")
+                                break
+                        if not project_slug and assigned_projects:
+                            project_slug = assigned_projects[0].get("slug")
+
+                    ctx = {
+                        "skill_name": call["skill_name"],
+                        "args": call["args"],
+                        "cycle": cycle_num,
+                        "run_id": str(run.id),
+                    }
+                    if project_slug:
+                        ctx["project_slug"] = project_slug
+
+                    agent_err = await create_agent_error(
+                        db, agent.id,
+                        error_type=error_type,
+                        message=err_msg,
+                        source="autonomous",
+                        context=ctx,
+                    )
+                    errors_in_cycle.append({"skill": call["skill_name"], "error": err_msg, "type": error_type})
+
+                    # Log to project log if project context exists
+                    if project_slug:
+                        try:
+                            from pathlib import Path
+                            from app.api.projects import _add_log
+                            proj_dir = Path(settings.PROJECTS_DIR) / project_slug
+                            if proj_dir.exists():
+                                _add_log(proj_dir, "error",
+                                         f"Agent '{agent.name}' skill error: {err_msg}",
+                                         source="agent")
+                        except Exception:
+                            pass  # Don't fail the cycle on logging errors
+
                 skill_results.append({
                     "skill": call["skill_name"],
                     "args": call["args"],
@@ -555,6 +755,7 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
                 input_data={"skills": [c["skill_name"] for c in skill_calls]},
                 output_data={
                     "results": [{"skill": sr["skill"], "has_error": "error" in sr["result"]} for sr in skill_results],
+                    "errors_logged": len(errors_in_cycle),
                 },
                 duration_ms=tracker.elapsed_step_ms(),
             )
@@ -565,8 +766,30 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
                 f"**Skill `{sr['skill']}` result:**\n```json\n{json.dumps(sr['result'], ensure_ascii=False, indent=2)}\n```"
                 for sr in skill_results
             )
+
+            # If there were errors, ask the model to handle them intelligently
+            error_guidance = ""
+            if errors_in_cycle:
+                not_found = [e for e in errors_in_cycle if e["type"] == "skill_not_found"]
+                exec_errors = [e for e in errors_in_cycle if e["type"] == "skill_exec_error"]
+                if not_found:
+                    error_guidance += (
+                        "\n\n⚠️ **Skill(s) not found:** "
+                        + ", ".join(f"`{e['skill']}`" for e in not_found)
+                        + ". These skills are not available. Try to accomplish the same goal "
+                        "using the skills that ARE available, or describe what you need done in plain text."
+                    )
+                if exec_errors:
+                    error_guidance += (
+                        "\n\n⚠️ **Execution error(s):** "
+                        + "; ".join(f"`{e['skill']}`: {e['error']}" for e in exec_errors)
+                        + ". Analyze the error and decide: retry with different parameters, "
+                        "use an alternative approach, or skip and continue."
+                    )
+
             follow_up = (
                 f"Skills executed. Results:\n\n{skill_feedback}\n\n"
+                f"{error_guidance}\n"
                 "Continue with your cycle and summarize what you accomplished."
             )
             history.append({"role": "assistant", "content": llm_content})
@@ -629,11 +852,25 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         await db.flush()
 
         # Update cycle state
+        effective_todo = new_todo or cycle_state.get("todo_list")
         new_cycle_state = {
             "last_output": llm_content[:3000],
-            "todo_list": new_todo or cycle_state.get("todo_list"),
+            "todo_list": effective_todo,
             "cycle_summary": _extract_summary(llm_content),
+            "todo_task_map": cycle_state.get("todo_task_map", {}),
         }
+
+        # ── Sync TODO items → persistent Tasks table ──
+        if effective_todo:
+            try:
+                updated_map = await sync_todos_to_tasks(
+                    db, agent.id, effective_todo,
+                    todo_task_map=new_cycle_state.get("todo_task_map"),
+                )
+                new_cycle_state["todo_task_map"] = updated_map
+            except Exception as e:
+                print(f"[AUTONOMOUS] Warning: failed to sync todos to tasks: {e}")
+
         run.cycle_state = new_cycle_state
         run.completed_cycles = cycle_num
         run.total_tokens = (run.total_tokens or 0) + total_tokens
@@ -691,6 +928,105 @@ def _extract_summary(text: str) -> str:
     if paragraphs:
         return paragraphs[-1][:1000]
     return text[:1000]
+
+
+# ── Regex for fenced code blocks: ```lang\n...\n``` ──
+_CODE_BLOCK_RE = re.compile(
+    r"```(\w*)\n(.*?)```",
+    re.DOTALL,
+)
+
+# Map language hints to file extensions
+_LANG_TO_EXT = {
+    "python": ".py", "py": ".py", "python3": ".py",
+    "javascript": ".js", "js": ".js",
+    "typescript": ".ts", "ts": ".ts",
+    "html": ".html", "css": ".css",
+    "java": ".java", "c": ".c", "cpp": ".cpp",
+    "go": ".go", "rust": ".rs", "ruby": ".rb",
+    "sh": ".sh", "bash": ".sh", "shell": ".sh",
+    "sql": ".sql", "json": ".json", "yaml": ".yml",
+}
+
+
+def _extract_code_fallback(
+    llm_content: str,
+    assigned_projects: list[dict],
+) -> list[dict]:
+    """
+    Fallback: when the LLM wrote code in markdown blocks but forgot to use
+    <<<SKILL:project_file_write>>> markers, auto-construct skill calls.
+
+    Only fires if the agent has assigned projects with pending tasks.
+    Returns list of synthetic skill call dicts compatible with parse_skill_invocations format.
+    """
+    # Find the lead project (or first one)
+    target_project = None
+    for p in (assigned_projects or []):
+        if p.get("is_lead") and p.get("pending_tasks"):
+            target_project = p
+            break
+    if not target_project:
+        for p in (assigned_projects or []):
+            if p.get("pending_tasks"):
+                target_project = p
+                break
+    if not target_project:
+        return []
+
+    slug = target_project.get("slug", "")
+    if not slug:
+        return []
+
+    # Find code blocks in the response
+    blocks = _CODE_BLOCK_RE.findall(llm_content)
+    if not blocks:
+        return []
+
+    # Filter: only substantial code (>20 chars, not json/text/etc)
+    skip_langs = {"json", "text", "txt", "markdown", "md", ""}
+    calls = []
+    for idx, (lang, code) in enumerate(blocks):
+        lang_lower = lang.strip().lower()
+        code_stripped = code.strip()
+
+        # Skip tiny blocks, json snippets, and non-code
+        if len(code_stripped) < 30:
+            continue
+        if lang_lower in skip_langs and not any(kw in code_stripped[:100] for kw in ("def ", "class ", "import ", "print(", "function ", "const ", "let ", "var ")):
+            continue
+
+        # Determine filename
+        ext = _LANG_TO_EXT.get(lang_lower, ".py")
+
+        # Try to extract filename from a comment on the first line like "# hello_world.py"
+        first_line = code_stripped.split("\n")[0].strip()
+        extracted_name = None
+        for prefix in ("# ", "// ", "-- ", "/* "):
+            if first_line.startswith(prefix):
+                candidate = first_line[len(prefix):].strip()
+                if "." in candidate and len(candidate) < 60 and " " not in candidate:
+                    extracted_name = candidate
+                    break
+
+        if extracted_name:
+            path = extracted_name
+        elif len(calls) == 0:
+            path = f"solution{ext}"
+        else:
+            path = f"solution_{idx}{ext}"
+
+        calls.append({
+            "skill_name": "project_file_write",
+            "args": {
+                "slug": slug,
+                "path": path,
+                "content": code_stripped,
+            },
+            "raw_match": f"[auto-extracted from markdown code block #{idx + 1}]",
+        })
+
+    return calls
 
 
 def _load_assigned_projects(agent_id: str) -> list[dict]:

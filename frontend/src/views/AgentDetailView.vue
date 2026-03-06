@@ -84,6 +84,10 @@
         <v-tab value="thinking">Thinking Logs</v-tab>
         <v-tab value="autonomous">Autonomous</v-tab>
         <v-tab value="logs">Logs</v-tab>
+        <v-tab value="errors">
+          Errors
+          <v-badge v-if="unresolvedErrorCount > 0" :content="unresolvedErrorCount" color="error" inline />
+        </v-tab>
         <v-tab value="skills">Skills</v-tab>
         <v-tab value="memory">Memory</v-tab>
       </v-tabs>
@@ -633,6 +637,82 @@
           </v-list>
         </div>
 
+        <!-- Errors Tab -->
+        <div v-if="tab === 'errors'">
+          <div class="d-flex align-center mb-3 ga-3">
+            <v-select
+              v-model="errorFilter.type"
+              :items="['all','skill_not_found','skill_exec_error','llm_error','unknown']"
+              label="Type"
+              density="compact"
+              style="max-width: 180px"
+            />
+            <v-select
+              v-model="errorFilter.resolved"
+              :items="[{title:'All',value:'all'},{title:'Unresolved',value:'false'},{title:'Resolved',value:'true'}]"
+              item-title="title"
+              item-value="value"
+              label="Status"
+              density="compact"
+              style="max-width: 160px"
+            />
+            <v-spacer />
+            <v-btn size="small" color="error" variant="text" @click="clearErrors" :disabled="!agentErrors.length">
+              <v-icon start>mdi-delete-sweep</v-icon> Clear All
+            </v-btn>
+          </div>
+
+          <v-alert v-if="!agentErrors.length" type="success" variant="tonal" class="mb-4">
+            No errors recorded for this agent.
+          </v-alert>
+
+          <v-table v-else density="compact">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Source</th>
+                <th>Message</th>
+                <th>Context</th>
+                <th>Status</th>
+                <th>Time</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="err in agentErrors" :key="err.id">
+                <td>
+                  <v-chip :color="errorTypeColor(err.error_type)" size="x-small" variant="flat">
+                    {{ err.error_type }}
+                  </v-chip>
+                </td>
+                <td>
+                  <v-chip size="x-small" variant="outlined">{{ err.source }}</v-chip>
+                </td>
+                <td style="max-width: 300px;" class="text-truncate">{{ err.message }}</td>
+                <td>
+                  <v-chip v-if="err.context && err.context.skill_name" size="x-small" color="info" variant="tonal">
+                    {{ err.context.skill_name }}
+                  </v-chip>
+                  <v-chip v-if="err.context && err.context.project_slug" size="x-small" color="purple" variant="tonal" class="ml-1">
+                    {{ err.context.project_slug }}
+                  </v-chip>
+                </td>
+                <td>
+                  <v-chip :color="err.resolved ? 'success' : 'warning'" size="x-small" variant="flat">
+                    {{ err.resolved ? 'Resolved' : 'Open' }}
+                  </v-chip>
+                </td>
+                <td class="text-caption text-grey">{{ new Date(err.created_at).toLocaleString() }}</td>
+                <td>
+                  <v-btn v-if="!err.resolved" icon size="x-small" @click="resolveError(err)" title="Mark as resolved">
+                    <v-icon>mdi-check-circle-outline</v-icon>
+                  </v-btn>
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+        </div>
+
         <!-- Skills Tab -->
         <div v-if="tab === 'skills'">
           <div class="d-flex align-center mb-4">
@@ -1080,6 +1160,7 @@ import api from '../api'
 import { useAgentsStore } from '../stores/agents'
 import { useSettingsStore } from '../stores/settings'
 import { useProjectsStore } from '../stores/projects'
+import { useAgentErrorsStore } from '../stores/agentErrors'
 import ProtocolFlow from '../components/ProtocolFlow.vue'
 
 const route = useRoute()
@@ -1087,6 +1168,7 @@ const router = useRouter()
 const agentsStore = useAgentsStore()
 const settingsStore = useSettingsStore()
 const projectsStore = useProjectsStore()
+const agentErrorsStore = useAgentErrorsStore()
 const tab = ref('info')
 const agent = ref(null)
 const stats = ref({})
@@ -1098,6 +1180,10 @@ const allAvailableSkills = ref([])
 const memories = ref([])
 const logLevel = ref('all')
 const skillSearch = ref('')
+
+// Agent Errors state
+const agentErrors = ref([])
+const errorFilter = ref({ type: 'all', resolved: 'all' })
 
 // Thinking Logs state
 const thinkingLogs = ref([])
@@ -1188,6 +1274,7 @@ const loopProtocols = computed(() => {
 const statusColor = (s) => ({ idle: 'grey', running: 'success', paused: 'warning', error: 'error', stopped: 'grey' }[s] || 'grey')
 const taskStatusColor = (s) => ({ pending: 'info', running: 'success', completed: 'success', failed: 'error', cancelled: 'grey' }[s] || 'grey')
 const logColor = (l) => ({ debug: 'grey', info: 'info', warning: 'warning', error: 'error', critical: 'error' }[l] || 'grey')
+const errorTypeColor = (t) => ({ skill_not_found: 'warning', skill_exec_error: 'error', llm_error: 'deep-purple', unknown: 'grey' }[t] || 'grey')
 const priorityColor = (p) => ({ low: 'blue-grey', medium: 'orange', high: 'red' }[p] || 'grey')
 const goalStatusColor = (s) => ({ active: 'blue', in_progress: 'orange', completed: 'green', abandoned: 'grey' }[s] || 'grey')
 const aspirationTypeLabel = (t) => ({ dreams: 'Dream', desires: 'Desire', goals: 'Goal' }[t] || t)
@@ -1230,6 +1317,35 @@ const loadData = async () => {
     globalFsEnabled.value = settingsStore.systemSettings.filesystem_access_enabled?.value === 'true'
     globalSysEnabled.value = settingsStore.systemSettings.system_access_enabled?.value === 'true'
   } catch {}
+}
+
+// ── Agent Errors ──
+const unresolvedErrorCount = computed(() => agentErrors.value.filter(e => !e.resolved).length)
+
+async function loadAgentErrors() {
+  try {
+    const params = {}
+    if (errorFilter.value.type !== 'all') params.error_type = errorFilter.value.type
+    if (errorFilter.value.resolved !== 'all') params.resolved = errorFilter.value.resolved
+    const { data } = await api.get(`/agents/${id.value}/errors`, { params })
+    agentErrors.value = data
+  } catch (e) { console.error('Failed to load agent errors', e) }
+}
+
+async function resolveError(err) {
+  try {
+    const { data } = await api.patch(`/agents/${err.agent_id}/errors/${err.id}/resolve`, { resolution: '' })
+    const idx = agentErrors.value.findIndex(e => e.id === err.id)
+    if (idx !== -1) agentErrors.value[idx] = data
+  } catch (e) { console.error('Failed to resolve error', e) }
+}
+
+async function clearErrors() {
+  if (!confirm('Clear all errors for this agent?')) return
+  try {
+    await api.delete(`/agents/${id.value}/errors`)
+    agentErrors.value = []
+  } catch (e) { console.error('Failed to clear errors', e) }
 }
 
 // ── Agent Projects ──
@@ -1661,6 +1777,7 @@ watch(tab, (val) => {
   if (val === 'thinking') loadThinkingLogs()
   if (val === 'autonomous') loadAutonomousHistory()
   if (val === 'logs') loadLogs()
+  if (val === 'errors') loadAgentErrors()
   if (val === 'skills') loadSkills()
   if (val === 'memory') loadMemories()
   if (val === 'files') loadFiles()
@@ -1669,6 +1786,7 @@ watch(tab, (val) => {
 })
 
 watch(logLevel, () => { if (tab.value === 'logs') loadLogs() })
+watch(errorFilter, () => { if (tab.value === 'errors') loadAgentErrors() }, { deep: true })
 
 // --- Autonomous functions ---
 

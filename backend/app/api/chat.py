@@ -654,6 +654,28 @@ async def _load_agent_skills(agent_id: uuid.UUID, db: AsyncSession, agent: "Agen
     return skills
 
 
+async def create_agent_error(
+    db: AsyncSession,
+    agent_id,
+    error_type: str,
+    message: str,
+    source: str = "autonomous",
+    context: dict | None = None,
+):
+    """Create an AgentError record in the database."""
+    from app.models.log import AgentError
+    err = AgentError(
+        agent_id=agent_id,
+        error_type=error_type,
+        source=source,
+        message=message,
+        context=context,
+    )
+    db.add(err)
+    await db.flush()
+    return err
+
+
 async def _execute_skill(skill_name: str, args: dict, agent_skills: list[dict]) -> dict:
     """Execute a skill by name and return the result."""
     skill = None
@@ -668,6 +690,12 @@ async def _execute_skill(skill_name: str, args: dict, agent_skills: list[dict]) 
     code = skill.get("code", "")
     if not code or code.startswith("#"):
         return {"error": f"Skill '{skill_name}' has no executable code"}
+
+    # Inject PROJECTS_DIR env var for project-aware skills
+    import os
+    from app.config import get_settings
+    _settings = get_settings()
+    os.environ.setdefault("PROJECTS_DIR", _settings.PROJECTS_DIR)
 
     # Execute skill code in a sandboxed namespace
     try:
@@ -998,6 +1026,17 @@ async def send_message(
             if new_todo:
                 protocol_state["todo_list"] = new_todo
                 msg_metadata["todo_list"] = new_todo
+
+                # Sync TODO items → persistent Tasks table
+                try:
+                    from app.services.autonomous_runner import sync_todos_to_tasks
+                    updated_map = await sync_todos_to_tasks(
+                        db, session.agent_id, new_todo,
+                        todo_task_map=protocol_state.get("todo_task_map"),
+                    )
+                    protocol_state["todo_task_map"] = updated_map
+                except Exception as e:
+                    print(f"[CHAT] Warning: failed to sync todos to tasks: {e}")
 
             # 2. Parse delegation
             delegate_to = parse_delegate(llm_content)

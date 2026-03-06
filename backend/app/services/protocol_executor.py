@@ -478,30 +478,47 @@ def format_loop_protocol_prompt(
 
     # Assigned Projects
     if assigned_projects:
-        sections.append("## Your Assigned Projects")
-        sections.append("These are the projects you are responsible for. Prioritize project work when tasks are available.")
+        sections.append("## 🚨 YOUR ASSIGNED PROJECTS (HIGHEST PRIORITY)")
         sections.append("")
+        # Gather the first pending task across all projects for explicit instruction
+        first_task = None
+        first_task_slug = None
         for proj in assigned_projects:
-            lead_marker = " ⭐ **[Lead]**" if proj.get("is_lead") else ""
-            sections.append(f"### 📁 {proj.get('name', 'Unnamed')}{lead_marker}")
-            if proj.get("description"):
-                sections.append(f"  {proj['description'][:300]}")
-            if proj.get("goals"):
-                sections.append(f"  **Goals:** {proj['goals'][:300]}")
+            project_tasks = proj.get("pending_tasks", [])
+            if project_tasks and not first_task:
+                first_task = project_tasks[0]
+                first_task_slug = proj.get("slug", "")
+
+        for proj in assigned_projects:
+            lead_marker = " ⭐ [Lead]" if proj.get("is_lead") else ""
+            slug = proj.get("slug", "")
+            sections.append(f"### 📁 {proj.get('name', 'Unnamed')}{lead_marker}  (slug: `{slug}`)")
             if proj.get("tech_stack"):
-                sections.append(f"  **Tech:** {', '.join(proj['tech_stack'][:10])}")
-            ts = proj.get("task_stats", {})
-            if ts:
-                sections.append(f"  **Tasks:** {ts.get('total', 0)} total, {ts.get('done', 0)} done, {ts.get('in_progress', 0)} in progress, {ts.get('todo', 0)} todo, {ts.get('backlog', 0)} backlog")
-            # Show pending project tasks
+                sections.append(f"  Tech: {', '.join(proj['tech_stack'][:10])}")
+            # Show pending project tasks — these are what the agent MUST work on
             project_tasks = proj.get("pending_tasks", [])
             if project_tasks:
-                sections.append(f"  **Pending Tasks:**")
+                sections.append(f"  **YOUR TASKS (do these, not the project goals):**")
                 for pt in project_tasks[:10]:
                     priority_icon = {"highest": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "lowest": "⚪"}.get(pt.get("priority", "medium"), "🟡")
                     sections.append(f"    {priority_icon} [{pt.get('status','backlog')}] {pt.get('title','')} (priority: {pt.get('priority','medium')})")
-                if len(project_tasks) > 10:
-                    sections.append(f"    ... and {len(project_tasks) - 10} more tasks")
+            else:
+                sections.append("  No pending tasks.")
+            sections.append("")
+
+        # Explicit current task instruction with example
+        if first_task and first_task_slug:
+            task_title = first_task.get("title", "")
+            sections.append(f"---")
+            sections.append(f"## 🎯 YOUR CURRENT TASK")
+            sections.append(f"**Work on this task NOW:** {task_title}")
+            sections.append(f"**Project slug:** `{first_task_slug}`")
+            sections.append("")
+            sections.append("**HOW TO SAVE CODE** — you MUST write this exact format in your response:")
+            sections.append("```")
+            sections.append(f'<<<SKILL:project_file_write>>> {{"slug": "{first_task_slug}", "path": "solution.py", "content": "# your code here\\nprint(42)"}} <<<END_SKILL>>>')
+            sections.append("```")
+            sections.append("⚠️ If you write code as markdown/text WITHOUT the <<<SKILL:project_file_write>>> markers, the code is LOST and NOT saved.")
             sections.append("")
 
     # Protocol steps
@@ -514,27 +531,25 @@ def format_loop_protocol_prompt(
             sections.append(_format_step(step))
             sections.append("")
 
-    # Skills section
+    # Skills section — keep compact for small models
     if available_skills:
-        sections.append("### Available Skills")
-        sections.append("Invoke skills with: <<<SKILL:skill_name>>> {\"param\": \"value\"} <<<END_SKILL>>>")
+        sections.append("### Skills")
+        sections.append("To use a skill, write: `<<<SKILL:name>>> {json_args} <<<END_SKILL>>>`")
         sections.append("")
         for skill in available_skills:
             desc = skill.get("description_for_agent") or skill.get("description", "")
-            sections.append(f"  - **{skill['name']}**: {desc}")
+            schema = skill.get("input_schema", {})
+            params = schema.get("properties", {})
+            param_str = ", ".join(f"{k}: {v.get('type', 'any')}" for k, v in params.items()) if params else ""
+            sections.append(f"  - **{skill['name']}**({param_str}): {desc}")
         sections.append("")
 
-    # Output rules
-    sections.append("### Output Rules for Autonomous Work")
-    sections.append("1. **Analyze** your current state: goals, progress, available resources")
-    sections.append("2. **Decide** what to do in this cycle based on your protocol steps")
-    sections.append("3. **Execute** using skills or reasoning")
-    sections.append("4. **Update** your todo list with <<<TODO>>>...<<<END_TODO>>> markers")
-    sections.append("5. **Summarize** what you accomplished in this cycle (last paragraph)")
-    sections.append("")
-    sections.append("To **stop** autonomous work (e.g., all goals achieved), output: <<<STOP:reason>>>")
-    sections.append("To create/update a task list: <<<TODO>>> [...] <<<END_TODO>>>")
-    sections.append("To invoke a skill: <<<SKILL:name>>> {args} <<<END_SKILL>>>")
+    # Output rules — concise
+    sections.append("### Rules")
+    sections.append("1. Work on YOUR CURRENT TASK (see above)")
+    sections.append("2. Save code with <<<SKILL:project_file_write>>> — code in markdown is NOT saved")
+    sections.append("3. Update todo: <<<TODO>>> [...] <<<END_TODO>>>")
+    sections.append("4. To stop: <<<STOP:reason>>>")
     sections.append("")
 
     return "\n".join(sections)

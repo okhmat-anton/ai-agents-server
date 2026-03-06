@@ -93,6 +93,107 @@ SYSTEM_SKILLS = [
         "code": "# Deep memory processing: analyzes all records and creates links",
         "input_schema": {"type": "object", "properties": {"depth": {"type": "integer", "default": 2}}},
     },
+    {
+        "name": "project_file_write",
+        "display_name": "Project File Write",
+        "description": "Write/create a file inside a project's code directory. Use this to save code to your assigned projects.",
+        "description_for_agent": (
+            "Write or create a file inside a project's code directory. "
+            "Parameters: project_slug (string, e.g. 'hello-world'), path (string, relative path inside project code dir, e.g. 'main.py' or 'src/utils.py'), "
+            "content (string, file content). Creates parent directories automatically. "
+            "ALWAYS use this skill to save code to projects instead of file_write."
+        ),
+        "category": "files",
+        "code": (
+            "from pathlib import Path\n"
+            "import os\n"
+            "async def execute(project_slug, path, content):\n"
+            "    base = Path(os.environ.get('PROJECTS_DIR', './data/projects')).resolve()\n"
+            "    code_dir = (base / project_slug / 'code').resolve()\n"
+            "    if not str(code_dir).startswith(str(base)):\n"
+            "        return {'error': 'Invalid project slug'}\n"
+            "    file_path = (code_dir / path).resolve()\n"
+            "    if not str(file_path).startswith(str(code_dir)):\n"
+            "        return {'error': 'Path traversal not allowed'}\n"
+            "    file_path.parent.mkdir(parents=True, exist_ok=True)\n"
+            "    file_path.write_text(content, encoding='utf-8')\n"
+            "    return {'written': len(content), 'path': str(file_path.relative_to(code_dir))}\n"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_slug": {"type": "string", "description": "Project slug (e.g. 'hello-world')"},
+                "path": {"type": "string", "description": "Relative file path inside project code dir"},
+                "content": {"type": "string", "description": "File content to write"},
+            },
+            "required": ["project_slug", "path", "content"],
+        },
+    },
+    {
+        "name": "project_file_read",
+        "display_name": "Project File Read",
+        "description": "Read a file from a project's code directory.",
+        "description_for_agent": (
+            "Read a file from a project's code directory. "
+            "Parameters: project_slug (string), path (string, relative path). "
+            "Returns the file content. Use this to read existing project files before modifying them."
+        ),
+        "category": "files",
+        "code": (
+            "from pathlib import Path\n"
+            "import os\n"
+            "async def execute(project_slug, path):\n"
+            "    base = Path(os.environ.get('PROJECTS_DIR', './data/projects')).resolve()\n"
+            "    code_dir = (base / project_slug / 'code').resolve()\n"
+            "    if not str(code_dir).startswith(str(base)):\n"
+            "        return {'error': 'Invalid project slug'}\n"
+            "    file_path = (code_dir / path).resolve()\n"
+            "    if not str(file_path).startswith(str(code_dir)):\n"
+            "        return {'error': 'Path traversal not allowed'}\n"
+            "    if not file_path.exists():\n"
+            "        return {'error': f'File not found: {path}'}\n"
+            "    return {'content': file_path.read_text(encoding='utf-8'), 'path': str(file_path.relative_to(code_dir))}\n"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_slug": {"type": "string", "description": "Project slug (e.g. 'hello-world')"},
+                "path": {"type": "string", "description": "Relative file path inside project code dir"},
+            },
+            "required": ["project_slug", "path"],
+        },
+    },
+    {
+        "name": "project_list_files",
+        "display_name": "Project List Files",
+        "description": "List files in a project's code directory.",
+        "description_for_agent": (
+            "List all files in a project's code directory (recursively). "
+            "Parameters: project_slug (string). Returns list of file paths relative to code dir."
+        ),
+        "category": "files",
+        "code": (
+            "from pathlib import Path\n"
+            "import os\n"
+            "async def execute(project_slug):\n"
+            "    base = Path(os.environ.get('PROJECTS_DIR', './data/projects')).resolve()\n"
+            "    code_dir = (base / project_slug / 'code').resolve()\n"
+            "    if not code_dir.exists():\n"
+            "        return {'files': [], 'error': 'No code directory found'}\n"
+            "    files = []\n"
+            "    for f in sorted(code_dir.rglob('*')):\n"
+            "        if f.is_file():\n"
+            "            files.append(str(f.relative_to(code_dir)))\n"
+            "    return {'files': files, 'total': len(files)}\n"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_slug": {"type": "string", "description": "Project slug"},
+            },
+            "required": ["project_slug"],
+        },
+    },
 ]
 
 

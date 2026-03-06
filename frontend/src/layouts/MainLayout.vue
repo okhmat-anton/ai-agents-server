@@ -158,6 +158,7 @@ const navItems = [
   { path: '/tasks', icon: 'mdi-clipboard-list', title: 'Tasks' },
   { path: '/skills', icon: 'mdi-puzzle', title: 'Skills (Codes)' },
   { path: '/projects', icon: 'mdi-folder-wrench', title: 'Projects' },
+  { path: '/agent-errors', icon: 'mdi-alert-circle-outline', title: 'Agent Errors' },
   { path: '/models', icon: 'mdi-brain', title: 'Models' },
   { path: '/settings', icon: 'mdi-cog', title: 'Settings' },
   { path: '/files', icon: 'mdi-folder-open', title: 'Files' },

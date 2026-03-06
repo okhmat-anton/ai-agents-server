@@ -51,5 +51,6 @@ class Agent(Base):
     agent_models = relationship("AgentModel", back_populates="agent", cascade="all, delete-orphan", lazy="selectin", order_by="AgentModel.priority")
     tasks = relationship("Task", back_populates="agent", cascade="all, delete-orphan")
     logs = relationship("AgentLog", back_populates="agent", cascade="all, delete-orphan")
+    errors = relationship("AgentError", back_populates="agent", cascade="all, delete-orphan")
     agent_skills = relationship("AgentSkill", back_populates="agent", cascade="all, delete-orphan")
     memories = relationship("Memory", back_populates="agent", cascade="all, delete-orphan")

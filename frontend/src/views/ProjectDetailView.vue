@@ -57,6 +57,8 @@
             density="compact"
             items-per-page="50"
             no-data-text="No tasks yet. Create your first task!"
+            @click:row="(e, { item }) => openTaskDetail(item)"
+            style="cursor: pointer"
           >
             <template #item.key="{ item }">
               <span class="font-weight-medium text-info">{{ item.key }}</span>
@@ -70,6 +72,7 @@
                 hide-details
                 style="max-width: 140px"
                 @update:model-value="moveTask(item, $event)"
+                @click.stop
               >
                 <template #selection="{ item: statusItem }">
                   <v-chip size="x-small" :color="taskStatusColor(statusItem.value)" variant="flat">
@@ -87,10 +90,10 @@
               <span class="text-caption">{{ item.assignee || '—' }}</span>
             </template>
             <template #item.actions="{ item }">
-              <v-btn icon size="x-small" variant="text" @click="editTask(item)">
+              <v-btn icon size="x-small" variant="text" @click.stop="editTask(item)">
                 <v-icon size="16">mdi-pencil</v-icon>
               </v-btn>
-              <v-btn icon size="x-small" variant="text" color="error" @click="removeTask(item)">
+              <v-btn icon size="x-small" variant="text" color="error" @click.stop="removeTask(item)">
                 <v-icon size="16">mdi-delete</v-icon>
               </v-btn>
             </template>
@@ -127,6 +130,7 @@
                   density="compact"
                   draggable="true"
                   @dragstart="onDragStart($event, task)"
+                  @click="openTaskDetail(task)"
                 >
                   <v-card-text class="pa-2">
                     <div class="d-flex align-center">
@@ -138,6 +142,9 @@
                     <div class="text-body-2 mt-1">{{ task.title }}</div>
                     <div v-if="task.assignee" class="text-caption text-medium-emphasis mt-1">
                       <v-icon size="12">mdi-account</v-icon> {{ task.assignee }}
+                    </div>
+                    <div v-if="task.comments && task.comments.length" class="text-caption text-medium-emphasis mt-1">
+                      <v-icon size="12">mdi-comment-outline</v-icon> {{ task.comments.length }}
                     </div>
                   </v-card-text>
                 </v-card>
@@ -524,6 +531,141 @@
       </v-card>
     </v-dialog>
 
+    <!-- Task Detail Modal -->
+    <v-dialog v-model="showTaskDetail" max-width="800" scrollable>
+      <v-card v-if="detailTask">
+        <v-card-title class="d-flex align-center">
+          <v-chip size="small" color="info" variant="tonal" class="mr-2">{{ detailTask.key }}</v-chip>
+          <span class="text-truncate">{{ detailTask.title }}</span>
+          <v-spacer />
+          <v-btn icon size="small" variant="text" @click="showTaskDetail = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+
+        <v-tabs v-model="detailTab" density="compact">
+          <v-tab value="info">Details</v-tab>
+          <v-tab value="comments">
+            Comments
+            <v-badge v-if="detailComments.length" :content="detailComments.length" color="info" inline />
+          </v-tab>
+          <v-tab value="history">History</v-tab>
+        </v-tabs>
+
+        <v-divider />
+
+        <v-card-text style="min-height: 350px; max-height: 60vh; overflow-y: auto">
+          <v-window v-model="detailTab">
+            <!-- ── Details tab ── -->
+            <v-window-item value="info">
+              <div class="mb-3">
+                <div class="d-flex align-center ga-2 mb-3">
+                  <v-chip :color="taskStatusColor(detailTask.status)" variant="flat" size="small">
+                    {{ taskStatuses.find(s => s.value === detailTask.status)?.title || detailTask.status }}
+                  </v-chip>
+                  <v-chip :color="priorityColor(detailTask.priority)" variant="tonal" size="small">
+                    {{ detailTask.priority }}
+                  </v-chip>
+                  <v-chip v-if="detailTask.story_points" variant="outlined" size="small">
+                    {{ detailTask.story_points }} SP
+                  </v-chip>
+                  <v-chip v-if="detailTask.assignee" variant="tonal" size="small" prepend-icon="mdi-account">
+                    {{ detailTask.assignee }}
+                  </v-chip>
+                </div>
+              </div>
+              <div v-if="detailTask.description" class="mb-4">
+                <div class="text-subtitle-2 mb-1">Description</div>
+                <div class="text-body-2" style="white-space: pre-wrap">{{ detailTask.description }}</div>
+              </div>
+              <div v-if="!detailTask.description" class="text-medium-emphasis text-body-2 mb-4">
+                No description provided.
+              </div>
+              <div v-if="detailTask.labels && detailTask.labels.length" class="mb-3">
+                <div class="text-subtitle-2 mb-1">Labels</div>
+                <v-chip v-for="label in detailTask.labels" :key="label" size="small" variant="outlined" class="mr-1">
+                  {{ label }}
+                </v-chip>
+              </div>
+              <v-divider class="mb-3" />
+              <div class="d-flex ga-4 text-caption text-medium-emphasis">
+                <span>Created: {{ formatTime(detailTask.created_at) }}</span>
+                <span>Updated: {{ formatTime(detailTask.updated_at) }}</span>
+              </div>
+            </v-window-item>
+
+            <!-- ── Comments tab ── -->
+            <v-window-item value="comments">
+              <div class="mb-3">
+                <v-textarea
+                  v-model="newComment"
+                  label="Add a comment..."
+                  variant="outlined"
+                  density="compact"
+                  rows="2"
+                  auto-grow
+                  hide-details
+                />
+                <div class="d-flex justify-end mt-1">
+                  <v-btn
+                    size="small"
+                    color="primary"
+                    :disabled="!newComment.trim()"
+                    :loading="commentSaving"
+                    @click="addComment"
+                  >
+                    Add Comment
+                  </v-btn>
+                </div>
+              </div>
+              <v-divider class="mb-3" />
+              <div v-if="!detailComments.length" class="text-center text-medium-emphasis pa-4">
+                No comments yet.
+              </div>
+              <div v-for="comment in detailComments" :key="comment.id" class="mb-3">
+                <div class="d-flex align-center mb-1">
+                  <v-chip size="x-small" variant="tonal" :color="comment.author === 'user' ? 'primary' : 'info'">
+                    {{ comment.author }}
+                  </v-chip>
+                  <span class="text-caption text-medium-emphasis ml-2">{{ formatTime(comment.created_at) }}</span>
+                  <v-spacer />
+                  <v-btn icon size="x-small" variant="text" color="error" @click="deleteComment(comment.id)">
+                    <v-icon size="14">mdi-delete</v-icon>
+                  </v-btn>
+                </div>
+                <div class="text-body-2 pl-1" style="white-space: pre-wrap">{{ comment.content }}</div>
+              </div>
+            </v-window-item>
+
+            <!-- ── History tab ── -->
+            <v-window-item value="history">
+              <div v-if="detailLogsLoading" class="text-center pa-4">
+                <v-progress-circular indeterminate size="24" />
+              </div>
+              <div v-else-if="!detailLogs.length" class="text-center text-medium-emphasis pa-4">
+                No history for this task yet.
+              </div>
+              <v-timeline v-else density="compact" side="end">
+                <v-timeline-item
+                  v-for="log in detailLogs"
+                  :key="log.id"
+                  :dot-color="logLevelColor(log.level)"
+                  size="x-small"
+                >
+                  <div class="d-flex align-center">
+                    <span class="text-body-2">{{ log.message }}</span>
+                    <v-spacer />
+                    <v-chip size="x-small" variant="tonal" class="ml-2">{{ log.source }}</v-chip>
+                    <span class="text-caption text-medium-emphasis ml-2">{{ formatTime(log.timestamp) }}</span>
+                  </div>
+                </v-timeline-item>
+              </v-timeline>
+            </v-window-item>
+          </v-window>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <!-- New File Dialog -->
     <v-dialog v-model="showNewFileDialog" max-width="400">
       <v-card>
@@ -658,6 +800,14 @@ const showTaskDialog = ref(false)
 const editingTask = ref(null)
 const taskSaving = ref(false)
 const draggedTask = ref(null)
+const showTaskDetail = ref(false)
+const detailTask = ref(null)
+const detailTab = ref('info')
+const detailComments = ref([])
+const detailLogs = ref([])
+const detailLogsLoading = ref(false)
+const newComment = ref('')
+const commentSaving = ref(false)
 
 const taskHeaders = [
   { title: 'Key', key: 'key', width: '70px' },
@@ -766,6 +916,54 @@ async function removeTask(task) {
     await store.deleteTask(slug.value, task.id)
     await loadTasks()
   } catch (e) { console.error(e) }
+}
+
+// ── Task Detail Modal ──
+async function openTaskDetail(task) {
+  detailTask.value = task
+  detailTab.value = 'info'
+  newComment.value = ''
+  detailComments.value = task.comments || []
+  detailLogs.value = []
+  showTaskDetail.value = true
+  // Load comments and logs in parallel
+  await Promise.all([loadDetailComments(task.id), loadDetailLogs(task.id)])
+}
+
+async function loadDetailComments(taskId) {
+  try {
+    detailComments.value = await store.fetchTaskComments(slug.value, taskId)
+  } catch (e) { console.error('Failed to load comments', e) }
+}
+
+async function loadDetailLogs(taskId) {
+  detailLogsLoading.value = true
+  try {
+    detailLogs.value = await store.fetchTaskLogs(slug.value, taskId)
+  } catch (e) { console.error('Failed to load task logs', e) }
+  finally { detailLogsLoading.value = false }
+}
+
+async function addComment() {
+  if (!newComment.value.trim() || !detailTask.value) return
+  commentSaving.value = true
+  try {
+    const comment = await store.addTaskComment(slug.value, detailTask.value.id, {
+      content: newComment.value.trim(),
+      author: 'user',
+    })
+    detailComments.value.push(comment)
+    newComment.value = ''
+  } catch (e) { console.error('Failed to add comment', e) }
+  finally { commentSaving.value = false }
+}
+
+async function deleteComment(commentId) {
+  if (!detailTask.value) return
+  try {
+    await store.deleteTaskComment(slug.value, detailTask.value.id, commentId)
+    detailComments.value = detailComments.value.filter(c => c.id !== commentId)
+  } catch (e) { console.error('Failed to delete comment', e) }
 }
 
 // ── Code / Files ──
