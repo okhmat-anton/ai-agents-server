@@ -38,6 +38,7 @@ from app.services.protocol_executor import (
     parse_delegate,
 )
 from app.services.thinking_log_service import ThinkingTracker
+from app.services.model_role_service import resolve_model_for_role
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -195,12 +196,29 @@ async def get_available_models(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all available models (from model configs + running ollama models) and agents."""
+    """List available models (running ollama + active API models) and all agents."""
     models = []
 
-    # 1. From model_configs
+    # 1. Get running ollama model names
+    settings = get_settings()
+    running_ollama_names = set()
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{settings.OLLAMA_BASE_URL}/api/ps")
+            if r.status_code == 200:
+                for om in r.json().get("models", []):
+                    running_ollama_names.add(om.get("name", ""))
+    except Exception:
+        pass
+
+    # 2. From model_configs: active non-ollama always, ollama only if running
     result = await db.execute(select(ModelConfig).where(ModelConfig.is_active == True))
+    registered_ollama_names = set()
     for mc in result.scalars().all():
+        if mc.provider == "ollama":
+            registered_ollama_names.add(mc.model_id)
+            if mc.model_id not in running_ollama_names:
+                continue
         models.append({
             "id": str(mc.id),
             "name": mc.name,
@@ -209,26 +227,18 @@ async def get_available_models(
             "type": "model",
         })
 
-    # 2. Running ollama models (add ones not already in model_configs)
-    settings = get_settings()
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            r = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags")
-            if r.status_code == 200:
-                known_model_ids = {m["model_id"] for m in models if m["provider"] == "ollama"}
-                for om in r.json().get("models", []):
-                    if om["name"] not in known_model_ids:
-                        models.append({
-                            "id": f"ollama:{om['name']}",
-                            "name": om["name"],
-                            "model_id": om["name"],
-                            "provider": "ollama",
-                            "type": "model",
-                        })
-    except Exception:
-        pass
+    # 3. Running ollama models not registered in model_configs
+    for name in running_ollama_names:
+        if name not in registered_ollama_names:
+            models.append({
+                "id": f"ollama:{name}",
+                "name": name,
+                "model_id": name,
+                "provider": "ollama",
+                "type": "model",
+            })
 
-    # 3. Agents
+    # 4. All agents (regardless of status)
     result = await db.execute(select(Agent))
     for agent in result.scalars().all():
         models.append({
@@ -308,8 +318,14 @@ async def create_session(
                 elif agent.model_id:
                     model_ids = [str(agent.model_id)]
 
+        # Fallback to base role model
         if not model_ids:
-            raise HTTPException(status_code=400, detail="Agent has no models configured")
+            base_model = await resolve_model_for_role(db, "base")
+            if base_model:
+                model_ids = [str(base_model.id)]
+
+        if not model_ids:
+            raise HTTPException(status_code=400, detail="Agent has no models configured and no base model assigned")
 
     session = ChatSession(
         user_id=user.id,
@@ -556,6 +572,11 @@ async def send_message(
                 model_ids = [str(am.model_config_id) for am in sorted(agent.agent_models, key=lambda x: x.priority)]
             elif agent.model_id:
                 model_ids = [str(agent.model_id)]
+    # Fallback to base role model
+    if not model_ids:
+        base_model = await resolve_model_for_role(db, "base")
+        if base_model:
+            model_ids = [str(base_model.id)]
     if not model_ids:
         raise HTTPException(status_code=400, detail="No models selected for this chat")
 
@@ -930,11 +951,20 @@ async def send_message(
                 )
 
         # Save assistant message
+        # For agent sessions, prefix model_name with agent name
+        display_model_name = response_data.get("model_name")
+        if is_agent_session and session.agent:
+            agent_display = session.agent.name
+            if display_model_name:
+                display_model_name = f"{agent_display} ({display_model_name})"
+            else:
+                display_model_name = agent_display
+
         assistant_msg = ChatMessage(
             session_id=session.id,
             role="assistant",
             content=response_data["content"],
-            model_name=response_data.get("model_name"),
+            model_name=display_model_name,
             model_responses=response_data.get("model_responses"),
             total_tokens=response_data.get("total_tokens", 0),
             duration_ms=elapsed_ms,

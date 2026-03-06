@@ -7,7 +7,7 @@
         icon
         size="x-small"
         variant="text"
-        @click="sessionsExpanded = true"
+        @click="goBackToList"
         class="mr-1"
       >
         <v-icon size="18">mdi-arrow-left</v-icon>
@@ -47,15 +47,35 @@
             :key="session.id"
             class="session-row d-flex align-center px-3 py-1"
             :class="{ active: chatStore.currentSession?.id === session.id }"
-            @click="loadSession(session.id)"
+            @click="editingSessionId !== session.id && loadSession(session.id)"
           >
             <v-icon size="14" class="mr-2 flex-shrink-0" :color="session.multi_model ? 'warning' : 'primary'">
               {{ session.multi_model ? 'mdi-brain' : 'mdi-chat-outline' }}
             </v-icon>
             <div class="flex-grow-1 text-truncate">
-              <div class="text-caption text-truncate">{{ session.title }}</div>
+              <input
+                v-if="editingSessionId === session.id"
+                v-model="editingSessionTitle"
+                class="session-rename-input text-caption"
+                @keydown.enter="saveSessionRename(session.id)"
+                @keydown.escape="editingSessionId = null"
+                @blur="saveSessionRename(session.id)"
+                @click.stop
+                autofocus
+              />
+              <div v-else class="text-caption text-truncate" @dblclick.stop="startRenameSession(session)">{{ session.title }}</div>
             </div>
-            <span class="text-caption text-medium-emphasis ml-2 flex-shrink-0">{{ formatDate(session.updated_at) }}</span>
+            <v-btn
+              v-if="editingSessionId !== session.id"
+              icon
+              size="x-small"
+              variant="text"
+              class="ml-1 session-edit flex-shrink-0"
+              @click.stop="startRenameSession(session)"
+            >
+              <v-icon size="12">mdi-pencil</v-icon>
+            </v-btn>
+            <span class="text-caption text-medium-emphasis ml-1 flex-shrink-0">{{ formatDate(session.updated_at) }}</span>
             <v-btn
               icon
               size="x-small"
@@ -282,7 +302,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, reactive } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, reactive } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
@@ -304,6 +324,9 @@ const showSettings = ref(false)
 const sessionSearch = ref('')
 const sessionsExpanded = ref(true)
 const expandedResponses = reactive({})
+
+const editingSessionId = ref(null)
+const editingSessionTitle = ref('')
 
 let titleTimeout = null
 
@@ -392,6 +415,12 @@ function newChat() {
   sessionsExpanded.value = true
 }
 
+function goBackToList() {
+  chatStore.currentSession = null
+  chatStore.messages = []
+  sessionsExpanded.value = true
+}
+
 async function handleSend() {
   const msg = messageInput.value?.trim()
   if (!msg || chatStore.sending) return
@@ -414,6 +443,15 @@ async function handleSend() {
   sessionsExpanded.value = false
 
   await chatStore.sendMessage(msg)
+
+  // Set title from first message immediately
+  if (chatStore.currentSession && chatStore.messages.length <= 3) {
+    const title = msg.length > 60 ? msg.substring(0, 60) + '…' : msg
+    chatStore.currentSession.title = title
+    const idx = chatStore.sessions.findIndex(s => s.id === chatStore.currentSession.id)
+    if (idx >= 0) chatStore.sessions[idx].title = title
+  }
+
   scrollToBottom()
 }
 
@@ -433,6 +471,25 @@ async function loadSession(sessionId) {
 
 async function deleteSession(sessionId) {
   await chatStore.deleteSession(sessionId)
+}
+
+function startRenameSession(session) {
+  editingSessionId.value = session.id
+  editingSessionTitle.value = session.title
+}
+
+async function saveSessionRename(sessionId) {
+  const newTitle = editingSessionTitle.value?.trim()
+  editingSessionId.value = null
+  if (!newTitle) return
+  const idx = chatStore.sessions.findIndex(s => s.id === sessionId)
+  if (idx >= 0) chatStore.sessions[idx].title = newTitle
+  if (chatStore.currentSession?.id === sessionId) chatStore.currentSession.title = newTitle
+  try {
+    await chatStore.updateSession(sessionId, { title: newTitle })
+  } catch (e) {
+    console.error('Failed to rename session:', e)
+  }
 }
 
 function scrollToBottom() {
@@ -457,6 +514,23 @@ watch([selectedModels, multiModel], () => {
 
 watch(() => chatStore.messages.length, () => scrollToBottom())
 
+// Poll available models every 10s while panel is open
+let modelPollInterval = null
+
+function startModelPolling() {
+  stopModelPolling()
+  modelPollInterval = setInterval(() => {
+    chatStore.fetchAvailableModels()
+  }, 10000)
+}
+
+function stopModelPolling() {
+  if (modelPollInterval) {
+    clearInterval(modelPollInterval)
+    modelPollInterval = null
+  }
+}
+
 onMounted(async () => {
   await chatStore.fetchAvailableModels()
   await chatStore.fetchSessions()
@@ -464,10 +538,20 @@ onMounted(async () => {
   if (chatStore.availableModels.length && !selectedModels.value.length) {
     selectedModels.value = multiModel.value ? [] : chatStore.availableModels[0].id
   }
+  if (chatStore.panelOpen) startModelPolling()
+})
+
+onBeforeUnmount(() => {
+  stopModelPolling()
 })
 
 watch(() => chatStore.panelOpen, (open) => {
-  if (open) chatStore.fetchAvailableModels()
+  if (open) {
+    chatStore.fetchAvailableModels()
+    startModelPolling()
+  } else {
+    stopModelPolling()
+  }
 })
 </script>
 
@@ -526,12 +610,25 @@ watch(() => chatStore.panelOpen, (open) => {
 .session-row.active {
   background: rgba(var(--v-theme-primary), 0.1);
 }
-.session-row .session-delete {
+.session-row .session-delete,
+.session-row .session-edit {
   opacity: 0;
   transition: opacity 0.15s;
 }
-.session-row:hover .session-delete {
+.session-row:hover .session-delete,
+.session-row:hover .session-edit {
   opacity: 1;
+}
+
+.session-rename-input {
+  width: 100%;
+  background: rgba(var(--v-theme-surface), 0.9);
+  border: 1px solid rgba(var(--v-theme-primary), 0.5);
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: inherit;
+  font-size: inherit;
+  outline: none;
 }
 
 /* ── Messages ── */
