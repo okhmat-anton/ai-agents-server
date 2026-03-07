@@ -1,0 +1,45 @@
+INFO:     Will watch for changes in these directories: ['/Users/boss/PhpstormProjects/ai-agents-server/backend']
+INFO:     Uvicorn running on http://0.0.0.0:4700 (Press CTRL+C to quit)
+INFO:     Started reloader process [41147] using WatchFiles
+INFO:     Started server process [41149]
+INFO:     Waiting for application startup.
+2026-03-07 03:56:14,490 INFO [httpx] HTTP Request: GET http://localhost:11434/api/tags "HTTP/1.1 200 OK"
+2026-03-07 03:56:14,500 INFO [ollama_watchdog] Ollama watchdog started (interval=30s)
+INFO:     Application startup complete.
+2026-03-07 03:56:24,520 INFO [httpx] HTTP Request: GET http://localhost:11434/api/tags "HTTP/1.1 200 OK"
+2026-03-07 03:56:24,530 INFO [httpx] HTTP Request: GET http://localhost:11434/api/ps "HTTP/1.1 200 OK"
+2026-03-07 03:56:34,457 WARNING [passlib.handlers.bcrypt] (trapped) error reading bcrypt version
+Traceback (most recent call last):
+  File "/Users/boss/PhpstormProjects/ai-agents-server/backend/.venv/lib/python3.11/site-packages/passlib/handlers/bcrypt.py", line 620, in _load_backend_mixin
+    version = _bcrypt.__about__.__version__
+              ^^^^^^^^^^^^^^^^^
+AttributeError: module 'bcrypt' has no attribute '__about__'
+INFO:     127.0.0.1:54387 - "POST /api/auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54390 - "GET /api/settings/model-roles HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54392 - "GET /api/agents HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'app/main.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-03-07 03:56:46,655 INFO [ollama_watchdog] Ollama watchdog stopped
+INFO:     Application shutdown complete.
+INFO:     Finished server process [41149]
+INFO:     Started server process [42367]
+INFO:     Waiting for application startup.
+2026-03-07 03:56:47,645 INFO [httpx] HTTP Request: GET http://localhost:11434/api/tags "HTTP/1.1 200 OK"
+2026-03-07 03:56:47,659 INFO [ollama_watchdog] Ollama watchdog started (interval=30s)
+INFO:     Application startup complete.
+2026-03-07 03:56:57,674 INFO [httpx] HTTP Request: GET http://localhost:11434/api/tags "HTTP/1.1 200 OK"
+2026-03-07 03:56:57,685 INFO [httpx] HTTP Request: GET http://localhost:11434/api/ps "HTTP/1.1 200 OK"
+WARNING:  WatchFiles detected changes in 'app/config.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-03-07 03:57:26,984 INFO [ollama_watchdog] Ollama watchdog stopped
+INFO:     Application shutdown complete.
+INFO:     Finished server process [42367]
+INFO:     Started server process [42510]
+INFO:     Waiting for application startup.
+2026-03-07 03:57:27,987 INFO [httpx] HTTP Request: GET http://localhost:11434/api/tags "HTTP/1.1 200 OK"
+2026-03-07 03:57:27,998 INFO [ollama_watchdog] Ollama watchdog started (interval=30s)
+INFO:     Application startup complete.
+2026-03-07 03:57:38,018 INFO [httpx] HTTP Request: GET http://localhost:11434/api/tags "HTTP/1.1 200 OK"
+2026-03-07 03:57:38,029 INFO [httpx] HTTP Request: GET http://localhost:11434/api/ps "HTTP/1.1 200 OK"

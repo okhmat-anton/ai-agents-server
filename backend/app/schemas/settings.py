@@ -22,7 +22,7 @@ class ModelConfigUpdate(BaseModel):
 
 
 class ModelConfigResponse(BaseModel):
-    id: UUID
+    id: str
     name: str
     model_id: str
     provider: str
@@ -38,13 +38,13 @@ class ModelConfigResponse(BaseModel):
 # --- Model Roles ---
 class RoleAssignmentItem(BaseModel):
     role: str
-    model_config_id: UUID
+    model_config_id: str
 
 
 class RoleAssignmentResponse(BaseModel):
     role: str
     label: str
-    model_config_id: UUID
+    model_config_id: str
 
 
 class RoleAssignmentUpdate(BaseModel):
@@ -62,7 +62,7 @@ class ApiKeyCreate(BaseModel):
 
 
 class ApiKeyResponse(BaseModel):
-    id: UUID
+    id: str
     name: str
     key_prefix: str
     description: str | None

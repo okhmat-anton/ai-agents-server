@@ -5,6 +5,46 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
+# All available model roles
+MODEL_ROLES = [
+    "understanding",       # Понимание запроса
+    "planning",            # Планирование действий
+    "code_generation",     # Генерация кода
+    "text_documents",      # Работа с текстом и документами
+    "data_analysis",       # Анализ данных
+    "embedding",           # Поиск (эмбеддинг модель)
+    "json_output",         # Структурированный вывод json
+    "creative",            # Креативная генерация
+    "validation",          # Валидация и проверка качества
+    "photo_analysis",      # Анализ фото
+    "video_analysis",      # Анализ видео
+    "sound_generation",    # Генерация звука
+    "speech_recognition",  # Распознавание звука (перевод в текст)
+    "translation",         # Перевод
+    "dialog",              # Простой диалог
+    "base",                # Базовая модель (fallback)
+]
+
+MODEL_ROLE_LABELS = {
+    "understanding": "Понимание запроса",
+    "planning": "Планирование действий",
+    "code_generation": "Генерация кода",
+    "text_documents": "Работа с текстом и документами",
+    "data_analysis": "Анализ данных",
+    "embedding": "Поиск (эмбеддинг)",
+    "json_output": "Структурированный вывод JSON",
+    "creative": "Креативная генерация",
+    "validation": "Валидация и проверка качества",
+    "photo_analysis": "Анализ фото",
+    "video_analysis": "Анализ видео",
+    "sound_generation": "Генерация звука",
+    "speech_recognition": "Распознавание звука",
+    "translation": "Перевод",
+    "dialog": "Простой диалог",
+    "base": "Базовая модель",
+}
+
+
 class MongoModelConfig(BaseModel):
     """LLM Model Configuration for MongoDB."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

@@ -5,13 +5,12 @@ from app.database import get_mongodb
 from app.core.dependencies import get_current_user
 from app.core.security import hash_password, verify_password, generate_api_key, hash_api_key
 from app.mongodb.models.user import MongoUser
-from app.mongodb.models.model_config import MongoModelConfig, MongoModelRoleAssignment
+from app.mongodb.models.model_config import MongoModelConfig, MongoModelRoleAssignment, MODEL_ROLES, MODEL_ROLE_LABELS
 from app.mongodb.models.api_key import MongoApiKey
 from app.mongodb.models.system_setting import MongoSystemSetting
 from app.mongodb.services import (
     ModelConfigService, ApiKeyService, SystemSettingService, ModelRoleAssignmentService
 )
-from app.models.model_role import MODEL_ROLES, MODEL_ROLE_LABELS
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.settings import (
     ModelConfigCreate, ModelConfigUpdate, ModelConfigResponse,

@@ -4,7 +4,6 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://agents:agents_secret_2026@localhost:4532/ai_agents"
     REDIS_URL: str = "redis://:redis_secret_2026@localhost:4379/0"
     CHROMADB_URL: str = "http://localhost:4800"
     MONGODB_URL: str = "mongodb://agents:mongo_secret_2026@localhost:4717/ai_agents?authSource=admin"

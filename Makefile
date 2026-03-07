@@ -82,11 +82,11 @@ run-dev:
 	@echo "1. Checking Docker..."
 	@docker info > /dev/null 2>&1 || (echo "   Docker is not running. Please start Docker Desktop and try again." && exit 1)
 	@echo "   Starting infrastructure..."
-	docker compose up -d postgres redis chromadb
-	@echo "   Waiting for Postgres to be ready..."
+	docker compose up -d mongodb redis chromadb
+	@echo "   Waiting for MongoDB to be ready..."
 	@sleep 5
-	@nc -z localhost $${POSTGRES_PORT:-4532} 2>/dev/null || sleep 3
-	@echo "   Postgres ready"
+	@nc -z localhost $${MONGO_PORT:-4717} 2>/dev/null || sleep 3
+	@echo "   MongoDB ready"
 	@echo ""
 	@echo "2. Setting up backend Python environment..."
 	@if [ ! -d "backend/.venv" ]; then \

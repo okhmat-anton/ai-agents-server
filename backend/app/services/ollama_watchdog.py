@@ -358,14 +358,6 @@ async def _watchdog_tick():
     # ── 5. Update last known running models ──
     await _update_last_known_running(current_running)
 
-    # ── 4. Auto-assign base role if needed ──
-    if current_running:
-        await _auto_assign_base_if_needed(current_running)
-
-    # ── 5. Update last known running models ──
-    await _update_last_known_running(current_running)
-
-
 # ── Lifecycle ──────────────────────────────────────────
 
 async def start_watchdog():
