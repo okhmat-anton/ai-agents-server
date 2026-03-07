@@ -426,7 +426,7 @@ async def start_telegram_listener(
     max_daily = config.get("max_daily_messages", 100)
     context_messages_limit = config.get("context_messages_limit", None)  # None = use agent default
 
-    # Store in registry
+    # Store in registry (include creds + account_doc for auto-reconnect)
     _active_clients[messenger_id] = {
         "client": client,
         "agent_id": agent_id,
@@ -437,6 +437,9 @@ async def start_telegram_listener(
         "config": config,
         "daily_count": 0,
         "last_count_reset": datetime.now(timezone.utc).date(),
+        "creds": creds,
+        "account_doc": account_doc,
+        "stop_requested": False,  # set True on intentional stop to prevent reconnect
     }
 
     @client.on(events.NewMessage(incoming=True))
@@ -474,35 +477,178 @@ async def start_telegram_listener(
 
 
 async def _run_client(client: TelegramClient, messenger_id: str):
-    """Keep client running until disconnected."""
+    """Keep client running with auto-reconnect on disconnect."""
     entry = _active_clients.get(messenger_id, {})
     agent_id = entry.get("agent_id", "")
-    try:
-        await client.run_until_disconnected()
-    except Exception as e:
-        logger.error(f"Telegram client {messenger_id} disconnected: {e}")
-        await _log_messenger_error(
-            messenger_id, agent_id,
-            "messenger_disconnect", f"Telegram client disconnected with error: {e}",
-            {"exception": str(e)},
-        )
-    finally:
-        _active_clients.pop(messenger_id, None)
-        logger.info(f"Telegram listener stopped for {messenger_id}")
+    reconnect_delay = 5  # start at 5 seconds
+    max_reconnect_delay = 300  # max 5 minutes
+    max_reconnect_attempts = 50  # give up after this many consecutive failures
+    attempt = 0
+
+    while True:
+        try:
+            await client.run_until_disconnected()
+        except Exception as e:
+            logger.error(f"Telegram client {messenger_id} disconnected: {e}")
+            await _log_messenger_error(
+                messenger_id, agent_id,
+                "messenger_disconnect", f"Telegram client disconnected with error: {e}",
+                {"exception": str(e), "reconnect_attempt": attempt},
+            )
+
+        # Check if this was an intentional stop
+        entry = _active_clients.get(messenger_id, {})
+        if entry.get("stop_requested", False):
+            logger.info(f"Telegram listener for {messenger_id} stopped (intentional)")
+            _active_clients.pop(messenger_id, None)
+            await _log_messenger_event(
+                messenger_id, agent_id, "info", "listener_stopped",
+                "Telegram listener stopped (intentional)",
+            )
+            return
+
+        # Not intentional — try to reconnect
+        attempt += 1
+        if attempt > max_reconnect_attempts:
+            logger.error(f"Telegram {messenger_id}: giving up after {max_reconnect_attempts} reconnect attempts")
+            _active_clients.pop(messenger_id, None)
+            await _log_messenger_error(
+                messenger_id, agent_id,
+                "reconnect_failed", f"Gave up reconnecting after {max_reconnect_attempts} attempts",
+                {"attempts": max_reconnect_attempts},
+            )
+            return
+
+        wait = min(reconnect_delay * (2 ** (attempt - 1)), max_reconnect_delay)
+        # Add jitter ±20%
+        wait = wait * (0.8 + random.random() * 0.4)
+        logger.warning(f"Telegram {messenger_id}: reconnecting in {wait:.1f}s (attempt {attempt})")
         await _log_messenger_event(
-            messenger_id, agent_id, "info", "listener_stopped",
-            "Telegram listener stopped",
+            messenger_id, agent_id, "warning", "reconnecting",
+            f"Connection lost. Reconnecting in {wait:.1f}s (attempt {attempt}/{max_reconnect_attempts})",
+            {"attempt": attempt, "wait_seconds": round(wait, 1)},
         )
+        await asyncio.sleep(wait)
+
+        # Check again if stop was requested during the wait
+        entry = _active_clients.get(messenger_id, {})
+        if entry.get("stop_requested", False) or messenger_id not in _active_clients:
+            _active_clients.pop(messenger_id, None)
+            return
+
+        # Attempt reconnect
+        try:
+            creds = entry.get("creds", {})
+            account_doc = entry.get("account_doc", {})
+            api_id = int(creds["api_id"])
+            api_hash = creds["api_hash"]
+            session_file = _session_path(messenger_id)
+
+            # Create fresh client
+            new_client = TelegramClient(session_file, api_id, api_hash)
+            await new_client.connect()
+
+            if not await new_client.is_user_authorized():
+                logger.error(f"Telegram {messenger_id}: session expired during reconnect")
+                await _log_messenger_error(
+                    messenger_id, agent_id,
+                    "reconnect_auth_failed", "Session expired — re-authentication required",
+                    {"attempt": attempt},
+                )
+                _active_clients.pop(messenger_id, None)
+                return
+
+            me = await new_client.get_me()
+            logger.info(f"Telegram {messenger_id}: reconnected as @{me.username} (attempt {attempt})")
+
+            # Re-read config for reconnect
+            trusted_users = account_doc.get("trusted_users", [])
+            public_permissions = account_doc.get("public_permissions", [])
+            config = account_doc.get("config", {})
+            delay_min = config.get("response_delay_min", 2)
+            delay_max = config.get("response_delay_max", 8)
+            typing_indicator = config.get("typing_indicator", True)
+            humanize = config.get("humanize_responses", True)
+            casual = config.get("casual_tone", True)
+            respond_mentions = config.get("respond_to_mentions", True)
+            respond_groups = config.get("respond_in_groups", False)
+            max_daily = config.get("max_daily_messages", 100)
+            context_messages_limit = config.get("context_messages_limit", None)
+
+            # Update registry with new client
+            old_daily = entry.get("daily_count", 0)
+            old_reset = entry.get("last_count_reset")
+            _active_clients[messenger_id] = {
+                "client": new_client,
+                "agent_id": agent_id,
+                "messenger_id": messenger_id,
+                "me": me,
+                "trusted_users": trusted_users,
+                "public_permissions": public_permissions,
+                "config": config,
+                "daily_count": old_daily,
+                "last_count_reset": old_reset,
+                "creds": creds,
+                "account_doc": account_doc,
+                "stop_requested": False,
+            }
+
+            # Re-register handler
+            @new_client.on(events.NewMessage(incoming=True))
+            async def on_new_message(event):
+                try:
+                    await _handle_incoming_message(
+                        event=event,
+                        messenger_id=messenger_id,
+                        agent_id=agent_id,
+                        client=new_client,
+                        me=me,
+                        trusted_users=trusted_users,
+                        public_permissions=public_permissions,
+                        delay_min=delay_min,
+                        delay_max=delay_max,
+                        typing_indicator=typing_indicator,
+                        humanize=humanize,
+                        casual=casual,
+                        respond_mentions=respond_mentions,
+                        respond_groups=respond_groups,
+                        max_daily=max_daily,
+                        context_messages_limit=context_messages_limit,
+                    )
+                except Exception as e:
+                    logger.error(f"Error handling Telegram message for {messenger_id}: {e}", exc_info=True)
+
+            client = new_client  # use new client for next iteration
+            attempt = 0  # reset counter on successful reconnect
+            reconnect_delay = 5
+
+            await _log_messenger_event(
+                messenger_id, agent_id, "info", "reconnected",
+                f"Successfully reconnected as @{me.username} after {attempt} attempt(s)",
+                {"username": me.username, "attempt": attempt},
+            )
+
+        except Exception as e:
+            logger.error(f"Telegram {messenger_id}: reconnect attempt {attempt} failed: {e}")
+            await _log_messenger_error(
+                messenger_id, agent_id,
+                "reconnect_error", f"Reconnect attempt {attempt} failed: {e}",
+                {"attempt": attempt, "exception": str(e)},
+            )
+            # Will loop back and try again after increasing delay
 
 
 async def stop_telegram_client(messenger_id: str):
     """Stop and disconnect a Telegram client."""
-    entry = _active_clients.pop(messenger_id, None)
-    if entry and entry.get("client"):
-        try:
-            await entry["client"].disconnect()
-        except Exception as e:
-            logger.warning(f"Error disconnecting Telegram client {messenger_id}: {e}")
+    entry = _active_clients.get(messenger_id)
+    if entry:
+        entry["stop_requested"] = True  # signal reconnect loop to stop
+        if entry.get("client"):
+            try:
+                await entry["client"].disconnect()
+            except Exception as e:
+                logger.warning(f"Error disconnecting Telegram client {messenger_id}: {e}")
+        _active_clients.pop(messenger_id, None)
 
     # Also clean up pending auth
     pending = _pending_auth.pop(messenger_id, None)
