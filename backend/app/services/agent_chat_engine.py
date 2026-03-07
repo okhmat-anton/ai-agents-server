@@ -505,82 +505,126 @@ class AgentChatEngine:
 
     # ── General Projects Overview ─────────────────────────────────────
 
-    @staticmethod
-    def load_general_projects_overview() -> str:
-        """Load a brief overview of ALL projects for general context.
+    async def load_general_context_overview(self, agent_id: str) -> str:
+        """Load a brief overview of active projects AND agent's standalone tasks.
 
         Called when no specific project_slug is set so the agent still
-        knows about existing projects and their active tasks.
+        knows about existing projects, their active tasks, and its own
+        standalone tasks from the task backlog.
+
+        Returns a string to append to the system prompt.
         """
+        sections = []
+
+        # ── 1. Active projects from filesystem ──
         settings = get_settings()
         projects_dir = Path(settings.PROJECTS_DIR)
-        if not projects_dir.exists():
-            return ""
-
-        parts = []
-        for project_dir in sorted(projects_dir.iterdir()):
-            if not project_dir.is_dir():
-                continue
-            project_json = project_dir / "project.json"
-            if not project_json.exists():
-                continue
-            try:
-                proj = json.loads(project_json.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-
-            name = proj.get("name", project_dir.name)
-            slug = proj.get("slug", project_dir.name)
-            status = proj.get("status", "unknown")
-            description = (proj.get("description") or "")[:150]
-            goals = (proj.get("goals") or "")[:150]
-            tech_stack = ", ".join(proj.get("tech_stack", []))
-
-            # Load task stats
-            tasks_json = project_dir / "tasks.json"
-            task_counts = {}
-            active_tasks = []
-            if tasks_json.exists():
+        if projects_dir.exists():
+            project_parts = []
+            for project_dir in sorted(projects_dir.iterdir()):
+                if not project_dir.is_dir():
+                    continue
+                project_json = project_dir / "project.json"
+                if not project_json.exists():
+                    continue
                 try:
-                    tasks = json.loads(tasks_json.read_text(encoding="utf-8"))
-                    for t in tasks:
-                        s = t.get("status", "backlog")
-                        task_counts[s] = task_counts.get(s, 0) + 1
-                        if s in ("todo", "in_progress"):
-                            active_tasks.append(f"[{s}] {t.get('key', '?')} - {t.get('title', '?')[:60]}")
+                    proj = json.loads(project_json.read_text(encoding="utf-8"))
                 except Exception:
-                    pass
+                    continue
 
-            total_tasks = sum(task_counts.values())
-            done_tasks = task_counts.get("done", 0)
-            in_progress = task_counts.get("in_progress", 0)
-            todo = task_counts.get("todo", 0)
+                status = proj.get("status", "unknown")
+                # Skip non-active projects
+                if status in ("paused", "completed", "archived"):
+                    continue
 
-            entry = f"- **{name}** (slug: `{slug}`, status: {status})"
-            if description:
-                entry += f"\n  Description: {description}"
-            if goals:
-                entry += f"\n  Goals: {goals}"
-            if tech_stack:
-                entry += f"\n  Tech: {tech_stack}"
-            entry += f"\n  Tasks: {total_tasks} total, {done_tasks} done, {in_progress} in progress, {todo} todo"
-            if active_tasks:
-                entry += "\n  Active tasks:"
-                for at in active_tasks[:5]:
-                    entry += f"\n    {at}"
-            parts.append(entry)
+                name = proj.get("name", project_dir.name)
+                slug = proj.get("slug", project_dir.name)
+                description = (proj.get("description") or "")[:150]
+                goals = (proj.get("goals") or "")[:150]
+                tech_stack = ", ".join(proj.get("tech_stack", []))
 
-        if not parts:
+                # Load task stats
+                tasks_json = project_dir / "tasks.json"
+                task_counts = {}
+                active_tasks = []
+                if tasks_json.exists():
+                    try:
+                        tasks = json.loads(tasks_json.read_text(encoding="utf-8"))
+                        for t in tasks:
+                            s = t.get("status", "backlog")
+                            task_counts[s] = task_counts.get(s, 0) + 1
+                            if s in ("todo", "in_progress"):
+                                active_tasks.append(
+                                    f"[{s}] {t.get('key', '?')} - {t.get('title', '?')[:60]}"
+                                )
+                    except Exception:
+                        pass
+
+                total_tasks = sum(task_counts.values())
+                done_tasks = task_counts.get("done", 0)
+                in_progress = task_counts.get("in_progress", 0)
+                todo = task_counts.get("todo", 0)
+
+                entry = f"- **{name}** (slug: `{slug}`, status: {status})"
+                if description:
+                    entry += f"\n  Description: {description}"
+                if goals:
+                    entry += f"\n  Goals: {goals}"
+                if tech_stack:
+                    entry += f"\n  Tech: {tech_stack}"
+                entry += (
+                    f"\n  Tasks: {total_tasks} total, {done_tasks} done, "
+                    f"{in_progress} in progress, {todo} todo"
+                )
+                if active_tasks:
+                    entry += "\n  Active tasks:"
+                    for at in active_tasks[:5]:
+                        entry += f"\n    {at}"
+                project_parts.append(entry)
+
+            if project_parts:
+                sections.append(
+                    "## Your Projects\n\n"
+                    "You have access to following active projects:\n\n"
+                    + "\n\n".join(project_parts)
+                    + "\n\nYou can use project skills (project_list_files, project_file_read, "
+                    "project_file_write, project_context_build, etc.) to work with these projects. "
+                    "Always specify the `project_slug` parameter when using project skills."
+                )
+
+        # ── 2. Agent's standalone tasks from MongoDB ──
+        try:
+            agent_tasks = await self.db.tasks.find(
+                {"agent_id": str(agent_id)}
+            ).sort("created_at", -1).to_list(50)
+
+            if agent_tasks:
+                task_lines = []
+                for t in agent_tasks:
+                    status = t.get("status", "?")
+                    priority = t.get("priority", "normal")
+                    title = t.get("title", "?")
+                    desc = (t.get("description") or "")[:100]
+                    task_type = t.get("type", "one_time")
+                    line = f"- [{status}] ({priority}) {title}"
+                    if task_type == "recurring" and t.get("schedule"):
+                        line += f" (recurring: {t['schedule']})"
+                    if desc:
+                        line += f"\n  {desc}"
+                    task_lines.append(line)
+
+                sections.append(
+                    "## Your Tasks\n\n"
+                    "Your assigned standalone tasks:\n\n"
+                    + "\n".join(task_lines)
+                )
+        except Exception as e:
+            logger.warning(f"Failed to load agent tasks: {e}")
+
+        if not sections:
             return ""
 
-        return (
-            "\n\n## Your Projects\n\n"
-            "You have access to following projects:\n\n"
-            + "\n\n".join(parts)
-            + "\n\nYou can use project skills (project_list_files, project_file_read, project_file_write, "
-            "project_context_build, etc.) to work with these projects. "
-            "Always specify the `project_slug` parameter when using project skills.\n"
-        )
+        return "\n\n" + "\n\n".join(sections) + "\n"
 
     # ── High-Level Generate ───────────────────────────────────────────
 
@@ -695,20 +739,20 @@ class AgentChatEngine:
                         duration_ms=tracker.elapsed_step_ms(),
                     )
             else:
-                # No specific project — load general overview of ALL projects
+                # No specific project — load general overview of active projects + agent tasks
                 if tracker:
                     tracker.start_step_timer()
 
-                projects_overview = self.load_general_projects_overview()
-                if projects_overview:
-                    ctx.base_system_prompt += projects_overview
+                general_context = await self.load_general_context_overview(agent_id)
+                if general_context:
+                    ctx.base_system_prompt += general_context
 
                 if tracker:
                     await tracker.step(
-                        "context_load", "Load general projects overview",
+                        "context_load", "Load general projects & tasks overview",
                         output_data={
-                            "has_overview": bool(projects_overview),
-                            "overview_length": len(projects_overview) if projects_overview else 0,
+                            "has_overview": bool(general_context),
+                            "overview_length": len(general_context) if general_context else 0,
                         },
                         duration_ms=tracker.elapsed_step_ms(),
                     )

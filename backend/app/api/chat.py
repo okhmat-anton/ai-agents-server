@@ -825,20 +825,20 @@ async def send_message(
                         duration_ms=tracker.elapsed_step_ms(),
                     )
             else:
-                # No specific project — load general overview of ALL projects
+                # No specific project — load general overview of active projects + agent tasks
                 if tracker:
                     tracker.start_step_timer()
 
-                projects_overview = engine.load_general_projects_overview()
-                if projects_overview:
-                    agent_ctx.base_system_prompt += projects_overview
+                general_context = await engine.load_general_context_overview(str(session.agent_id))
+                if general_context:
+                    agent_ctx.base_system_prompt += general_context
 
                 if tracker:
                     await tracker.step(
-                        "context_load", "Load general projects overview",
+                        "context_load", "Load general projects & tasks overview",
                         output_data={
-                            "has_overview": bool(projects_overview),
-                            "overview_length": len(projects_overview) if projects_overview else 0,
+                            "has_overview": bool(general_context),
+                            "overview_length": len(general_context) if general_context else 0,
                         },
                         duration_ms=tracker.elapsed_step_ms(),
                     )
