@@ -1,41 +1,68 @@
 """
-System logging service — writes structured logs to the system_logs table.
+System logging service — writes structured logs to JSON files.
 
 Usage:
     from app.services.log_service import syslog
 
-    # Inside an async context with a db session:
-    await syslog(db, "info", "User logged in", source="auth", metadata={"username": "admin"})
+    # Async log
+    await syslog("info", "User logged in", source="auth", metadata={"username": "admin"})
 
-    # Fire-and-forget (creates its own session, safe to call from anywhere):
+    # Fire-and-forget
     await syslog_bg("info", "Server started", source="system")
 """
 from __future__ import annotations
 
 import uuid as _uuid
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.log import SystemLog, AgentLog
-from app.database import async_session
+import json
+import aiofiles
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any
+
+# Log directories
+LOG_DIR = Path("data/logs")
+SYSTEM_LOG_FILE = LOG_DIR / "system.jsonl"
+AGENT_LOG_DIR = LOG_DIR / "agents"
+
+# Ensure log directories exist
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+AGENT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 async def syslog(
-    db: AsyncSession,
-    level: str,
-    message: str,
-    *,
+    level_or_db: Any,
+    message_or_level: str = None,
+    message: str = None,
     source: str = "system",
-    metadata: dict | None = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Write a log entry using an existing DB session (caller commits)."""
-    entry = SystemLog(
-        level=level,
-        source=source,
-        message=message,
-        metadata_=metadata,
-    )
-    db.add(entry)
+    """Write a system log entry to file.
+    
+    Supports both signatures:
+      - syslog("info", "message", source="auth")  # new
+      - syslog(db, "info", "message", source="auth")  # legacy
+    """
+    # Determine which signature was used
+    if message is not None:
+        # Old signature: syslog(db, level, message, ...)
+        actual_level = message_or_level
+        actual_message = message
+    else:
+        # New signature: syslog(level, message, ...)
+        actual_level = level_or_db
+        actual_message = message_or_level
+    
     try:
-        await db.flush()
+        entry = {
+            "id": str(_uuid.uuid4()),
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": actual_level,
+            "source": source,
+            "message": actual_message,
+            "metadata": metadata or {},
+        }
+        async with aiofiles.open(SYSTEM_LOG_FILE, mode="a") as f:
+            await f.write(json.dumps(entry) + "\n")
     except Exception:
         pass  # Don't break the caller if logging fails
 
@@ -45,43 +72,34 @@ async def syslog_bg(
     message: str,
     *,
     source: str = "system",
-    metadata: dict | None = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Fire-and-forget: creates its own session, commits, and closes."""
-    try:
-        async with async_session() as db:
-            entry = SystemLog(
-                level=level,
-                source=source,
-                message=message,
-                metadata_=metadata,
-            )
-            db.add(entry)
-            await db.commit()
-    except Exception:
-        pass  # Logging must never crash the application
+    """Fire-and-forget system log (same as syslog for file-based)."""
+    await syslog(level, message, source=source, metadata=metadata)
 
 
 # ── Agent logging ─────────────────────────────────────
 
 async def agent_log(
-    db: AsyncSession,
     agent_id: _uuid.UUID,
     level: str,
     message: str,
     *,
-    metadata: dict | None = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Write an agent log entry using an existing DB session (caller commits)."""
-    entry = AgentLog(
-        agent_id=agent_id,
-        level=level,
-        message=message,
-        metadata_=metadata,
-    )
-    db.add(entry)
+    """Write an agent log entry to file."""
     try:
-        await db.flush()
+        agent_log_file = AGENT_LOG_DIR / f"{agent_id}.jsonl"
+        entry = {
+            "id": str(_uuid.uuid4()),
+            "timestamp": datetime.utcnow().isoformat(),
+            "agent_id": str(agent_id),
+            "level": level,
+            "message": message,
+            "metadata": metadata or {},
+        }
+        async with aiofiles.open(agent_log_file, mode="a") as f:
+            await f.write(json.dumps(entry) + "\n")
     except Exception:
         pass
 
@@ -91,68 +109,67 @@ async def agent_log_bg(
     level: str,
     message: str,
     *,
-    metadata: dict | None = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Fire-and-forget agent log: creates its own session."""
+    """Fire-and-forget agent log."""
+    aid = agent_id if isinstance(agent_id, _uuid.UUID) else _uuid.UUID(str(agent_id))
+    await agent_log(aid, level, message, metadata=metadata)
+
+
+# ── Reading / clearing logs ───────────────────────────
+
+async def read_system_logs(limit: int = 500) -> list[dict]:
+    """Read system log entries from file. Returns most recent first."""
+    if not SYSTEM_LOG_FILE.exists():
+        return []
     try:
-        aid = agent_id if isinstance(agent_id, _uuid.UUID) else _uuid.UUID(str(agent_id))
-        async with async_session() as db:
-            entry = AgentLog(
-                agent_id=aid,
-                level=level,
-                message=message,
-                metadata_=metadata,
-            )
-            db.add(entry)
-            await db.commit()
+        async with aiofiles.open(SYSTEM_LOG_FILE, mode="r") as f:
+            content = await f.read()
+        lines = content.strip().split("\n") if content.strip() else []
+        logs = []
+        for line in lines:
+            try:
+                logs.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        # Return newest first
+        logs.reverse()
+        if limit > 0:
+            return logs[:limit]
+        return logs
     except Exception:
-        pass
+        return []
 
 
-# ── Log cleanup ───────────────────────────────────────
-
-async def cleanup_old_logs(retention_days: int) -> dict[str, int]:
-    """
-    Delete logs older than retention_days.
-    Returns a dict with counts of deleted records per table.
-    """
-    from datetime import datetime, timezone, timedelta
-    from sqlalchemy import delete
-    from app.models.log import AgentError
-    from app.models.thinking_log import ThinkingLog
-
-    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
-    counts = {}
+async def clear_old_system_logs(days: int = 30) -> int:
+    """Remove system log entries older than N days. Returns count of removed entries."""
+    if not SYSTEM_LOG_FILE.exists():
+        return 0
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff_str = cutoff.isoformat()
 
     try:
-        async with async_session() as db:
-            # SystemLog
-            result = await db.execute(
-                delete(SystemLog).where(SystemLog.created_at < cutoff_date)
-            )
-            counts["system_logs"] = result.rowcount
+        async with aiofiles.open(SYSTEM_LOG_FILE, mode="r") as f:
+            content = await f.read()
+        lines = content.strip().split("\n") if content.strip() else []
 
-            # AgentLog
-            result = await db.execute(
-                delete(AgentLog).where(AgentLog.created_at < cutoff_date)
-            )
-            counts["agent_logs"] = result.rowcount
+        kept = []
+        removed = 0
+        for line in lines:
+            try:
+                entry = json.loads(line)
+                ts = entry.get("timestamp", "")
+                if ts < cutoff_str:
+                    removed += 1
+                else:
+                    kept.append(line)
+            except json.JSONDecodeError:
+                kept.append(line)
 
-            # AgentError
-            result = await db.execute(
-                delete(AgentError).where(AgentError.created_at < cutoff_date)
-            )
-            counts["agent_errors"] = result.rowcount
+        async with aiofiles.open(SYSTEM_LOG_FILE, mode="w") as f:
+            await f.write("\n".join(kept) + "\n" if kept else "")
 
-            # ThinkingLog (cascade will delete ThinkingStep children)
-            result = await db.execute(
-                delete(ThinkingLog).where(ThinkingLog.created_at < cutoff_date)
-            )
-            counts["thinking_logs"] = result.rowcount
-
-            await db.commit()
-    except Exception as e:
-        counts["error"] = str(e)
-
-    return counts
-
+        return removed
+    except Exception:
+        return 0

@@ -9,18 +9,17 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
 from app.api.settings import get_setting_value
 
 router = APIRouter(prefix="/api/processes", tags=["processes"])
 
 
 # ---------- Guard ----------
-async def _check_system_access(db: AsyncSession):
+async def _check_system_access(db: AsyncIOMotorDatabase):
     val = await get_setting_value(db, "system_access_enabled")
     if val != "true":
         raise HTTPException(
@@ -180,8 +179,8 @@ async def list_processes(
     sort_desc: bool = Query(True),
     filter_name: str = Query(None, description="Filter by process name"),
     limit: int = Query(100, le=500),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """List running processes."""
     await _check_system_access(db)
@@ -209,8 +208,8 @@ async def list_processes(
 @router.post("/kill")
 async def kill_process(
     body: KillRequest,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Send a signal to a process."""
     await _check_system_access(db)
@@ -248,8 +247,8 @@ async def kill_process(
 
 @router.get("/system-info")
 async def system_info(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get system information (CPU, RAM, disk, network)."""
     await _check_system_access(db)
@@ -259,8 +258,8 @@ async def system_info(
 @router.get("/{pid}")
 async def get_process_detail(
     pid: int,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get detailed info about a specific process."""
     await _check_system_access(db)

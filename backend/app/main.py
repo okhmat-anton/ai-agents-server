@@ -10,11 +10,11 @@ from app.config import get_settings
 # Configure app-level logging so watchdog and other services can log
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-from app.database import init_db, init_redis, init_mongodb, async_session
+from app.database import init_db, init_redis, init_mongodb, get_mongodb
 from app.services.auth_service import create_default_admin
 from app.services.skill_service import create_system_skills
 from app.services.model_service import sync_ollama_models
-from app.services.log_service import syslog_bg, cleanup_old_logs
+from app.services.log_service import syslog_bg
 from app.services.protocol_service import create_default_protocols, deduplicate_protocols
 
 from app.api.auth import router as auth_router
@@ -54,25 +54,23 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     # Create default admin & system skills
-    async with async_session() as db:
-        await create_default_admin(db)
-        await create_system_skills(db)
-        await sync_ollama_models(db)
-        await create_default_protocols(db)
-        removed = await deduplicate_protocols(db)
-        if removed:
-            await syslog_bg("info", f"Removed {removed} duplicate protocol(s)", source="system")
+    mongodb = get_mongodb()
+    await create_default_admin(mongodb)
+    await create_system_skills(mongodb)
+    await sync_ollama_models(mongodb)
+    await create_default_protocols(mongodb)
+    removed = await deduplicate_protocols(mongodb)
+    if removed:
+        await syslog_bg("info", f"Removed {removed} duplicate protocol(s)", source="system")
 
-        # Clean up old logs based on retention setting
-        from app.api.settings import get_setting_value, _ensure_defaults
-        await _ensure_defaults(db)
-        retention_str = await get_setting_value(db, "log_retention_days")
-        retention_days = int(retention_str) if retention_str and retention_str.isdigit() else 14
+    # Settings migrated to MongoDB
+    from app.api.settings import get_setting_value, _ensure_defaults
+    await _ensure_defaults(mongodb)
+    retention_str = await get_setting_value(mongodb, "log_retention_days")
+    retention_days = int(retention_str) if retention_str and retention_str.isdigit() else 14
 
-    # Cleanup old logs
-    log_counts = await cleanup_old_logs(retention_days)
-    if any(v > 0 for k, v in log_counts.items() if k != "error"):
-        await syslog_bg("info", f"Cleaned up old logs: {log_counts}", source="system")
+    # Note: File-based logs don't need automatic cleanup
+    # TODO: Implement log rotation if needed
 
     # Clean up orphaned autonomous runs (e.g. from server restart during active run)
     from app.services.autonomous_runner import cleanup_orphaned_runs

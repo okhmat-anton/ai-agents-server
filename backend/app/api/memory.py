@@ -1,13 +1,11 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timezone
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.agent import Agent
-from app.models.memory import Memory, MemoryLink
+from app.mongodb.models import MongoMemory, MongoMemoryLink
+from app.mongodb.services import AgentService, MemoryService, MemoryLinkService
 from app.schemas.memory import (
     MemoryCreate, MemoryUpdate, MemoryResponse,
     MemoryLinkCreate, MemoryLinkResponse, MemoryGraphResponse, MemoryStatsResponse,
@@ -18,12 +16,32 @@ from app.schemas.common import MessageResponse
 router = APIRouter(prefix="/api/agents/{agent_id}/memory", tags=["memory"])
 
 
-async def _get_agent(agent_id: UUID, db: AsyncSession):
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+async def _get_agent(agent_id: UUID, db: AsyncIOMotorDatabase):
+    agent = await AgentService(db).get_by_id(str(agent_id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
+
+
+def _mem_to_dict(m) -> dict:
+    return {
+        "id": m.id, "agent_id": m.agent_id, "type": m.type,
+        "title": m.title, "content": m.content, "source": m.source,
+        "importance": m.importance, "tags": m.tags or [], "category": m.category,
+        "task_id": m.task_id, "embedding_id": m.embedding_id,
+        "access_count": m.access_count, "last_accessed": m.last_accessed,
+        "is_pinned": m.is_pinned, "created_at": m.created_at, "updated_at": m.updated_at,
+    }
+
+
+def _link_to_dict(l) -> dict:
+    return {
+        "id": l.id, "agent_id": l.agent_id,
+        "source_id": l.source_id, "target_id": l.target_id,
+        "relation_type": l.relation_type, "strength": l.strength,
+        "description": l.description, "created_by": l.created_by,
+        "created_at": l.created_at,
+    }
 
 
 @router.get("", response_model=list[MemoryResponse])
@@ -38,49 +56,52 @@ async def list_memories(
     sort_by: str = Query("created_at"),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    q = select(Memory).where(Memory.agent_id == agent_id)
+    svc = MemoryService(db)
+    filt: dict = {"agent_id": str(agent_id)}
     if type:
-        q = q.where(Memory.type == type)
+        filt["type"] = type
     if category:
-        q = q.where(Memory.category == category)
+        filt["category"] = category
     if source:
-        q = q.where(Memory.source == source)
+        filt["source"] = source
+
+    memories = await svc.get_all(filter=filt, skip=offset, limit=limit)
+
     if importance_min is not None:
-        q = q.where(Memory.importance >= importance_min)
+        memories = [m for m in memories if m.importance >= importance_min]
     if search:
-        q = q.where(Memory.content.ilike(f"%{search}%") | Memory.title.ilike(f"%{search}%"))
+        sl = search.lower()
+        memories = [m for m in memories if sl in m.content.lower() or sl in m.title.lower()]
     if tags:
         tag_list = [t.strip() for t in tags.split(",")]
-        q = q.where(Memory.tags.overlap(tag_list))
+        memories = [m for m in memories if m.tags and any(t in m.tags for t in tag_list)]
 
-    order_col = getattr(Memory, sort_by, Memory.created_at)
-    q = q.order_by(order_col.desc()).limit(limit).offset(offset)
-    result = await db.execute(q)
-    return result.scalars().all()
+    reverse = True
+    sort_key = sort_by if sort_by in ("created_at", "importance", "access_count") else "created_at"
+    memories.sort(key=lambda m: getattr(m, sort_key, m.created_at) or m.created_at, reverse=reverse)
+    return [_mem_to_dict(m) for m in memories]
 
 
 @router.get("/stats", response_model=MemoryStatsResponse)
 async def memory_stats(
     agent_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    total = (await db.execute(select(func.count(Memory.id)).where(Memory.agent_id == agent_id))).scalar() or 0
+    svc = MemoryService(db)
+    total = await svc.count({"agent_id": str(agent_id)})
+    all_mems = await svc.get_by_agent(str(agent_id), limit=10000)
 
-    type_counts = await db.execute(
-        select(Memory.type, func.count(Memory.id)).where(Memory.agent_id == agent_id).group_by(Memory.type)
-    )
-    by_type = {r[0]: r[1] for r in type_counts.all()}
-
-    cat_counts = await db.execute(
-        select(Memory.category, func.count(Memory.id)).where(Memory.agent_id == agent_id).group_by(Memory.category)
-    )
-    by_category = {r[0]: r[1] for r in cat_counts.all()}
+    by_type: dict[str, int] = {}
+    by_category: dict[str, int] = {}
+    for m in all_mems:
+        by_type[m.type] = by_type.get(m.type, 0) + 1
+        by_category[m.category] = by_category.get(m.category, 0) + 1
 
     return MemoryStatsResponse(total=total, by_type=by_type, by_category=by_category)
 
@@ -88,17 +109,15 @@ async def memory_stats(
 @router.get("/tags")
 async def memory_tags(
     agent_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    result = await db.execute(
-        select(Memory.tags).where(Memory.agent_id == agent_id, Memory.tags.isnot(None))
-    )
+    all_mems = await MemoryService(db).get_by_agent(str(agent_id), limit=10000)
     tag_count: dict[str, int] = {}
-    for row in result.scalars().all():
-        if row:
-            for tag in row:
+    for m in all_mems:
+        if m.tags:
+            for tag in m.tags:
                 tag_count[tag] = tag_count.get(tag, 0) + 1
     return [{"tag": k, "count": v} for k, v in sorted(tag_count.items(), key=lambda x: -x[1])]
 
@@ -107,34 +126,32 @@ async def memory_tags(
 async def get_memory(
     agent_id: UUID,
     memory_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.agent_id == agent_id))
-    mem = result.scalar_one_or_none()
-    if not mem:
+    svc = MemoryService(db)
+    mem = await svc.get_by_id(str(memory_id))
+    if not mem or mem.agent_id != str(agent_id):
         raise HTTPException(status_code=404, detail="Memory not found")
-    mem.access_count += 1
-    mem.last_accessed = datetime.now(timezone.utc)
-    await db.flush()
-    await db.refresh(mem)
-    return mem
+    updated = await svc.update(str(memory_id), {
+        "access_count": mem.access_count + 1,
+        "last_accessed": datetime.now(timezone.utc).isoformat(),
+    })
+    return _mem_to_dict(updated)
 
 
 @router.post("", response_model=MemoryResponse, status_code=201)
 async def create_memory(
     agent_id: UUID,
     body: MemoryCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    mem = Memory(**body.model_dump(), agent_id=agent_id, source="user")
-    db.add(mem)
-    await db.flush()
-    await db.refresh(mem)
-    return mem
+    mem = MongoMemory(**body.model_dump(), agent_id=str(agent_id), source="user")
+    created = await MemoryService(db).create(mem)
+    return _mem_to_dict(created)
 
 
 @router.put("/{memory_id}", response_model=MemoryResponse)
@@ -142,104 +159,104 @@ async def update_memory(
     agent_id: UUID,
     memory_id: UUID,
     body: MemoryUpdate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.agent_id == agent_id))
-    mem = result.scalar_one_or_none()
-    if not mem:
+    svc = MemoryService(db)
+    mem = await svc.get_by_id(str(memory_id))
+    if not mem or mem.agent_id != str(agent_id):
         raise HTTPException(status_code=404, detail="Memory not found")
-    for key, value in body.model_dump(exclude_unset=True).items():
-        setattr(mem, key, value)
-    await db.flush()
-    await db.refresh(mem)
-    return mem
+    update_data = body.model_dump(exclude_unset=True)
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    updated = await svc.update(str(memory_id), update_data)
+    return _mem_to_dict(updated)
 
 
 @router.delete("/{memory_id}", response_model=MessageResponse)
 async def delete_memory(
     agent_id: UUID,
     memory_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.agent_id == agent_id))
-    mem = result.scalar_one_or_none()
-    if not mem:
+    svc = MemoryService(db)
+    mem = await svc.get_by_id(str(memory_id))
+    if not mem or mem.agent_id != str(agent_id):
         raise HTTPException(status_code=404, detail="Memory not found")
-    await db.delete(mem)
+    await svc.delete(str(memory_id))
     return MessageResponse(message="Memory deleted")
 
 
 @router.post("/{memory_id}/pin", response_model=MemoryResponse)
 async def pin_memory(
     agent_id: UUID, memory_id: UUID,
-    _user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.agent_id == agent_id))
-    mem = result.scalar_one_or_none()
-    if not mem:
+    svc = MemoryService(db)
+    mem = await svc.get_by_id(str(memory_id))
+    if not mem or mem.agent_id != str(agent_id):
         raise HTTPException(status_code=404, detail="Memory not found")
-    mem.is_pinned = True
-    await db.flush()
-    await db.refresh(mem)
-    return mem
+    updated = await svc.update(str(memory_id), {"is_pinned": True})
+    return _mem_to_dict(updated)
 
 
 @router.post("/{memory_id}/unpin", response_model=MemoryResponse)
 async def unpin_memory(
     agent_id: UUID, memory_id: UUID,
-    _user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    result = await db.execute(select(Memory).where(Memory.id == memory_id, Memory.agent_id == agent_id))
-    mem = result.scalar_one_or_none()
-    if not mem:
+    svc = MemoryService(db)
+    mem = await svc.get_by_id(str(memory_id))
+    if not mem or mem.agent_id != str(agent_id):
         raise HTTPException(status_code=404, detail="Memory not found")
-    mem.is_pinned = False
-    await db.flush()
-    await db.refresh(mem)
-    return mem
+    updated = await svc.update(str(memory_id), {"is_pinned": False})
+    return _mem_to_dict(updated)
 
 
 @router.post("/search")
 async def search_memory(
     agent_id: UUID,
     body: MemorySearchRequest,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Semantic search placeholder — falls back to text search."""
     await _get_agent(agent_id, db)
-    q = select(Memory).where(
-        Memory.agent_id == agent_id,
-        Memory.content.ilike(f"%{body.query}%") | Memory.title.ilike(f"%{body.query}%"),
-    )
+    all_mems = await MemoryService(db).get_by_agent(str(agent_id), limit=10000)
+
+    query_lower = body.query.lower()
+    results = [m for m in all_mems if query_lower in m.content.lower() or query_lower in m.title.lower()]
+
     if body.tags:
-        q = q.where(Memory.tags.overlap(body.tags))
+        results = [m for m in results if m.tags and any(t in m.tags for t in body.tags)]
     if body.category:
-        q = q.where(Memory.category == body.category)
+        results = [m for m in results if m.category == body.category]
     if body.importance_min is not None:
-        q = q.where(Memory.importance >= body.importance_min)
-    q = q.order_by(Memory.importance.desc()).limit(body.limit)
-    result = await db.execute(q)
-    return result.scalars().all()
+        results = [m for m in results if m.importance >= body.importance_min]
+
+    results.sort(key=lambda m: m.importance, reverse=True)
+    return [_mem_to_dict(m) for m in results[:body.limit]]
 
 
 @router.delete("/bulk", response_model=MessageResponse)
 async def bulk_delete_memory(
     agent_id: UUID,
     ids: str | None = Query(None, description="Comma-separated UUIDs"),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
     if ids:
-        uuid_list = [UUID(i.strip()) for i in ids.split(",")]
-        await db.execute(delete(Memory).where(Memory.agent_id == agent_id, Memory.id.in_(uuid_list)))
+        svc = MemoryService(db)
+        uuid_list = [i.strip() for i in ids.split(",")]
+        for mid in uuid_list:
+            await svc.delete(mid)
     return MessageResponse(message="Memories deleted")
 
 
@@ -249,44 +266,42 @@ async def list_memory_links(
     agent_id: UUID,
     memory_id: UUID,
     type: str | None = Query(None),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    q = select(MemoryLink).where(
-        MemoryLink.agent_id == agent_id,
-        (MemoryLink.source_id == memory_id) | (MemoryLink.target_id == memory_id),
-    )
+    all_links = await MemoryLinkService(db).get_by_agent(str(agent_id))
+    mid = str(memory_id)
+    links = [l for l in all_links if l.source_id == mid or l.target_id == mid]
     if type:
-        q = q.where(MemoryLink.relation_type == type)
-    result = await db.execute(q)
-    return result.scalars().all()
+        links = [l for l in links if l.relation_type == type]
+    return [_link_to_dict(l) for l in links]
 
 
 @router.get("/graph", response_model=MemoryGraphResponse)
 async def memory_graph(
     agent_id: UUID,
     type: str | None = Query(None),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
+    aid = str(agent_id)
 
-    memories = await db.execute(select(Memory).where(Memory.agent_id == agent_id).limit(500))
+    memories = await MemoryService(db).get_by_agent(aid, limit=500)
     nodes = [
-        {"id": str(m.id), "title": m.title, "type": m.type, "importance": m.importance, "tags": m.tags or []}
-        for m in memories.scalars().all()
+        {"id": m.id, "title": m.title, "type": m.type, "importance": m.importance, "tags": m.tags or []}
+        for m in memories
     ]
 
-    q = select(MemoryLink).where(MemoryLink.agent_id == agent_id)
+    all_links = await MemoryLinkService(db).get_by_agent(aid)
     if type:
         types = [t.strip() for t in type.split(",")]
-        q = q.where(MemoryLink.relation_type.in_(types))
-    links = await db.execute(q)
+        all_links = [l for l in all_links if l.relation_type in types]
     edges = [
-        {"id": str(l.id), "source": str(l.source_id), "target": str(l.target_id),
+        {"id": l.id, "source": l.source_id, "target": l.target_id,
          "relation_type": l.relation_type, "strength": l.strength}
-        for l in links.scalars().all()
+        for l in all_links
     ]
 
     return MemoryGraphResponse(nodes=nodes, edges=edges)
@@ -296,36 +311,34 @@ async def memory_graph(
 async def create_memory_link(
     agent_id: UUID,
     body: MemoryLinkCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    link = MemoryLink(
-        agent_id=agent_id,
-        source_id=body.source_id,
-        target_id=body.target_id,
+    link = MongoMemoryLink(
+        agent_id=str(agent_id),
+        source_id=str(body.source_id),
+        target_id=str(body.target_id),
         relation_type=body.relation_type,
         strength=body.strength,
         description=body.description,
         created_by="user",
     )
-    db.add(link)
-    await db.flush()
-    await db.refresh(link)
-    return link
+    created = await MemoryLinkService(db).create(link)
+    return _link_to_dict(created)
 
 
 @router.delete("/links/{link_id}", response_model=MessageResponse)
 async def delete_memory_link(
     agent_id: UUID,
     link_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _get_agent(agent_id, db)
-    result = await db.execute(select(MemoryLink).where(MemoryLink.id == link_id, MemoryLink.agent_id == agent_id))
-    link = result.scalar_one_or_none()
-    if not link:
+    svc = MemoryLinkService(db)
+    link = await svc.get_by_id(str(link_id))
+    if not link or link.agent_id != str(agent_id):
         raise HTTPException(status_code=404, detail="Link not found")
-    await db.delete(link)
+    await svc.delete(str(link_id))
     return MessageResponse(message="Link deleted")

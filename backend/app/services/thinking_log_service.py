@@ -19,9 +19,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.models.thinking_log import ThinkingLog, ThinkingStep
+from app.mongodb.models import MongoThinkingLog, MongoThinkingStep
+from app.mongodb.services import ThinkingLogService, ThinkingStepService
 
 
 class ThinkingTracker:
@@ -29,31 +30,30 @@ class ThinkingTracker:
 
     def __init__(
         self,
-        db: AsyncSession,
-        agent_id: uuid.UUID,
-        session_id: uuid.UUID,
+        db: AsyncIOMotorDatabase,
+        agent_id,
+        session_id,
         user_input: str,
     ):
         self.db = db
-        self.agent_id = agent_id
-        self.session_id = session_id
+        self.agent_id = str(agent_id)
+        self.session_id = str(session_id)
         self.user_input = user_input
-        self.log: ThinkingLog | None = None
+        self.log: MongoThinkingLog | None = None
         self._step_order = 0
         self._start_time = 0.0
         self._step_start = 0.0
 
-    async def start(self) -> ThinkingLog:
+    async def start(self) -> MongoThinkingLog:
         """Create the thinking log entry in DB."""
         self._start_time = time.monotonic()
-        self.log = ThinkingLog(
+        self.log = MongoThinkingLog(
             agent_id=self.agent_id,
             session_id=self.session_id,
-            user_input=self.user_input[:2000],  # truncate very long inputs
+            user_input=self.user_input[:2000],
             status="started",
         )
-        self.db.add(self.log)
-        await self.db.flush()
+        self.log = await ThinkingLogService(self.db).create(self.log)
         return self.log
 
     async def step(
@@ -66,14 +66,14 @@ class ThinkingTracker:
         status: str = "completed",
         error_message: str | None = None,
         duration_ms: int | None = None,
-    ) -> ThinkingStep:
+    ) -> MongoThinkingStep:
         """Record a single step in the thinking process."""
         if not self.log:
             await self.start()
 
         self._step_order += 1
 
-        step = ThinkingStep(
+        step = MongoThinkingStep(
             thinking_log_id=self.log.id,
             step_order=self._step_order,
             step_type=step_type,
@@ -84,8 +84,7 @@ class ThinkingTracker:
             error_message=error_message,
             duration_ms=duration_ms or 0,
         )
-        self.db.add(step)
-        await self.db.flush()
+        step = await ThinkingStepService(self.db).create(step)
         return step
 
     def start_step_timer(self):
@@ -100,43 +99,47 @@ class ThinkingTracker:
         self,
         agent_output: str,
         *,
-        message_id: uuid.UUID | None = None,
+        message_id=None,
         model_name: str | None = None,
         total_tokens: int = 0,
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
         llm_calls_count: int = 1,
-    ) -> ThinkingLog:
+    ) -> MongoThinkingLog:
         """Mark the thinking log as completed."""
         if not self.log:
             return None
 
         total_ms = int((time.monotonic() - self._start_time) * 1000)
-        
-        self.log.agent_output = agent_output[:5000] if agent_output else None  # truncate
-        self.log.message_id = message_id
-        self.log.model_name = model_name
-        self.log.total_duration_ms = total_ms
-        self.log.total_tokens = total_tokens
-        self.log.prompt_tokens = prompt_tokens
-        self.log.completion_tokens = completion_tokens
-        self.log.llm_calls_count = llm_calls_count
-        self.log.status = "completed"
-        self.log.completed_at = datetime.now(timezone.utc)
-        await self.db.flush()
+
+        update_data = {
+            "agent_output": (agent_output[:5000] if agent_output else None),
+            "message_id": str(message_id) if message_id else None,
+            "model_name": model_name,
+            "total_duration_ms": total_ms,
+            "total_tokens": total_tokens,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "llm_calls_count": llm_calls_count,
+            "status": "completed",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.log = await ThinkingLogService(self.db).update(self.log.id, update_data)
         return self.log
 
-    async def fail(self, error_message: str) -> ThinkingLog:
+    async def fail(self, error_message: str) -> MongoThinkingLog:
         """Mark the thinking log as failed."""
         if not self.log:
             return None
 
         total_ms = int((time.monotonic() - self._start_time) * 1000)
-        self.log.total_duration_ms = total_ms
-        self.log.status = "error"
-        self.log.error_message = error_message
-        self.log.completed_at = datetime.now(timezone.utc)
-        await self.db.flush()
+        update_data = {
+            "total_duration_ms": total_ms,
+            "status": "error",
+            "error_message": error_message,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.log = await ThinkingLogService(self.db).update(self.log.id, update_data)
         return self.log
 
 

@@ -1,8 +1,7 @@
 import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-from app import database as _db
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.database import get_mongodb
 from app.core.dependencies import get_ws_user
 
 router = APIRouter()
@@ -40,7 +39,7 @@ async def ws_dashboard(
     websocket: WebSocket,
     token: str | None = Query(None),
     api_key: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     try:
         user = await get_ws_user(token=token, api_key=api_key, db=db)
@@ -65,7 +64,7 @@ async def ws_agent_logs(
     agent_id: str,
     token: str | None = Query(None),
     api_key: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     try:
         user = await get_ws_user(token=token, api_key=api_key, db=db)
@@ -89,7 +88,7 @@ async def ws_system_logs(
     websocket: WebSocket,
     token: str | None = Query(None),
     api_key: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     try:
         user = await get_ws_user(token=token, api_key=api_key, db=db)

@@ -1,12 +1,9 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func, update
-from app.database import get_db
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.agent import Agent
-from app.models.log import AgentError
+from app.mongodb.services import AgentService, AgentErrorService
 from app.schemas.log import AgentErrorResponse, AgentErrorResolve
 from app.schemas.common import MessageResponse
 
@@ -17,6 +14,21 @@ agent_error_router = APIRouter(prefix="/api/agents/{agent_id}/errors")
 all_errors_router = APIRouter(prefix="/api/agent-errors", tags=["agent-errors"])
 
 
+def _error_to_dict(err) -> dict:
+    """Convert MongoAgentError to response-compatible dict."""
+    return {
+        "id": err.id,
+        "agent_id": err.agent_id,
+        "error_type": err.error_type,
+        "source": err.source,
+        "message": err.message,
+        "context": err.context,
+        "resolved": err.resolved,
+        "resolution": err.resolution,
+        "created_at": err.created_at,
+    }
+
+
 @agent_error_router.get("", response_model=list[AgentErrorResponse])
 async def list_agent_errors(
     agent_id: UUID,
@@ -25,23 +37,25 @@ async def list_agent_errors(
     resolved: bool | None = Query(None),
     limit: int = Query(50, le=500),
     offset: int = Query(0, ge=0),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    if not result.scalar_one_or_none():
+    agent = await AgentService(db).get_by_id(str(agent_id))
+    if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    q = select(AgentError).where(AgentError.agent_id == agent_id)
+    svc = AgentErrorService(db)
+    filt: dict = {"agent_id": str(agent_id)}
     if error_type:
-        q = q.where(AgentError.error_type == error_type)
+        filt["error_type"] = error_type
     if source:
-        q = q.where(AgentError.source == source)
+        filt["source"] = source
     if resolved is not None:
-        q = q.where(AgentError.resolved == resolved)
-    q = q.order_by(AgentError.created_at.desc()).limit(limit).offset(offset)
-    result = await db.execute(q)
-    return result.scalars().all()
+        filt["resolved"] = resolved
+
+    errors = await svc.get_all(filter=filt, skip=offset, limit=limit)
+    errors.sort(key=lambda e: e.created_at, reverse=True)
+    return [_error_to_dict(e) for e in errors]
 
 
 @agent_error_router.patch("/{error_id}/resolve", response_model=AgentErrorResponse)
@@ -49,28 +63,24 @@ async def resolve_agent_error(
     agent_id: UUID,
     error_id: UUID,
     body: AgentErrorResolve,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(
-        select(AgentError).where(AgentError.id == error_id, AgentError.agent_id == agent_id)
-    )
-    error = result.scalar_one_or_none()
-    if not error:
+    svc = AgentErrorService(db)
+    error = await svc.get_by_id(str(error_id))
+    if not error or error.agent_id != str(agent_id):
         raise HTTPException(status_code=404, detail="Error not found")
-    error.resolved = True
-    error.resolution = body.resolution
-    await db.flush()
-    return error
+    updated = await svc.update(str(error_id), {"resolved": True, "resolution": body.resolution})
+    return _error_to_dict(updated)
 
 
 @agent_error_router.delete("", response_model=MessageResponse)
 async def clear_agent_errors(
     agent_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    await db.execute(delete(AgentError).where(AgentError.agent_id == agent_id))
+    await AgentErrorService(db).delete_by_agent(str(agent_id))
     return MessageResponse(message="Agent errors cleared")
 
 
@@ -84,45 +94,47 @@ async def list_all_errors(
     agent_id: UUID | None = Query(None),
     limit: int = Query(100, le=500),
     offset: int = Query(0, ge=0),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    q = select(AgentError)
+    svc = AgentErrorService(db)
+    filt: dict = {}
     if agent_id:
-        q = q.where(AgentError.agent_id == agent_id)
+        filt["agent_id"] = str(agent_id)
     if error_type:
-        q = q.where(AgentError.error_type == error_type)
+        filt["error_type"] = error_type
     if source:
-        q = q.where(AgentError.source == source)
+        filt["source"] = source
     if resolved is not None:
-        q = q.where(AgentError.resolved == resolved)
-    q = q.order_by(AgentError.created_at.desc()).limit(limit).offset(offset)
-    result = await db.execute(q)
-    return result.scalars().all()
+        filt["resolved"] = resolved
+
+    errors = await svc.get_all(filter=filt, skip=offset, limit=limit)
+    errors.sort(key=lambda e: e.created_at, reverse=True)
+    return [_error_to_dict(e) for e in errors]
 
 
 @all_errors_router.get("/stats")
 async def error_stats(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get error statistics grouped by agent and type."""
-    total = await db.execute(select(func.count(AgentError.id)))
-    unresolved = await db.execute(
-        select(func.count(AgentError.id)).where(AgentError.resolved == False)
-    )
-    by_type = await db.execute(
-        select(AgentError.error_type, func.count(AgentError.id))
-        .group_by(AgentError.error_type)
-    )
-    by_agent = await db.execute(
-        select(AgentError.agent_id, func.count(AgentError.id))
-        .where(AgentError.resolved == False)
-        .group_by(AgentError.agent_id)
-    )
+    svc = AgentErrorService(db)
+    total = await svc.count()
+    unresolved = await svc.count({"resolved": False})
+
+    # by_type — aggregate manually
+    all_errors = await svc.get_all(limit=10000)
+    by_type: dict[str, int] = {}
+    by_agent: dict[str, int] = {}
+    for e in all_errors:
+        by_type[e.error_type] = by_type.get(e.error_type, 0) + 1
+        if not e.resolved:
+            by_agent[e.agent_id] = by_agent.get(e.agent_id, 0) + 1
+
     return {
-        "total": total.scalar() or 0,
-        "unresolved": unresolved.scalar() or 0,
-        "by_type": {row[0]: row[1] for row in by_type.all()},
-        "by_agent": {str(row[0]): row[1] for row in by_agent.all()},
+        "total": total,
+        "unresolved": unresolved,
+        "by_type": by_type,
+        "by_agent": by_agent,
     }

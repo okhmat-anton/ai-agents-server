@@ -1,0 +1,213 @@
+"""MongoDB services for all entities."""
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.mongodb.service_base import BaseMongoService
+from app.mongodb.models import (
+    MongoUser,
+    MongoAgent,
+    MongoAgentModel,
+    MongoAgentProtocol,
+    MongoThinkingProtocol,
+    MongoAgentError,
+    MongoModelConfig,
+    MongoModelRoleAssignment,
+    MongoApiKey,
+    MongoChatSession,
+    MongoChatMessage,
+    MongoTask,
+    MongoAutonomousRun,
+    MongoThinkingLog,
+    MongoThinkingStep,
+    MongoSystemSetting,
+    MongoSkill,
+    MongoAgentSkill,
+    MongoAgentLog,
+    MongoMemory,
+    MongoMemoryLink,
+)
+
+
+class UserService(BaseMongoService[MongoUser]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "users", MongoUser)
+    
+    async def get_by_username(self, username: str):
+        return await self.find_one({"username": username})
+
+
+class AgentService(BaseMongoService[MongoAgent]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "agents", MongoAgent)
+
+    async def get_by_name(self, name: str):
+        return await self.find_one({"name": name})
+
+
+class AgentModelService(BaseMongoService[MongoAgentModel]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "agent_models", MongoAgentModel)
+
+    async def get_by_agent(self, agent_id: str):
+        return await self.get_all(filter={"agent_id": agent_id}, limit=100)
+
+    async def delete_by_agent(self, agent_id: str):
+        result = await self.collection.delete_many({"agent_id": agent_id})
+        return result.deleted_count
+
+
+class AgentProtocolService(BaseMongoService[MongoAgentProtocol]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "agent_protocols", MongoAgentProtocol)
+
+    async def get_by_agent(self, agent_id: str):
+        return await self.get_all(filter={"agent_id": agent_id}, limit=100)
+
+    async def delete_by_agent(self, agent_id: str):
+        result = await self.collection.delete_many({"agent_id": agent_id})
+        return result.deleted_count
+
+
+class AgentErrorService(BaseMongoService[MongoAgentError]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "agent_errors", MongoAgentError)
+
+    async def get_by_agent(self, agent_id: str, limit: int = 100, skip: int = 0):
+        return await self.get_all(filter={"agent_id": agent_id}, skip=skip, limit=limit)
+
+    async def delete_by_agent(self, agent_id: str):
+        result = await self.collection.delete_many({"agent_id": agent_id})
+        return result.deleted_count
+
+
+class ThinkingProtocolService(BaseMongoService[MongoThinkingProtocol]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "thinking_protocols", MongoThinkingProtocol)
+
+
+class ModelConfigService(BaseMongoService[MongoModelConfig]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "model_configs", MongoModelConfig)
+
+
+class ModelRoleAssignmentService(BaseMongoService[MongoModelRoleAssignment]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "model_role_assignments", MongoModelRoleAssignment)
+
+
+class ApiKeyService(BaseMongoService[MongoApiKey]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "api_keys", MongoApiKey)
+    
+    async def get_by_key(self, key: str):
+        return await self.find_one({"key": key})
+
+
+class ChatSessionService(BaseMongoService[MongoChatSession]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "chat_sessions", MongoChatSession)
+
+    async def get_by_user(self, user_id: str, filter_extra: dict = None,
+                          limit: int = 50, skip: int = 0):
+        flt = {"user_id": user_id}
+        if filter_extra:
+            flt.update(filter_extra)
+        return await self.get_all(filter=flt, skip=skip, limit=limit)
+
+
+class ChatMessageService(BaseMongoService[MongoChatMessage]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "chat_messages", MongoChatMessage)
+
+    async def get_by_session(self, session_id: str, limit: int = 10000):
+        return await self.get_all(filter={"session_id": session_id}, limit=limit)
+
+    async def delete_by_session(self, session_id: str):
+        result = await self.collection.delete_many({"session_id": session_id})
+        return result.deleted_count
+
+
+class TaskService(BaseMongoService[MongoTask]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "tasks", MongoTask)
+
+
+class AutonomousRunService(BaseMongoService[MongoAutonomousRun]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "autonomous_runs", MongoAutonomousRun)
+
+
+class ThinkingLogService(BaseMongoService[MongoThinkingLog]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "thinking_logs", MongoThinkingLog)
+
+
+class ThinkingStepService(BaseMongoService[MongoThinkingStep]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "thinking_steps", MongoThinkingStep)
+
+
+class SystemSettingService(BaseMongoService[MongoSystemSetting]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "system_settings", MongoSystemSetting)
+    
+    async def get_by_key(self, key: str):
+        return await self.find_one({"key": key})
+
+
+class SkillService(BaseMongoService[MongoSkill]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "skills", MongoSkill)
+    
+    async def get_by_name(self, name: str):
+        return await self.find_one({"name": name})
+
+
+class AgentSkillService(BaseMongoService[MongoAgentSkill]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "agent_skills", MongoAgentSkill)
+    
+    async def get_by_agent(self, agent_id: str):
+        """Get all skills for an agent."""
+        filter_dict = {"agent_id": agent_id}
+        all_skills = await self.get_all(filter=filter_dict, skip=0, limit=1000)
+        return all_skills
+    
+    async def get_by_agent_and_skill(self, agent_id: str, skill_id: str):
+        """Get specific agent-skill relationship."""
+        return await self.find_one({"agent_id": agent_id, "skill_id": skill_id})
+
+
+class AgentLogService(BaseMongoService[MongoAgentLog]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "agent_logs", MongoAgentLog)
+
+    async def get_by_agent(self, agent_id: str, limit: int = 100, skip: int = 0):
+        return await self.get_all(filter={"agent_id": agent_id}, skip=skip, limit=limit)
+
+    async def delete_by_agent(self, agent_id: str):
+        result = await self.collection.delete_many({"agent_id": agent_id})
+        return result.deleted_count
+
+
+class MemoryService(BaseMongoService[MongoMemory]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "memories", MongoMemory)
+
+    async def get_by_agent(self, agent_id: str, limit: int = 100, skip: int = 0):
+        return await self.get_all(filter={"agent_id": agent_id}, skip=skip, limit=limit)
+
+    async def delete_by_agent(self, agent_id: str):
+        result = await self.collection.delete_many({"agent_id": agent_id})
+        return result.deleted_count
+
+
+class MemoryLinkService(BaseMongoService[MongoMemoryLink]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "memory_links", MongoMemoryLink)
+
+    async def get_by_agent(self, agent_id: str, limit: int = 500, skip: int = 0):
+        return await self.get_all(filter={"agent_id": agent_id}, skip=skip, limit=limit)
+
+    async def delete_by_agent(self, agent_id: str):
+        result = await self.collection.delete_many({"agent_id": agent_id})
+        return result.deleted_count
+

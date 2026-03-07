@@ -25,18 +25,16 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
-from app.database import async_session
+from app.database import get_mongodb
 from app.config import get_settings
-from app.models.agent import Agent
-from app.models.agent_model import AgentModel
-from app.models.agent_protocol import AgentProtocol
-from app.models.autonomous_run import AutonomousRun
-from app.models.chat import ChatSession, ChatMessage
-from app.models.thinking_protocol import ThinkingProtocol
+from app.mongodb.models import (
+    MongoChatSession, MongoChatMessage, MongoAutonomousRun, MongoTask,
+)
+from app.mongodb.services import (
+    AgentService, AgentModelService, AgentProtocolService,
+    ModelConfigService, ChatSessionService, ChatMessageService,
+    AutonomousRunService, ThinkingProtocolService, TaskService,
+)
 from app.llm.base import Message, GenerationParams, LLMResponse
 from app.llm.ollama import OllamaProvider
 from app.llm.openai_compatible import OpenAICompatibleProvider
@@ -48,6 +46,7 @@ from app.services.protocol_executor import (
     parse_stop,
 )
 from app.services.log_service import syslog_bg, agent_log_bg
+from app.services.todo_sync_service import sync_todos_to_tasks
 
 # ── Global registry of active runs ──
 # Maps run_id -> asyncio.Task
@@ -58,30 +57,25 @@ async def cleanup_orphaned_runs() -> int:
     """
     On server startup, find any autonomous runs stuck in 'running' status
     (orphaned by a previous server restart) and mark them as 'stopped'.
-    Also resets corresponding agent statuses to 'idle'.
-    Returns the number of orphaned runs cleaned up.
     """
     count = 0
-    async with async_session() as db:
-        result = await db.execute(
-            select(AutonomousRun).where(AutonomousRun.status == "running")
-        )
-        orphaned_runs = result.scalars().all()
-        for run in orphaned_runs:
-            run.status = "stopped"
-            run.completed_at = datetime.now(timezone.utc)
-            run.error_message = "Orphaned: server restarted during active run"
-            # Reset agent status
-            agent_result = await db.execute(
-                select(Agent).where(Agent.id == run.agent_id)
-            )
-            agent = agent_result.scalar_one_or_none()
-            if agent and agent.status == "running":
-                agent.status = "idle"
-            count += 1
-        if count:
-            await db.commit()
-            logger.warning("Cleaned up %d orphaned autonomous run(s)", count)
+    db = get_mongodb()
+    run_svc = AutonomousRunService(db)
+    agent_svc = AgentService(db)
+
+    orphaned = await run_svc.get_all(filter={"status": "running"}, limit=500)
+    for run in orphaned:
+        await run_svc.update(run.id, {
+            "status": "stopped",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "error_message": "Orphaned: server restarted during active run",
+        })
+        agent = await agent_svc.get_by_id(run.agent_id)
+        if agent and agent.status == "running":
+            await agent_svc.update(agent.id, {"status": "idle"})
+        count += 1
+    if count:
+        logger.warning("Cleaned up %d orphaned autonomous run(s)", count)
     return count
 
 
@@ -95,87 +89,7 @@ _TODO_STATUS_TO_TASK = {
 _TASK_STATUS_TO_TODO = {v: k for k, v in _TODO_STATUS_TO_TASK.items()}
 
 
-async def sync_todos_to_tasks(
-    db: AsyncSession,
-    agent_id: uuid.UUID,
-    todo_items: list[dict],
-    todo_task_map: dict[str, str] | None = None,
-) -> dict[str, str]:
-    """
-    Synchronise the agent's TODO list (from <<<TODO>>> markers) with the
-    persistent tasks table so that every TODO item is visible in the Tasks tab.
-
-    Parameters
-    ----------
-    db          – active async session (caller commits)
-    agent_id    – the agent owning these tasks
-    todo_items  – parsed TODO list from the LLM output
-    todo_task_map – existing mapping {todo_id_str: task_uuid_str} from cycle_state
-
-    Returns
-    -------
-    Updated todo_task_map dict.
-    """
-    from app.models.task import Task
-
-    mapping = dict(todo_task_map or {})
-
-    for item in todo_items:
-        todo_id = str(item.get("id", ""))
-        title = (item.get("task") or item.get("title") or f"Task {todo_id}")[:500]
-        status = _TODO_STATUS_TO_TASK.get(item.get("status", "pending"), "pending")
-
-        existing_task_id = mapping.get(todo_id)
-
-        if existing_task_id:
-            # Update existing Task
-            result = await db.execute(
-                select(Task).where(Task.id == uuid.UUID(existing_task_id))
-            )
-            task = result.scalar_one_or_none()
-            if task:
-                if task.title != title:
-                    task.title = title
-                if task.status != status:
-                    task.status = status
-                    if status == "completed" and not task.completed_at:
-                        task.completed_at = datetime.now(timezone.utc)
-                    elif status == "running" and not task.started_at:
-                        task.started_at = datetime.now(timezone.utc)
-            else:
-                # Task was deleted — re-create
-                new_task = Task(
-                    agent_id=agent_id,
-                    title=title,
-                    description="Auto-created from agent TODO list",
-                    type="one_time",
-                    status=status,
-                    priority="normal",
-                )
-                db.add(new_task)
-                await db.flush()
-                mapping[todo_id] = str(new_task.id)
-        else:
-            # Create new Task
-            new_task = Task(
-                agent_id=agent_id,
-                title=title,
-                description="Auto-created from agent TODO list",
-                type="one_time",
-                status=status,
-                priority="normal",
-            )
-            if status == "running":
-                new_task.started_at = datetime.now(timezone.utc)
-            elif status == "completed":
-                new_task.started_at = datetime.now(timezone.utc)
-                new_task.completed_at = datetime.now(timezone.utc)
-            db.add(new_task)
-            await db.flush()
-            mapping[todo_id] = str(new_task.id)
-
-    await db.flush()
-    return mapping
+# (sync_todos_to_tasks moved to todo_sync_service.py)
 
 
 async def start_autonomous_run(
@@ -184,102 +98,92 @@ async def start_autonomous_run(
     max_cycles: int | None = None,
     loop_protocol_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
-) -> AutonomousRun:
-    """
-    Create an autonomous run record and launch the background loop.
+) -> MongoAutonomousRun:
+    """Create an autonomous run record and launch the background loop."""
+    db = get_mongodb()
+    agent_svc = AgentService(db)
+    agent_model_svc = AgentModelService(db)
+    proto_svc = ThinkingProtocolService(db)
+    ap_svc = AgentProtocolService(db)
 
-    Returns the AutonomousRun immediately; actual work happens in background.
-    """
-    async with async_session() as db:
-        # Verify agent exists (load relations for model/protocol access)
-        result = await db.execute(
-            select(Agent).where(Agent.id == agent_id)
-            .options(
-                selectinload(Agent.agent_models),
-                selectinload(Agent.agent_protocols).selectinload(AgentProtocol.protocol),
-            )
-        )
-        agent = result.scalar_one_or_none()
-        if not agent:
-            raise ValueError("Agent not found")
+    agent_id_str = str(agent_id)
+    agent = await agent_svc.get_by_id(agent_id_str)
+    if not agent:
+        raise ValueError("Agent not found")
 
-        # Resolve loop protocol
-        protocol_id = loop_protocol_id
-        if not protocol_id:
-            # Try to find a loop protocol assigned to this agent
-            for ap in (agent.agent_protocols or []):
-                if ap.protocol and ap.protocol.type == "loop":
-                    protocol_id = ap.protocol.id
-                    break
+    # Resolve loop protocol
+    protocol_id = str(loop_protocol_id) if loop_protocol_id else None
+    if not protocol_id:
+        agent_protos = await ap_svc.get_by_agent(agent_id_str)
+        for ap in agent_protos:
+            p = await proto_svc.get_by_id(ap.protocol_id)
+            if p and p.type == "loop":
+                protocol_id = str(p.id)
+                break
 
-        if not protocol_id:
-            raise ValueError("No loop protocol found. Assign a loop protocol to the agent first.")
+    if not protocol_id:
+        raise ValueError("No loop protocol found. Assign a loop protocol to the agent first.")
 
-        # Verify protocol exists and is type=loop
-        result = await db.execute(select(ThinkingProtocol).where(ThinkingProtocol.id == protocol_id))
-        protocol = result.scalar_one_or_none()
-        if not protocol:
-            raise ValueError("Loop protocol not found")
-        if protocol.type != "loop":
-            raise ValueError(f"Protocol '{protocol.name}' is type '{protocol.type}', expected 'loop'")
+    protocol = await proto_svc.get_by_id(protocol_id)
+    if not protocol:
+        raise ValueError("Loop protocol not found")
+    if protocol.type != "loop":
+        raise ValueError(f"Protocol '{protocol.name}' is type '{protocol.type}', expected 'loop'")
 
-        # Create chat session for autonomous work
-        model_ids = []
-        if agent.agent_models:
-            model_ids = [str(am.model_config_id) for am in sorted(agent.agent_models, key=lambda x: x.priority)]
-        elif agent.model_id:
-            model_ids = [str(agent.model_id)]
+    # Resolve models
+    model_ids = []
+    agent_models = await agent_model_svc.get_by_agent(agent_id_str)
+    if agent_models:
+        model_ids = [str(am.model_config_id) for am in sorted(agent_models, key=lambda x: x.priority)]
+    elif agent.model_id:
+        model_ids = [str(agent.model_id)]
 
-        # Validate and remap stale model_ids
-        if model_ids:
-            from app.api.chat import _validate_and_remap_model_ids
-            model_ids = await _validate_and_remap_model_ids(model_ids, db)
+    if model_ids:
+        from app.api.chat import _validate_and_remap_model_ids
+        model_ids = await _validate_and_remap_model_ids(model_ids, db)
 
-        # Fallback to base role model
-        if not model_ids:
-            from app.services.model_role_service import resolve_model_for_role
-            base_model = await resolve_model_for_role(db, "base")
-            if base_model:
-                model_ids = [str(base_model.id)]
+    if not model_ids:
+        from app.services.model_role_service import resolve_model_for_role
+        base_model = await resolve_model_for_role(db, "base")
+        if base_model:
+            model_ids = [str(base_model.id)]
 
-        if not model_ids:
-            raise ValueError("Agent has no models configured and no base model available")
+    if not model_ids:
+        raise ValueError("Agent has no models configured and no base model available")
 
-        chat_session = ChatSession(
-            title=f"🔄 Autonomous: {agent.name} — {protocol.name}",
-            model_ids=model_ids,
-            agent_id=agent_id,
-            user_id=user_id,
-            multi_model=False,
-            system_prompt="",
-            temperature=agent.temperature,
-        )
-        db.add(chat_session)
-        await db.flush()
+    # Create chat session
+    sess_svc = ChatSessionService(db)
+    chat_session = MongoChatSession(
+        title=f"🔄 Autonomous: {agent.name} — {protocol.name}",
+        model_ids=model_ids,
+        agent_id=agent_id_str,
+        user_id=str(user_id) if user_id else None,
+        multi_model=False,
+        system_prompt="",
+        temperature=agent.temperature,
+    )
+    chat_session = await sess_svc.create(chat_session)
 
-        # Create autonomous run record
-        run = AutonomousRun(
-            agent_id=agent_id,
-            session_id=chat_session.id,
-            mode=mode,
-            max_cycles=max_cycles if mode == "cycles" else None,
-            loop_protocol_id=protocol_id,
-            status="running",
-            started_at=datetime.now(timezone.utc),
-        )
-        db.add(run)
-        await db.flush()
-        await db.refresh(run)
+    # Create autonomous run
+    run_svc = AutonomousRunService(db)
+    run = MongoAutonomousRun(
+        agent_id=agent_id_str,
+        session_id=chat_session.id,
+        mode=mode,
+        max_cycles=max_cycles if mode == "cycles" else None,
+        loop_protocol_id=protocol_id,
+        status="running",
+        started_at=datetime.now(timezone.utc),
+    )
+    run = await run_svc.create(run)
 
-        # Update agent status
-        agent.status = "running"
-        agent.last_run_at = datetime.now(timezone.utc)
-        await db.flush()
+    # Update agent status
+    await agent_svc.update(agent_id_str, {
+        "status": "running",
+        "last_run_at": datetime.now(timezone.utc).isoformat(),
+    })
 
-        run_id = str(run.id)
-        agent_id_str = str(agent_id)
-
-        await db.commit()
+    run_id = str(run.id)
 
     # Launch background task
     task = asyncio.create_task(
@@ -290,60 +194,47 @@ async def start_autonomous_run(
 
     await syslog_bg("info", f"Autonomous run started: {run_id} (mode={mode}, max_cycles={max_cycles})",
                      source="autonomous", metadata={"run_id": run_id, "agent_id": agent_id_str})
-    await agent_log_bg(agent_id, "info", f"Autonomous run started (mode={mode}, max_cycles={max_cycles})",
+    await agent_log_bg(agent_id_str, "info", f"Autonomous run started (mode={mode}, max_cycles={max_cycles})",
                        metadata={"run_id": run_id, "mode": mode})
 
-    # Return fresh run from new session
-    async with async_session() as db:
-        result = await db.execute(select(AutonomousRun).where(AutonomousRun.id == uuid.UUID(run_id)))
-        return result.scalar_one()
+    return run
 
 
-async def stop_autonomous_run(run_id: str) -> AutonomousRun:
+async def stop_autonomous_run(run_id: str) -> MongoAutonomousRun:
     """Stop an active autonomous run."""
     task = active_runs.get(run_id)
     if task and not task.done():
         task.cancel()
 
-    async with async_session() as db:
-        result = await db.execute(
-            select(AutonomousRun)
-            .where(AutonomousRun.id == uuid.UUID(run_id))
-            .with_for_update()
-        )
-        run = result.scalar_one_or_none()
-        if not run:
-            raise ValueError("Autonomous run not found")
+    db = get_mongodb()
+    run_svc = AutonomousRunService(db)
+    agent_svc = AgentService(db)
 
-        if run.status == "running":
-            run.status = "stopped"
-            run.completed_at = datetime.now(timezone.utc)
-            # Reset agent status
-            result2 = await db.execute(
-                select(Agent)
-                .where(Agent.id == run.agent_id)
-                .with_for_update()
-            )
-            agent = result2.scalar_one_or_none()
-            if agent:
-                agent.status = "idle"
-            await db.commit()
+    run = await run_svc.get_by_id(run_id)
+    if not run:
+        raise ValueError("Autonomous run not found")
 
-        active_runs.pop(run_id, None)
-        await db.refresh(run)
-        return run
+    if run.status == "running":
+        await run_svc.update(run_id, {
+            "status": "stopped",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        })
+        agent = await agent_svc.get_by_id(run.agent_id)
+        if agent:
+            await agent_svc.update(agent.id, {"status": "idle"})
+
+    active_runs.pop(run_id, None)
+    return await run_svc.get_by_id(run_id)
 
 
-async def get_active_run_for_agent(agent_id: uuid.UUID) -> AutonomousRun | None:
+async def get_active_run_for_agent(agent_id: uuid.UUID) -> MongoAutonomousRun | None:
     """Get the currently running autonomous run for an agent, if any."""
-    async with async_session() as db:
-        result = await db.execute(
-            select(AutonomousRun).where(
-                AutonomousRun.agent_id == agent_id,
-                AutonomousRun.status == "running",
-            ).order_by(AutonomousRun.created_at.desc()).limit(1)
-        )
-        return result.scalar_one_or_none()
+    db = get_mongodb()
+    run_svc = AutonomousRunService(db)
+    return await run_svc.find_one({
+        "agent_id": str(agent_id),
+        "status": "running",
+    })
 
 
 # ── The main loop ──────────────────────────────────────────
@@ -354,85 +245,75 @@ async def _run_autonomous_loop(run_id: str, agent_id_str: str):
 
     try:
         while True:
-            # Open a fresh DB session per cycle
-            async with async_session() as db:
-                # Load run
-                result = await db.execute(
-                    select(AutonomousRun)
-                    .where(AutonomousRun.id == uuid.UUID(run_id))
-                )
-                run = result.scalar_one_or_none()
-                if not run or run.status != "running":
-                    break
+            db = get_mongodb()
+            run_svc = AutonomousRunService(db)
+            agent_svc = AgentService(db)
 
-                # Load agent with relationships eagerly loaded
-                result = await db.execute(
-                    select(Agent).where(Agent.id == run.agent_id)
-                    .options(
-                        selectinload(Agent.agent_models),
-                        selectinload(Agent.agent_protocols).selectinload(AgentProtocol.protocol),
-                    )
-                )
-                agent = result.scalar_one_or_none()
-                if not agent or agent.status not in ("running",):
-                    run.status = "stopped"
-                    run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
-                    break
+            run = await run_svc.get_by_id(run_id)
+            if not run or run.status != "running":
+                break
 
-                # Check max cycles
-                if run.mode == "cycles" and run.max_cycles and run.completed_cycles >= run.max_cycles:
-                    run.status = "completed"
-                    run.completed_at = datetime.now(timezone.utc)
-                    agent.status = "idle"
-                    await db.commit()
-                    break
+            agent = await agent_svc.get_by_id(run.agent_id)
+            if not agent or agent.status not in ("running",):
+                await run_svc.update(run_id, {
+                    "status": "stopped",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                break
 
-                # Execute one cycle
+            # Check max cycles
+            if run.mode == "cycles" and run.max_cycles and run.completed_cycles >= run.max_cycles:
+                await run_svc.update(run_id, {
+                    "status": "completed",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                await agent_svc.update(agent.id, {"status": "idle"})
+                break
+
+            # Execute one cycle
+            try:
+                should_stop = await _execute_cycle(db, run, agent)
+                if should_stop:
+                    break
+            except asyncio.CancelledError:
+                await run_svc.update(run_id, {
+                    "status": "stopped",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                await agent_svc.update(agent.id, {"status": "idle"})
+                raise
+            except Exception as e:
+                import traceback
+                error_tb = traceback.format_exc()
+                print(f"[AUTONOMOUS ERROR] Cycle error for run {run_id}: {e}\n{error_tb}")
+                await run_svc.update(run_id, {
+                    "status": "error",
+                    "error_message": f"{e}\n{error_tb}"[:2000],
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                await agent_svc.update(agent.id, {"status": "error"})
+
                 try:
-                    should_stop = await _execute_cycle(db, run, agent)
-                    await db.commit()
+                    from app.api.chat import create_agent_error
+                    await create_agent_error(
+                        db, agent.id,
+                        error_type="unknown",
+                        message=f"Autonomous cycle {run.completed_cycles + 1} failed: {e}",
+                        source="autonomous",
+                        context={"run_id": run_id, "cycle": run.completed_cycles + 1, "traceback": error_tb[:1000]},
+                    )
+                except Exception:
+                    pass
 
-                    if should_stop:
-                        break
-                except asyncio.CancelledError:
-                    # Graceful cancel
-                    run.status = "stopped"
-                    run.completed_at = datetime.now(timezone.utc)
-                    agent.status = "idle"
-                    await db.commit()
-                    raise
-                except Exception as e:
-                    import traceback
-                    error_tb = traceback.format_exc()
-                    print(f"[AUTONOMOUS ERROR] Cycle error for run {run_id}: {e}\n{error_tb}")
-                    run.status = "error"
-                    run.error_message = f"{e}\n{error_tb}"[:2000]
-                    run.completed_at = datetime.now(timezone.utc)
-                    agent.status = "error"
+                await syslog_bg("error", f"Autonomous cycle error: {e}\n{error_tb}",
+                                source="autonomous",
+                                metadata={"run_id": run_id, "cycle": run.completed_cycles})
+                await agent_log_bg(agent_id_str, "error",
+                                   f"Autonomous cycle {run.completed_cycles + 1} failed: {e}",
+                                   metadata={"run_id": run_id})
+                break
 
-                    # Log AgentError for unexpected cycle failures
-                    try:
-                        from app.api.chat import create_agent_error
-                        await create_agent_error(
-                            db, agent.id,
-                            error_type="unknown",
-                            message=f"Autonomous cycle {run.completed_cycles + 1} failed: {e}",
-                            source="autonomous",
-                            context={"run_id": run_id, "cycle": run.completed_cycles + 1, "traceback": error_tb[:1000]},
-                        )
-                    except Exception:
-                        pass
-
-                    await db.commit()
-                    await syslog_bg("error", f"Autonomous cycle error: {e}\n{error_tb}",
-                                    source="autonomous",
-                                    metadata={"run_id": run_id, "cycle": run.completed_cycles})
-                    await agent_log_bg(agent_id_str, "error", f"Autonomous cycle {run.completed_cycles + 1} failed: {e}",
-                                       metadata={"run_id": run_id})
-                    break
-
-            # Brief pause between cycles (avoid tight loops)
+            # Brief pause between cycles
             await asyncio.sleep(2)
 
     except asyncio.CancelledError:
@@ -447,18 +328,18 @@ async def _run_autonomous_loop(run_id: str, agent_id_str: str):
 
         # Ensure agent is set to idle if run completes
         try:
-            async with async_session() as db:
-                result = await db.execute(select(AutonomousRun).where(AutonomousRun.id == uuid.UUID(run_id)))
-                run = result.scalar_one_or_none()
-                if run and run.status == "running":
-                    run.status = "completed"
-                    run.completed_at = datetime.now(timezone.utc)
-
-                result = await db.execute(select(Agent).where(Agent.id == uuid.UUID(agent_id_str)))
-                agent = result.scalar_one_or_none()
-                if agent and agent.status == "running":
-                    agent.status = "idle"
-                await db.commit()
+            db = get_mongodb()
+            run_svc = AutonomousRunService(db)
+            agent_svc = AgentService(db)
+            run = await run_svc.get_by_id(run_id)
+            if run and run.status == "running":
+                await run_svc.update(run_id, {
+                    "status": "completed",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                })
+            agent = await agent_svc.get_by_id(agent_id_str)
+            if agent and agent.status == "running":
+                await agent_svc.update(agent.id, {"status": "idle"})
         except Exception:
             pass
 
@@ -468,7 +349,7 @@ async def _run_autonomous_loop(run_id: str, agent_id_str: str):
                            metadata={"run_id": run_id})
 
 
-async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> bool:
+async def _execute_cycle(db, run: MongoAutonomousRun, agent) -> bool:
     """
     Execute a single autonomous cycle.
 
@@ -477,6 +358,12 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
     settings = get_settings()
     cycle_num = run.completed_cycles + 1
     cycle_start = time.monotonic()
+
+    run_svc = AutonomousRunService(db)
+    agent_svc = AgentService(db)
+    agent_model_svc = AgentModelService(db)
+    msg_svc = ChatMessageService(db)
+    task_svc = TaskService(db)
 
     # ── Thinking tracker ──
     tracker = ThinkingTracker(
@@ -520,8 +407,8 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         from app.api.agent_beliefs import read_beliefs
         from app.api.agent_aspirations import read_aspirations
 
-        agent_protocols = await _load_agent_protocols(agent, db)
-        agent_skills = await _load_agent_skills(agent.id, db, agent=agent)
+        agent_protocols = await _load_agent_protocols(str(agent.id), db)
+        agent_skills = await _load_agent_skills(str(agent.id), db, agent=agent)
         agent_beliefs = read_beliefs(agent.name)
         agent_aspirations = read_aspirations(agent.name)
 
@@ -529,39 +416,38 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         assigned_projects = _load_assigned_projects(str(agent.id))
 
         # Load agent's persistent tasks from DB and populate cycle_state.todo_list
-        from app.models.task import Task as TaskModel
-        task_result = await db.execute(
-            select(TaskModel)
-            .where(TaskModel.agent_id == agent.id,
-                   TaskModel.status.in_(["pending", "running"]))
-            .order_by(TaskModel.created_at)
+        agent_db_tasks = await task_svc.get_all(
+            filter={"agent_id": str(agent.id), "status": {"$in": ["pending", "running"]}},
+            limit=500,
         )
-        agent_db_tasks = task_result.scalars().all()
-        if agent_db_tasks and not (run.cycle_state or {}).get("todo_list"):
-            # Seed the cycle todo_list from DB tasks
-            run.cycle_state = run.cycle_state or {}
+        # Sort by created_at
+        agent_db_tasks.sort(key=lambda t: t.created_at or "")
+        cycle_state = run.cycle_state or {}
+        if agent_db_tasks and not cycle_state.get("todo_list"):
             seeded_todo = []
-            seeded_map = run.cycle_state.get("todo_task_map", {})
+            seeded_map = cycle_state.get("todo_task_map", {})
             for idx, t in enumerate(agent_db_tasks, 1):
                 todo_status = _TASK_STATUS_TO_TODO.get(t.status, "pending")
                 seeded_todo.append({"id": idx, "task": t.title, "status": todo_status})
                 seeded_map[str(idx)] = str(t.id)
-            run.cycle_state["todo_list"] = seeded_todo
-            run.cycle_state["todo_task_map"] = seeded_map
+            cycle_state["todo_list"] = seeded_todo
+            cycle_state["todo_task_map"] = seeded_map
+            await run_svc.update(run.id, {"cycle_state": cycle_state})
 
         # ── Enrich thinking log title with current task ──
-        _todo_list = (run.cycle_state or {}).get("todo_list", [])
+        _todo_list = cycle_state.get("todo_list", [])
         if _todo_list:
             _in_prog = [t for t in _todo_list if t.get("status") == "in_progress"]
             _chosen = _in_prog[0] if _in_prog else next((t for t in _todo_list if t.get("status") == "pending"), None)
             if _chosen and _chosen.get("task") and tracker.log:
                 _task_label = _chosen["task"][:80]
                 tracker.log.user_input = f"[Autonomous cycle {cycle_num}] {_task_label}"
-                await db.flush()
+                from app.services.thinking_log_service import ThinkingLogService
+                await ThinkingLogService(db).update(tracker.log.id, {"user_input": tracker.log.user_input})
 
         # Load the loop protocol
-        result = await db.execute(select(ThinkingProtocol).where(ThinkingProtocol.id == run.loop_protocol_id))
-        loop_protocol = result.scalar_one_or_none()
+        proto_svc = ThinkingProtocolService(db)
+        loop_protocol = await proto_svc.get_by_id(run.loop_protocol_id) if run.loop_protocol_id else None
         protocol_dict = {
             "id": str(loop_protocol.id),
             "name": loop_protocol.name,
@@ -616,16 +502,9 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         history = [{"role": "system", "content": system_prompt}]
 
         # Load recent messages from the session (last N messages for context)
-        from sqlalchemy.orm import selectinload
-        result = await db.execute(
-            select(ChatSession)
-            .options(selectinload(ChatSession.messages))
-            .where(ChatSession.id == run.session_id)
-        )
-        session = result.scalar_one_or_none()
-        if session and session.messages:
-            # Keep last 10 messages for context
-            recent = sorted(session.messages, key=lambda m: m.created_at)[-10:]
+        session_messages = await msg_svc.get_by_session(run.session_id)
+        if session_messages:
+            recent = sorted(session_messages, key=lambda m: m.created_at or "")[-10:]
             for msg in recent:
                 if msg.role != "system":
                     history.append({"role": msg.role, "content": msg.content})
@@ -684,8 +563,9 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         tracker.start_step_timer()
 
         model_ids = []
-        if agent.agent_models:
-            model_ids = [str(am.model_config_id) for am in sorted(agent.agent_models, key=lambda x: x.priority)]
+        agent_models = await agent_model_svc.get_by_agent(str(agent.id))
+        if agent_models:
+            model_ids = [str(am.model_config_id) for am in sorted(agent_models, key=lambda x: x.priority)]
         elif agent.model_id:
             model_ids = [str(agent.model_id)]
 
@@ -894,15 +774,14 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
         tracker.start_step_timer()
 
         # Save messages to chat session
-        user_msg = ChatMessage(
+        user_msg = MongoChatMessage(
             session_id=run.session_id,
             role="user",
             content=cycle_prompt,
         )
-        db.add(user_msg)
-        await db.flush()
+        user_msg = await msg_svc.create(user_msg)
 
-        assistant_msg = ChatMessage(
+        assistant_msg = MongoChatMessage(
             session_id=run.session_id,
             role="assistant",
             content=llm_content,
@@ -910,8 +789,7 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
             total_tokens=total_tokens,
             duration_ms=int((time.monotonic() - cycle_start) * 1000),
         )
-        db.add(assistant_msg)
-        await db.flush()
+        assistant_msg = await msg_svc.create(assistant_msg)
 
         # Update cycle state
         effective_todo = new_todo or cycle_state.get("todo_list")
@@ -922,22 +800,24 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
             "todo_task_map": cycle_state.get("todo_task_map", {}),
         }
 
-        # ── Sync TODO items → persistent Tasks table ──
+        # ── Sync TODO items → persistent Tasks collection ──
         if effective_todo:
             try:
                 updated_map = await sync_todos_to_tasks(
-                    db, agent.id, effective_todo,
+                    db, str(agent.id), effective_todo,
                     todo_task_map=new_cycle_state.get("todo_task_map"),
                 )
                 new_cycle_state["todo_task_map"] = updated_map
             except Exception as e:
                 print(f"[AUTONOMOUS] Warning: failed to sync todos to tasks: {e}")
 
-        run.cycle_state = new_cycle_state
-        run.completed_cycles = cycle_num
-        run.total_tokens = (run.total_tokens or 0) + total_tokens
-        run.total_llm_calls = (run.total_llm_calls or 0) + llm_calls
-        run.total_duration_ms = int((time.monotonic() - cycle_start) * 1000) + (run.total_duration_ms or 0)
+        await run_svc.update(run.id, {
+            "cycle_state": new_cycle_state,
+            "completed_cycles": cycle_num,
+            "total_tokens": (run.total_tokens or 0) + total_tokens,
+            "total_llm_calls": (run.total_llm_calls or 0) + llm_calls,
+            "total_duration_ms": int((time.monotonic() - cycle_start) * 1000) + (run.total_duration_ms or 0),
+        })
 
         await tracker.step(
             "state_update", "Update autonomous run state",
@@ -969,19 +849,23 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
 
         # Check stop conditions
         if stop_reason is not None:
-            run.status = "completed"
-            run.completed_at = datetime.now(timezone.utc)
-            run.error_message = f"Agent stopped: {stop_reason}" if stop_reason else None
-            agent.status = "idle"
+            await run_svc.update(run.id, {
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "error_message": f"Agent stopped: {stop_reason}" if stop_reason else None,
+            })
+            await agent_svc.update(agent.id, {"status": "idle"})
             await syslog_bg("info", f"Autonomous run self-stopped: {stop_reason}",
                             source="autonomous",
                             metadata={"run_id": str(run.id), "cycle": cycle_num, "reason": stop_reason})
             return True
 
         if run.mode == "cycles" and run.max_cycles and cycle_num >= run.max_cycles:
-            run.status = "completed"
-            run.completed_at = datetime.now(timezone.utc)
-            agent.status = "idle"
+            await run_svc.update(run.id, {
+                "status": "completed",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            await agent_svc.update(agent.id, {"status": "idle"})
             return True
 
         return False

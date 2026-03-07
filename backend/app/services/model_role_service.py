@@ -7,17 +7,15 @@ Fallback chain:
 3. First available local Ollama model
 4. First available API model (any provider)
 """
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from app.models.model_role import ModelRoleAssignment
-from app.models.model_config import ModelConfig
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.mongodb.services import ModelConfigService, ModelRoleAssignmentService
 from app.config import get_settings
 from app.services.log_service import syslog
 
 
-async def resolve_model_for_role(db: AsyncSession, role: str) -> ModelConfig | None:
+async def resolve_model_for_role(db: AsyncIOMotorDatabase, role: str):
     """
-    Resolve a ModelConfig for the given role using the fallback chain:
+    Resolve a ModelConfig (MongoModelConfig) for the given role using the fallback chain:
     1. Exact role assignment
     2. Base model
     3. First active local Ollama model
@@ -32,55 +30,46 @@ async def resolve_model_for_role(db: AsyncSession, role: str) -> ModelConfig | N
     if role != "base":
         base_model = await _get_model_by_role(db, "base")
         if base_model and base_model.is_active:
-            await syslog(db, "info",
+            await syslog("info",
                          f"Role '{role}' not assigned, falling back to base model: {base_model.name}",
                          source="model_resolver")
             return base_model
 
     # 3. Try first active local Ollama model
-    result = await db.execute(
-        select(ModelConfig)
-        .where(ModelConfig.provider == "ollama", ModelConfig.is_active == True)
-        .order_by(ModelConfig.created_at)
-        .limit(1)
-    )
-    ollama_model = result.scalar_one_or_none()
-    if ollama_model:
-        await syslog(db, "info",
+    svc = ModelConfigService(db)
+    all_models = await svc.get_all(filter={"provider": "ollama", "is_active": True}, limit=1)
+    if all_models:
+        ollama_model = all_models[0]
+        await syslog("info",
                      f"No base model, falling back to local Ollama: {ollama_model.name}",
                      source="model_resolver")
         return ollama_model
 
     # 4. Try first available API model
-    result = await db.execute(
-        select(ModelConfig)
-        .where(ModelConfig.provider != "ollama", ModelConfig.is_active == True)
-        .order_by(ModelConfig.created_at)
-        .limit(1)
-    )
-    api_model = result.scalar_one_or_none()
+    all_api = await svc.get_all(filter={"is_active": True}, limit=100)
+    api_model = next((m for m in all_api if m.provider != "ollama"), None)
     if api_model:
-        await syslog(db, "info",
+        await syslog("info",
                      f"No local model, falling back to API model: {api_model.name}",
                      source="model_resolver")
         return api_model
 
-    await syslog(db, "warning", f"No model found for role '{role}' — all fallbacks exhausted",
+    await syslog("warning", f"No model found for role '{role}' — all fallbacks exhausted",
                  source="model_resolver")
     return None
 
 
-async def _get_model_by_role(db: AsyncSession, role: str) -> ModelConfig | None:
+async def _get_model_by_role(db: AsyncIOMotorDatabase, role: str):
     """Get the ModelConfig assigned to a role."""
-    result = await db.execute(
-        select(ModelConfig)
-        .join(ModelRoleAssignment, ModelRoleAssignment.model_config_id == ModelConfig.id)
-        .where(ModelRoleAssignment.role == role)
-    )
-    return result.scalar_one_or_none()
+    mra_svc = ModelRoleAssignmentService(db)
+    assignment = await mra_svc.find_one({"role": role})
+    if not assignment:
+        return None
+    return await ModelConfigService(db).get_by_id(assignment.model_config_id)
 
 
-async def get_all_role_assignments(db: AsyncSession) -> dict[str, str]:
+async def get_all_role_assignments(db: AsyncIOMotorDatabase) -> dict[str, str]:
     """Return dict of {role: model_config_id} for all assignments."""
-    result = await db.execute(select(ModelRoleAssignment))
-    return {a.role: str(a.model_config_id) for a in result.scalars().all()}
+    mra_svc = ModelRoleAssignmentService(db)
+    all_assignments = await mra_svc.get_all(limit=100)
+    return {a.role: a.model_config_id for a in all_assignments}

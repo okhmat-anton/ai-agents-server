@@ -1,6 +1,6 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.models.skill import Skill
-from sqlalchemy import select
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.mongodb.models import MongoSkill
+from app.mongodb.services import SkillService
 from app.api.skill_files import init_skill_directory
 
 
@@ -588,14 +588,15 @@ SYSTEM_SKILLS = [
 ]
 
 
-async def create_system_skills(db: AsyncSession):
+async def create_system_skills(db: AsyncIOMotorDatabase):
     """Create system skills if not exists."""
+    svc = SkillService(db)
     for skill_data in SYSTEM_SKILLS:
-        result = await db.execute(select(Skill).where(Skill.name == skill_data["name"]))
-        if result.scalar_one_or_none():
+        existing = await svc.find_one({"name": skill_data["name"]})
+        if existing:
             continue
 
-        skill = Skill(
+        skill = MongoSkill(
             name=skill_data["name"],
             display_name=skill_data["display_name"],
             description=skill_data["description"],
@@ -606,11 +607,7 @@ async def create_system_skills(db: AsyncSession):
             is_system=True,
             is_shared=True,
         )
-        db.add(skill)
-        await db.flush()
-        await db.refresh(skill)
+        skill = await svc.create(skill)
 
         # Create filesystem directory + manifest
         init_skill_directory(skill)
-
-    await db.commit()

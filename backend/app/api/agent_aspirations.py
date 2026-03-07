@@ -30,14 +30,12 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.agent import Agent
+from app.mongodb.services import AgentService
 
 router = APIRouter(prefix="/api/agents", tags=["agent-aspirations"])
 settings = get_settings()
@@ -133,9 +131,8 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}_{_uuid.uuid4().hex[:8]}"
 
 
-async def _get_agent_or_404(agent_id, db: AsyncSession) -> Agent:
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+async def _get_agent_or_404(agent_id, db: AsyncIOMotorDatabase):
+    agent = await AgentService(db).get_by_id(str(agent_id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
@@ -169,8 +166,8 @@ def init_aspirations_file(agent_name: str):
 @router.get("/{agent_id}/aspirations")
 async def list_aspirations(
     agent_id: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get all aspirations for an agent."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -193,8 +190,8 @@ async def add_aspiration(
     agent_id: str,
     aspiration_type: str,
     body: AspirationCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Add a dream, desire, or goal."""
     if aspiration_type not in ASPIRATION_TYPES:
@@ -229,8 +226,8 @@ async def update_aspiration(
     aspiration_type: str,
     item_id: str,
     body: AspirationUpdate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Update a dream, desire, or goal."""
     if aspiration_type not in ASPIRATION_TYPES:
@@ -263,8 +260,8 @@ async def delete_aspiration(
     agent_id: str,
     aspiration_type: str,
     item_id: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Delete a dream, desire, or goal."""
     if aspiration_type not in ASPIRATION_TYPES:
@@ -288,8 +285,8 @@ async def delete_aspiration(
 async def reorder_aspirations(
     agent_id: str,
     body: dict,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Reorder items. Body: {"type": "dreams"|"desires"|"goals", "ids": ["id1", ...]}"""
     agent = await _get_agent_or_404(agent_id, db)

@@ -1,15 +1,17 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
-from app.database import get_db
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
 from app.core.security import hash_password, verify_password, generate_api_key, hash_api_key
-from app.models.user import User
-from app.models.model_config import ModelConfig
-from app.models.api_key import ApiKey
-from app.models.system_setting import SystemSetting
-from app.models.model_role import ModelRoleAssignment, MODEL_ROLES, MODEL_ROLE_LABELS
+from app.mongodb.models.user import MongoUser
+from app.mongodb.models.model_config import MongoModelConfig, MongoModelRoleAssignment
+from app.mongodb.models.api_key import MongoApiKey
+from app.mongodb.models.system_setting import MongoSystemSetting
+from app.mongodb.services import (
+    ModelConfigService, ApiKeyService, SystemSettingService, ModelRoleAssignmentService
+)
+from app.models.model_role import MODEL_ROLES, MODEL_ROLE_LABELS
 from app.schemas.auth import ChangePasswordRequest
 from app.schemas.settings import (
     ModelConfigCreate, ModelConfigUpdate, ModelConfigResponse,
@@ -26,47 +28,52 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 @router.put("/password", response_model=MessageResponse)
 async def change_password(
     body: ChangePasswordRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     if not verify_password(body.old_password, user.password_hash):
         raise HTTPException(status_code=400, detail="Invalid old password")
+    
+    from app.mongodb.services import UserService
+    user_service = UserService(db)
     user.password_hash = hash_password(body.new_password)
-    await db.flush()
+    await user_service.update(user.id, {"password_hash": user.password_hash})
     return MessageResponse(message="Password changed")
 
 
 # --- Models ---
 @router.get("/models", response_model=list[ModelConfigResponse])
 async def list_models(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(ModelConfig).order_by(ModelConfig.created_at.desc()))
-    return result.scalars().all()
+    model_service = ModelConfigService(db)
+    models = await model_service.get_all(skip=0, limit=1000)
+    # Sort by created_at desc
+    models.sort(key=lambda m: m.created_at, reverse=True)
+    return models
 
 
 @router.post("/models", response_model=ModelConfigResponse, status_code=201)
 async def create_model(
     body: ModelConfigCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    model = ModelConfig(**body.model_dump())
-    db.add(model)
-    await db.flush()
-    await db.refresh(model)
-    return model
+    model_service = ModelConfigService(db)
+    model = MongoModelConfig(**body.model_dump())
+    created = await model_service.create(model)
+    return created
 
 
 @router.get("/models/{model_id}", response_model=ModelConfigResponse)
 async def get_model(
     model_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(ModelConfig).where(ModelConfig.id == model_id))
-    model = result.scalar_one_or_none()
+    model_service = ModelConfigService(db)
+    model = await model_service.get_by_id(str(model_id))
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
     return model
@@ -76,42 +83,41 @@ async def get_model(
 async def update_model(
     model_id: UUID,
     body: ModelConfigUpdate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(ModelConfig).where(ModelConfig.id == model_id))
-    model = result.scalar_one_or_none()
+    model_service = ModelConfigService(db)
+    model = await model_service.get_by_id(str(model_id))
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    for key, value in body.model_dump(exclude_unset=True).items():
-        setattr(model, key, value)
-    await db.flush()
-    await db.refresh(model)
-    return model
+    
+    update_data = body.model_dump(exclude_unset=True)
+    updated = await model_service.update(str(model_id), update_data)
+    return updated
 
 
 @router.delete("/models/{model_id}", response_model=MessageResponse)
 async def delete_model(
     model_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(ModelConfig).where(ModelConfig.id == model_id))
-    model = result.scalar_one_or_none()
+    model_service = ModelConfigService(db)
+    model = await model_service.get_by_id(str(model_id))
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
-    await db.delete(model)
+    await model_service.delete(str(model_id))
     return MessageResponse(message="Model deleted")
 
 
 @router.post("/models/{model_id}/test", response_model=MessageResponse)
 async def test_model(
     model_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(ModelConfig).where(ModelConfig.id == model_id))
-    model = result.scalar_one_or_none()
+    model_service = ModelConfigService(db)
+    model = await model_service.get_by_id(str(model_id))
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
 
@@ -134,11 +140,11 @@ async def test_model(
 @router.get("/models/{model_id}/available")
 async def list_available_models(
     model_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(ModelConfig).where(ModelConfig.id == model_id))
-    model = result.scalar_one_or_none()
+    model_service = ModelConfigService(db)
+    model = await model_service.get_by_id(str(model_id))
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
 
@@ -159,7 +165,7 @@ async def list_available_models(
 # --- Model Roles ---
 @router.get("/model-roles/available")
 async def get_available_roles(
-    _user: User = Depends(get_current_user),
+    _user: MongoUser = Depends(get_current_user),
 ):
     """Return the list of all available roles with labels."""
     return [{"role": r, "label": MODEL_ROLE_LABELS.get(r, r)} for r in MODEL_ROLES]
@@ -167,14 +173,14 @@ async def get_available_roles(
 
 @router.get("/model-roles", response_model=RolesListResponse)
 async def get_model_roles(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Return all current role->model assignments."""
-    result = await db.execute(
-        select(ModelRoleAssignment).order_by(ModelRoleAssignment.role)
-    )
-    assignments = result.scalars().all()
+    role_service = ModelRoleAssignmentService(db)
+    assignments = await role_service.get_all(skip=0, limit=1000)
+    # Sort by role
+    assignments.sort(key=lambda a: a.role)
     return RolesListResponse(
         assignments=[RoleAssignmentResponse(
             role=a.role,
@@ -188,8 +194,8 @@ async def get_model_roles(
 @router.put("/model-roles", response_model=RolesListResponse)
 async def update_model_roles(
     body: RoleAssignmentUpdate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Bulk update role assignments. Expects {assignments: [{role, model_config_id}]}."""
     # Validate roles
@@ -197,19 +203,21 @@ async def update_model_roles(
         if a.role not in MODEL_ROLES:
             raise HTTPException(status_code=400, detail=f"Unknown role: {a.role}")
 
+    role_service = ModelRoleAssignmentService(db)
+    
     # Delete all existing assignments
-    await db.execute(delete(ModelRoleAssignment))
+    existing = await role_service.get_all(skip=0, limit=1000)
+    for assignment in existing:
+        await role_service.delete(assignment.id)
 
     # Insert new
     for a in body.assignments:
-        db.add(ModelRoleAssignment(role=a.role, model_config_id=a.model_config_id))
-    await db.flush()
+        new_assignment = MongoModelRoleAssignment(role=a.role, model_config_id=a.model_config_id)
+        await role_service.create(new_assignment)
 
     # Return updated list
-    result = await db.execute(
-        select(ModelRoleAssignment).order_by(ModelRoleAssignment.role)
-    )
-    assignments = result.scalars().all()
+    assignments = await role_service.get_all(skip=0, limit=1000)
+    assignments.sort(key=lambda a: a.role)
     return RolesListResponse(
         assignments=[RoleAssignmentResponse(
             role=a.role,
@@ -223,37 +231,40 @@ async def update_model_roles(
 # --- API Keys ---
 @router.get("/api-keys", response_model=list[ApiKeyResponse])
 async def list_api_keys(
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(ApiKey).where(ApiKey.user_id == user.id).order_by(ApiKey.created_at.desc()))
-    return result.scalars().all()
+    apikey_service = ApiKeyService(db)
+    all_keys = await apikey_service.get_all(skip=0, limit=1000)
+    # Filter by user_id and sort by created_at desc
+    user_keys = [k for k in all_keys if k.user_id == user.id]
+    user_keys.sort(key=lambda k: k.created_at, reverse=True)
+    return user_keys
 
 
 @router.post("/api-keys", response_model=ApiKeyCreatedResponse, status_code=201)
 async def create_api_key(
     body: ApiKeyCreate,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     raw_key = generate_api_key()
-    api_key = ApiKey(
+    apikey_service = ApiKeyService(db)
+    api_key = MongoApiKey(
         user_id=user.id,
         name=body.name,
         description=body.description,
         key_hash=hash_api_key(raw_key),
         key_prefix=raw_key[:8],
     )
-    db.add(api_key)
-    await db.flush()
-    await db.refresh(api_key)
+    created = await apikey_service.create(api_key)
     return ApiKeyCreatedResponse(
-        id=api_key.id,
-        name=api_key.name,
-        key_prefix=api_key.key_prefix,
-        description=api_key.description,
-        last_used_at=api_key.last_used_at,
-        created_at=api_key.created_at,
+        id=created.id,
+        name=created.name,
+        key_prefix=created.key_prefix,
+        description=created.description,
+        last_used_at=created.last_used_at,
+        created_at=created.created_at,
         key=raw_key,
     )
 
@@ -261,14 +272,14 @@ async def create_api_key(
 @router.delete("/api-keys/{key_id}", response_model=MessageResponse)
 async def delete_api_key(
     key_id: UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == user.id))
-    api_key = result.scalar_one_or_none()
-    if not api_key:
+    apikey_service = ApiKeyService(db)
+    api_key = await apikey_service.get_by_id(str(key_id))
+    if not api_key or api_key.user_id != user.id:
         raise HTTPException(status_code=404, detail="API key not found")
-    await db.delete(api_key)
+    await apikey_service.delete(str(key_id))
     return MessageResponse(message="API key deleted")
 
 
@@ -282,47 +293,49 @@ _DEFAULT_SETTINGS = {
 }
 
 
-async def _ensure_defaults(db: AsyncSession):
+async def _ensure_defaults(db: AsyncIOMotorDatabase):
     """Seed default system settings if missing."""
-    result = await db.execute(select(SystemSetting))
-    existing = {s.key for s in result.scalars().all()}
+    setting_service = SystemSettingService(db)
+    existing_settings = await setting_service.get_all(skip=0, limit=1000)
+    existing_keys = {s.key for s in existing_settings}
     for key, cfg in _DEFAULT_SETTINGS.items():
-        if key not in existing:
-            db.add(SystemSetting(key=key, value=cfg["value"], description=cfg.get("description")))
-    await db.flush()
+        if key not in existing_keys:
+            new_setting = MongoSystemSetting(key=key, value=cfg["value"], description=cfg.get("description"))
+            await setting_service.create(new_setting)
 
 
-async def get_setting_value(db: AsyncSession, key: str) -> str | None:
+async def get_setting_value(db: AsyncIOMotorDatabase, key: str) -> str | None:
     """Helper to read a single setting value."""
     await _ensure_defaults(db)
-    result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
-    setting = result.scalar_one_or_none()
+    setting_service = SystemSettingService(db)
+    setting = await setting_service.get_by_key(key)
     return setting.value if setting else None
 
 
 @router.get("/system", response_model=list[SystemSettingResponse])
 async def list_system_settings(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _ensure_defaults(db)
-    result = await db.execute(select(SystemSetting).order_by(SystemSetting.key))
-    return result.scalars().all()
+    setting_service = SystemSettingService(db)
+    settings = await setting_service.get_all(skip=0, limit=1000)
+    settings.sort(key=lambda s: s.key)
+    return settings
 
 
 @router.put("/system/{key}", response_model=SystemSettingResponse)
 async def update_system_setting(
     key: str,
     body: SystemSettingUpdate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     await _ensure_defaults(db)
-    result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
-    setting = result.scalar_one_or_none()
+    setting_service = SystemSettingService(db)
+    setting = await setting_service.get_by_key(key)
     if not setting:
         raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
-    setting.value = body.value
-    await db.flush()
-    await db.refresh(setting)
-    return setting
+    
+    updated = await setting_service.update(setting.id, {"value": body.value})
+    return updated

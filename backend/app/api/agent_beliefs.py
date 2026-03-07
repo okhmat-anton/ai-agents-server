@@ -24,14 +24,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.agent import Agent
+from app.mongodb.services import AgentService
 
 router = APIRouter(prefix="/api/agents", tags=["agent-beliefs"])
 settings = get_settings()
@@ -114,9 +112,8 @@ def _new_id(prefix: str = "b") -> str:
     return f"{prefix}_{_uuid.uuid4().hex[:8]}"
 
 
-async def _get_agent_or_404(agent_id, db: AsyncSession) -> Agent:
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+async def _get_agent_or_404(agent_id, db: AsyncIOMotorDatabase):
+    agent = await AgentService(db).get_by_id(str(agent_id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
@@ -146,8 +143,8 @@ def init_beliefs_file(agent_name: str):
 @router.get("/{agent_id}/beliefs")
 async def list_beliefs(
     agent_id: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get all beliefs (core + additional) for an agent."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -169,8 +166,8 @@ async def list_beliefs(
 async def add_core_belief(
     agent_id: str,
     body: BeliefCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Add a core belief. Only users can manage core beliefs."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -193,8 +190,8 @@ async def update_core_belief(
     agent_id: str,
     belief_id: str,
     body: BeliefUpdate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Update a core belief text or category."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -216,8 +213,8 @@ async def update_core_belief(
 async def delete_core_belief(
     agent_id: str,
     belief_id: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Delete a core belief."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -238,8 +235,8 @@ async def delete_core_belief(
 async def add_additional_belief(
     agent_id: str,
     body: BeliefCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Add an additional belief. Can be created by user or agent."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -264,8 +261,8 @@ async def update_additional_belief(
     agent_id: str,
     belief_id: str,
     body: BeliefUpdate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Update an additional belief."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -289,8 +286,8 @@ async def update_additional_belief(
 async def delete_additional_belief(
     agent_id: str,
     belief_id: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Delete an additional belief."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -311,8 +308,8 @@ async def delete_additional_belief(
 async def reorder_beliefs(
     agent_id: str,
     body: dict,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Reorder beliefs. Body: {"type": "core"|"additional", "ids": ["id1", "id2", ...]}"""
     agent = await _get_agent_or_404(agent_id, db)

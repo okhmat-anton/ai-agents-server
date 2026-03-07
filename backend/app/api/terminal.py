@@ -11,18 +11,17 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
 from app.api.settings import get_setting_value
 
 router = APIRouter(prefix="/api/terminal", tags=["terminal"])
 
 
 # ---------- Guard ----------
-async def _check_system_access(db: AsyncSession):
+async def _check_system_access(db: AsyncIOMotorDatabase):
     val = await get_setting_value(db, "system_access_enabled")
     if val != "true":
         raise HTTPException(
@@ -58,8 +57,8 @@ _sessions: dict[str, dict] = {}
 @router.post("/execute", response_model=ExecuteResponse)
 async def execute_command(
     body: ExecuteRequest,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Execute a shell command and return its output."""
     await _check_system_access(db)
@@ -121,8 +120,8 @@ async def execute_command(
 @router.post("/execute-stream")
 async def execute_command_stream(
     body: ExecuteRequest,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Execute a command and stream output via SSE."""
     await _check_system_access(db)
@@ -180,8 +179,8 @@ async def execute_command_stream(
 async def get_completions(
     text: str = Query(..., description="Partial command text"),
     cwd: str = Query(None),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get basic command completions (programs in PATH, files in cwd)."""
     await _check_system_access(db)
@@ -219,8 +218,8 @@ async def get_completions(
 @router.get("/history")
 async def get_shell_history(
     limit: int = Query(50, le=200),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Read recent shell history from the host."""
     await _check_system_access(db)

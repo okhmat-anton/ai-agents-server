@@ -7,24 +7,24 @@ import json
 import time
 import uuid
 from typing import Optional
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, delete, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database import get_db
+from app.database import get_mongodb
 from app.config import get_settings
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.model_config import ModelConfig
-from app.models.agent import Agent
-from app.models.agent_model import AgentModel
-from app.models.agent_protocol import AgentProtocol
-from app.models.skill import Skill, AgentSkill
-from app.models.chat import ChatSession, ChatMessage
+from app.mongodb.models import (
+    MongoChatSession, MongoChatMessage, MongoAgentError, MongoTask,
+)
+from app.mongodb.services import (
+    AgentService, AgentModelService, AgentProtocolService, AgentErrorService,
+    ModelConfigService, ChatSessionService, ChatMessageService,
+    SkillService, AgentSkillService, ThinkingProtocolService, TaskService,
+)
 from app.llm.base import Message, GenerationParams, LLMResponse
 from app.llm.ollama import OllamaProvider
 from app.llm.openai_compatible import OpenAICompatibleProvider
@@ -115,12 +115,23 @@ class AvailableModel(BaseModel):
 
 # ── Helpers ──────────────────────────────────────────────
 
-def _session_to_response(session: ChatSession, model_names: dict[str, str] = None) -> dict:
-    msgs = session.messages or []
+def _ts(val) -> str:
+    """Convert datetime or string to ISO string."""
+    if val is None:
+        return datetime.now(timezone.utc).isoformat()
+    if isinstance(val, str):
+        return val
+    return val.isoformat()
+
+
+def _session_to_response(session: MongoChatSession, messages: list = None,
+                         model_names: dict[str, str] = None) -> dict:
+    msgs = messages or []
     last_msg = None
     if msgs:
         last = msgs[-1]
-        last_msg = last.content[:100] if last.content else None
+        content = last.content if hasattr(last, "content") else last.get("content")
+        last_msg = content[:100] if content else None
     return {
         "id": str(session.id),
         "title": session.title,
@@ -137,24 +148,26 @@ def _session_to_response(session: ChatSession, model_names: dict[str, str] = Non
         "unread_count": session.unread_count,
         "protocol_state": session.protocol_state,
         "message_count": len(msgs),
-        "created_at": session.created_at.isoformat(),
-        "updated_at": session.updated_at.isoformat(),
+        "created_at": _ts(session.created_at),
+        "updated_at": _ts(session.updated_at),
         "last_message": last_msg,
     }
 
 
-async def _build_model_names(model_ids: list[str], db: AsyncSession) -> dict[str, str]:
+async def _build_model_names(model_ids: list[str], db: AsyncIOMotorDatabase) -> dict[str, str]:
     """Build a map of model_id -> display name for all model_ids in a session."""
     names = {}
     if not model_ids:
         return names
-    # Collect UUIDs to lookup
+    agent_svc = AgentService(db)
+    model_svc = ModelConfigService(db)
+
     uuids_to_lookup = []
     for mid in model_ids:
         if mid.startswith("agent:"):
             try:
-                aid = uuid.UUID(mid[6:])
-                agent = await db.get(Agent, aid)
+                aid = str(uuid.UUID(mid[6:]))
+                agent = await agent_svc.get_by_id(aid)
                 names[mid] = f"🤖 {agent.name}" if agent else mid
             except Exception:
                 names[mid] = mid
@@ -162,27 +175,25 @@ async def _build_model_names(model_ids: list[str], db: AsyncSession) -> dict[str
             names[mid] = mid[7:]
         else:
             try:
-                uuids_to_lookup.append(uuid.UUID(mid))
+                uuid.UUID(mid)
+                uuids_to_lookup.append(mid)
             except ValueError:
                 names[mid] = mid
 
-    if uuids_to_lookup:
-        result = await db.execute(
-            select(ModelConfig.id, ModelConfig.name, ModelConfig.model_id)
-            .where(ModelConfig.id.in_(uuids_to_lookup))
-        )
-        for row in result.all():
-            names[str(row[0])] = row[1] or row[2]
+    for uid in uuids_to_lookup:
+        mc = await model_svc.get_by_id(uid)
+        if mc:
+            names[uid] = mc.name or mc.model_id
+        else:
+            names[uid] = f"⚠ Unknown ({uid[:8]}…)"
 
-    # For any remaining unresolved IDs, mark as unknown
     for mid in model_ids:
         if mid not in names:
             names[mid] = f"⚠ Unknown ({mid[:8]}…)"
-
     return names
 
 
-def _message_to_response(msg: ChatMessage) -> dict:
+def _message_to_response(msg: MongoChatMessage) -> dict:
     return {
         "id": str(msg.id),
         "role": msg.role,
@@ -191,43 +202,32 @@ def _message_to_response(msg: ChatMessage) -> dict:
         "model_responses": msg.model_responses,
         "total_tokens": msg.total_tokens,
         "duration_ms": msg.duration_ms,
-        "metadata": msg.msg_metadata,
-        "created_at": msg.created_at.isoformat(),
+        "metadata": msg.metadata,
+        "created_at": _ts(msg.created_at),
     }
 
 
-async def _resolve_model(model_id_str: str, db: AsyncSession) -> tuple[str, str, str, str | None]:
-    """Resolve a model_id string to (provider, base_url, model_name, api_key).
-    model_id_str can be:
-      - UUID of a model_config
-      - 'ollama:model_name' for direct ollama model
-    Falls back to finding the same model by name if UUID is stale.
-    """
+async def _resolve_model(model_id_str: str, db: AsyncIOMotorDatabase) -> tuple[str, str, str, str | None]:
+    """Resolve a model_id string to (provider, base_url, model_name, api_key)."""
     if model_id_str.startswith("ollama:"):
         model_name = model_id_str[7:]
         settings = get_settings()
         return ("ollama", settings.OLLAMA_BASE_URL, model_name, None)
 
     try:
-        uid = uuid.UUID(model_id_str)
+        uid = str(uuid.UUID(model_id_str))
     except ValueError:
-        # Treat as ollama model name directly
         settings = get_settings()
         return ("ollama", settings.OLLAMA_BASE_URL, model_id_str, None)
 
-    result = await db.execute(select(ModelConfig).where(ModelConfig.id == uid))
-    mc = result.scalar_one_or_none()
+    model_svc = ModelConfigService(db)
+    mc = await model_svc.get_by_id(uid)
     if not mc:
-        # Model UUID not found — likely deleted and re-created after Ollama reload
-        # Try to find ANY active model as fallback
-        fallback = await db.execute(
-            select(ModelConfig).where(ModelConfig.is_active == True).limit(1)
-        )
-        mc = fallback.scalar_one_or_none()
+        all_models = await model_svc.get_all(filter={"is_active": True}, limit=1)
+        mc = all_models[0] if all_models else None
         if not mc:
             raise HTTPException(status_code=404, detail=f"Model config {model_id_str} not found and no active models available")
 
-    # For ollama models, always use current OLLAMA_BASE_URL (may differ between Docker / dev)
     if mc.provider == "ollama":
         settings = get_settings()
         return (mc.provider, settings.OLLAMA_BASE_URL, mc.model_id, mc.api_key)
@@ -235,43 +235,30 @@ async def _resolve_model(model_id_str: str, db: AsyncSession) -> tuple[str, str,
     return (mc.provider, mc.base_url, mc.model_id, mc.api_key)
 
 
-async def _remap_model_id(model_id_str: str, db: AsyncSession) -> str | None:
-    """Try to remap a stale model_id to a valid one.
-    Returns the valid model_id string, or None if no remap needed (already valid).
-    Returns a new UUID string if remapped, or None.
-    """
+async def _remap_model_id(model_id_str: str, db: AsyncIOMotorDatabase) -> str | None:
+    """Try to remap a stale model_id to a valid one."""
     if model_id_str.startswith("ollama:") or model_id_str.startswith("agent:"):
-        return None  # These don't need remapping
+        return None
 
     try:
-        uid = uuid.UUID(model_id_str)
+        uid = str(uuid.UUID(model_id_str))
     except ValueError:
         return None
 
-    # Check if UUID still exists
-    result = await db.execute(select(ModelConfig).where(ModelConfig.id == uid))
-    mc = result.scalar_one_or_none()
+    model_svc = ModelConfigService(db)
+    mc = await model_svc.get_by_id(uid)
     if mc:
-        return None  # Still valid, no remap needed
+        return None  # Still valid
 
-    # UUID is stale. Try to find a model with the same model_id (name)
-    # First, check if there's any history of what model this UUID was
-    # Since we don't have a log of old UUIDs, we'll search all active models
-    # and try to use any available one
-    fallback = await db.execute(
-        select(ModelConfig).where(ModelConfig.is_active == True).order_by(ModelConfig.name).limit(1)
-    )
-    fc = fallback.scalar_one_or_none()
-    if fc:
-        return str(fc.id)
+    all_active = await model_svc.get_all(filter={"is_active": True}, limit=1)
+    if all_active:
+        return str(all_active[0].id)
     return None
 
 
-async def _validate_and_remap_model_ids(model_ids: list[str], db: AsyncSession, session: ChatSession = None) -> list[str]:
-    """Validate model_ids and remap any stale UUIDs.
-    If session is provided, persists changes to DB.
-    Returns the validated list.
-    """
+async def _validate_and_remap_model_ids(model_ids: list[str], db: AsyncIOMotorDatabase,
+                                        session: MongoChatSession = None) -> list[str]:
+    """Validate model_ids and remap any stale UUIDs."""
     if not model_ids:
         return model_ids
 
@@ -297,8 +284,8 @@ async def _validate_and_remap_model_ids(model_ids: list[str], db: AsyncSession, 
             deduped.append(mid)
 
     if changed and session is not None:
+        await ChatSessionService(db).update(session.id, {"model_ids": deduped})
         session.model_ids = deduped
-        await db.flush()
 
     return deduped
 
@@ -324,14 +311,14 @@ async def _chat_with_model(
 
 @router.get("/available-models")
 async def get_available_models(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """List available models (running ollama + active API models) and all agents."""
     models = []
+    settings = get_settings()
 
     # 1. Get running ollama model names
-    settings = get_settings()
     running_ollama_names = set()
     try:
         async with httpx.AsyncClient(timeout=3) as client:
@@ -343,9 +330,10 @@ async def get_available_models(
         pass
 
     # 2. From model_configs: active non-ollama always, ollama only if running
-    result = await db.execute(select(ModelConfig).where(ModelConfig.is_active == True))
+    model_svc = ModelConfigService(db)
+    all_configs = await model_svc.get_all(filter={"is_active": True}, limit=500)
     registered_ollama_names = set()
-    for mc in result.scalars().all():
+    for mc in all_configs:
         if mc.provider == "ollama":
             registered_ollama_names.add(mc.model_id)
             if mc.model_id not in running_ollama_names:
@@ -369,9 +357,10 @@ async def get_available_models(
                 "type": "model",
             })
 
-    # 4. All agents (regardless of status)
-    result = await db.execute(select(Agent))
-    for agent in result.scalars().all():
+    # 4. All agents
+    agent_svc = AgentService(db)
+    all_agents = await agent_svc.get_all(limit=500)
+    for agent in all_agents:
         models.append({
             "id": f"agent:{agent.id}",
             "name": f"🤖 {agent.name}",
@@ -389,37 +378,39 @@ async def get_available_models(
 async def list_sessions(
     limit: int = Query(50, le=200),
     chat_type: Optional[str] = Query(None, description="Filter by chat type: 'user', 'agent', 'project_task'"),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """List chat sessions, newest first."""
-    query = (
-        select(ChatSession)
-        .where(ChatSession.user_id == user.id)
-    )
-    
-    # Filter by chat type if specified
+    flt = {}
     if chat_type:
-        query = query.where(ChatSession.chat_type == chat_type)
-    
-    query = query.order_by(ChatSession.updated_at.desc()).limit(limit)
-    
-    result = await db.execute(query)
-    sessions = result.scalars().all()
+        flt["chat_type"] = chat_type
+    sess_svc = ChatSessionService(db)
+    msg_svc = ChatMessageService(db)
+    sessions = await sess_svc.get_by_user(str(user.id), filter_extra=flt, limit=limit)
+    # Sort by updated_at desc (client side)
+    sessions.sort(key=lambda s: s.updated_at if s.updated_at else datetime.min, reverse=True)
+
     # Build model names map for all sessions efficiently
     all_model_ids = set()
     for s in sessions:
         for mid in (s.model_ids or []):
             all_model_ids.add(mid)
     all_names = await _build_model_names(list(all_model_ids), db) if all_model_ids else {}
-    return [_session_to_response(s, {mid: all_names.get(mid, mid) for mid in (s.model_ids or [])}) for s in sessions]
+
+    # Fetch message counts
+    result = []
+    for s in sessions:
+        msgs = await msg_svc.get_by_session(s.id)
+        result.append(_session_to_response(s, msgs, {mid: all_names.get(mid, mid) for mid in (s.model_ids or [])}))
+    return result
 
 
 @router.post("/sessions")
 async def create_session(
     body: ChatSessionCreate,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Create a new chat session."""
     agent_id = None
@@ -459,7 +450,7 @@ async def create_session(
 
     # Set primary agent_id (first agent for backward compat)
     if agent_ids_raw:
-        agent_id = uuid.UUID(agent_ids_raw[0])
+        agent_id = agent_ids_raw[0]
 
     # Multi-agent mode: if 2+ agents selected, it's always multi_model
     is_multi_agent = len(agent_ids_raw) > 1
@@ -469,18 +460,17 @@ async def create_session(
     # If agents selected, resolve model(s) for LLM calls
     if agent_ids_raw:
         if not model_ids:
-            # Resolve model from first agent's configuration
-            agent = await db.get(Agent, uuid.UUID(agent_ids_raw[0]))
+            agent_svc = AgentService(db)
+            agent = await agent_svc.get_by_id(agent_ids_raw[0])
             if agent:
-                if agent.agent_models:
-                    model_ids = [str(am.model_config_id) for am in sorted(agent.agent_models, key=lambda x: x.priority)]
+                agent_models = await AgentModelService(db).get_by_agent(agent.id)
+                if agent_models:
+                    model_ids = [str(am.model_config_id) for am in sorted(agent_models, key=lambda x: x.priority)]
                 elif agent.model_id:
                     model_ids = [str(agent.model_id)]
 
-        # Validate and remap stale model_ids (agent models may have changed UUIDs)
         model_ids = await _validate_and_remap_model_ids(model_ids, db)
 
-        # Fallback to base role model
         if not model_ids:
             base_model = await resolve_model_for_role(db, "base")
             if base_model:
@@ -489,8 +479,9 @@ async def create_session(
         if not model_ids:
             raise HTTPException(status_code=400, detail="Agent has no models configured and no base model assigned")
 
-    session = ChatSession(
-        user_id=user.id,
+    sess_svc = ChatSessionService(db)
+    session = MongoChatSession(
+        user_id=str(user.id),
         title=body.title,
         model_ids=model_ids,
         agent_id=agent_id,
@@ -503,35 +494,29 @@ async def create_session(
         task_id=body.task_id,
         unread_count=0,
     )
-    db.add(session)
-    await db.flush()
-    await db.refresh(session)
+    session = await sess_svc.create(session)
     model_names = await _build_model_names(session.model_ids or [], db)
-    return _session_to_response(session, model_names)
+    return _session_to_response(session, [], model_names)
 
 
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get session with all messages."""
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == uuid.UUID(session_id),
-            ChatSession.user_id == user.id,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if not session:
+    sess_svc = ChatSessionService(db)
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Validate and remap stale model_ids
     session.model_ids = await _validate_and_remap_model_ids(session.model_ids or [], db, session)
     model_names = await _build_model_names(session.model_ids or [], db)
-    data = _session_to_response(session, model_names)
-    data["messages"] = [_message_to_response(m) for m in session.messages]
+    msgs = await ChatMessageService(db).get_by_session(session.id)
+    msgs.sort(key=lambda m: m.created_at if m.created_at else datetime.min)
+    data = _session_to_response(session, msgs, model_names)
+    data["messages"] = [_message_to_response(m) for m in msgs]
     return data
 
 
@@ -539,86 +524,76 @@ async def get_session(
 async def update_session(
     session_id: str,
     body: ChatSessionUpdate,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Update session settings."""
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == uuid.UUID(session_id),
-            ChatSession.user_id == user.id,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if not session:
+    sess_svc = ChatSessionService(db)
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Session not found")
 
+    update_data = {}
     if body.title is not None:
-        session.title = body.title
+        update_data["title"] = body.title
     if body.model_ids is not None:
-        session.model_ids = body.model_ids
+        update_data["model_ids"] = body.model_ids
     if body.multi_model is not None:
-        session.multi_model = body.multi_model
+        update_data["multi_model"] = body.multi_model
     if body.system_prompt is not None:
-        session.system_prompt = body.system_prompt
+        update_data["system_prompt"] = body.system_prompt
     if body.temperature is not None:
-        session.temperature = body.temperature
+        update_data["temperature"] = body.temperature
+    if update_data:
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+        session = await sess_svc.update(session_id, update_data)
 
-    await db.flush()
-    await db.refresh(session)
     model_names = await _build_model_names(session.model_ids or [], db)
-    return _session_to_response(session, model_names)
+    msgs = await ChatMessageService(db).get_by_session(session.id)
+    return _session_to_response(session, msgs, model_names)
 
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(
     session_id: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Delete a chat session and all its messages."""
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == uuid.UUID(session_id),
-            ChatSession.user_id == user.id,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if not session:
+    sess_svc = ChatSessionService(db)
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Session not found")
-    await db.delete(session)
+    await ChatMessageService(db).delete_by_session(session_id)
+    await sess_svc.delete(session_id)
     return {"message": "Session deleted"}
 
 
 @router.post("/sessions/{session_id}/mark-read")
 async def mark_session_as_read(
     session_id: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Mark a chat session as read (reset unread count)."""
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == uuid.UUID(session_id),
-            ChatSession.user_id == user.id,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if not session:
+    sess_svc = ChatSessionService(db)
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    session.unread_count = 0
-    await db.commit()
+    await sess_svc.update(session_id, {"unread_count": 0})
     return {"message": "Session marked as read", "unread_count": 0}
 
 
 # ── Send Message ─────────────────────────────────────────
 
-async def _load_agent_protocols(agent: Agent, db: AsyncSession) -> list[dict]:
+async def _load_agent_protocols(agent_id: str, db: AsyncIOMotorDatabase) -> list[dict]:
     """Load all protocols assigned to an agent."""
+    ap_svc = AgentProtocolService(db)
+    proto_svc = ThinkingProtocolService(db)
+    agent_protos = await ap_svc.get_by_agent(agent_id)
     protocols = []
-    for ap in (agent.agent_protocols or []):
-        p = ap.protocol
+    for ap in agent_protos:
+        p = await proto_svc.get_by_id(ap.protocol_id)
         if p:
             protocols.append({
                 "id": str(p.id),
@@ -632,19 +607,8 @@ async def _load_agent_protocols(agent: Agent, db: AsyncSession) -> list[dict]:
     return protocols
 
 
-async def _load_agent_skills(agent_id: uuid.UUID, db: AsyncSession, agent: "Agent" = None) -> list[dict]:
-    """Load all enabled skills for an agent.
-
-    An agent has access to:
-    - All system skills (is_system=true)
-    - All shared/public skills (is_shared=true)
-    - Agent's personal skills (author_agent_id=agent_id)
-
-    Skills explicitly disabled via AgentSkill(is_enabled=false) are excluded.
-    Skills requiring filesystem/system access are excluded if not permitted
-    (both globally and at agent level).
-    """
-    from sqlalchemy import or_
+async def _load_agent_skills(agent_id: str, db: AsyncIOMotorDatabase, agent=None) -> list[dict]:
+    """Load all enabled skills for an agent."""
     from app.api.settings import get_setting_value
 
     # Determine effective permissions (global AND agent-level)
@@ -655,36 +619,27 @@ async def _load_agent_skills(agent_id: uuid.UUID, db: AsyncSession, agent: "Agen
     effective_fs = global_fs and agent_fs
     effective_sys = global_sys and agent_sys
 
-    # Skills that require specific permissions
     FS_SKILLS = {"file_read", "file_write"}
     SYS_SKILLS = {"shell_exec", "code_execute"}
 
-    # Get all potentially available skills
-    result = await db.execute(
-        select(Skill).where(
-            or_(
-                Skill.is_system == True,
-                Skill.is_shared == True,
-                Skill.author_agent_id == agent_id,
-            )
-        )
-    )
-    all_skills = result.scalars().all()
+    # Get all potentially available skills (system, shared, or author)
+    skill_svc = SkillService(db)
+    all_skills_list = await skill_svc.get_all(limit=1000)
+    agent_id_str = str(agent_id)
+    all_skills = [
+        s for s in all_skills_list
+        if s.is_system or s.is_shared or s.author_agent_id == agent_id_str
+    ]
 
-    # Check disabled state from agent_skills table
-    result = await db.execute(
-        select(AgentSkill).where(
-            AgentSkill.agent_id == agent_id,
-            AgentSkill.is_enabled == False,
-        )
-    )
-    disabled_ids = {str(ask.skill_id) for ask in result.scalars().all()}
+    # Check disabled state from agent_skills
+    ask_svc = AgentSkillService(db)
+    agent_skill_records = await ask_svc.get_all(filter={"agent_id": agent_id_str}, limit=1000)
+    disabled_ids = {str(ask.skill_id) for ask in agent_skill_records if not ask.is_enabled}
 
     skills = []
     for s in all_skills:
         if str(s.id) in disabled_ids:
             continue
-        # Permission gating: skip fs/sys skills if access not granted
         if s.name in FS_SKILLS and not effective_fs:
             continue
         if s.name in SYS_SKILLS and not effective_sys:
@@ -703,25 +658,22 @@ async def _load_agent_skills(agent_id: uuid.UUID, db: AsyncSession, agent: "Agen
 
 
 async def create_agent_error(
-    db: AsyncSession,
-    agent_id,
+    db: AsyncIOMotorDatabase,
+    agent_id: str,
     error_type: str,
     message: str,
     source: str = "autonomous",
     context: dict | None = None,
 ):
-    """Create an AgentError record in the database."""
-    from app.models.log import AgentError
-    err = AgentError(
-        agent_id=agent_id,
+    """Create an AgentError record in MongoDB."""
+    err = MongoAgentError(
+        agent_id=str(agent_id),
         error_type=error_type,
         source=source,
         message=message,
         context=context,
     )
-    db.add(err)
-    await db.flush()
-    return err
+    return await AgentErrorService(db).create(err)
 
 
 async def _execute_skill(skill_name: str, args: dict, agent_skills: list[dict]) -> dict:
@@ -788,36 +740,35 @@ async def _execute_skill(skill_name: str, args: dict, agent_skills: list[dict]) 
 async def send_message(
     session_id: str,
     body: SendMessageRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Send a message and get a response with protocol execution support."""
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == uuid.UUID(session_id),
-            ChatSession.user_id == user.id,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if not session:
+    sess_svc = ChatSessionService(db)
+    msg_svc = ChatMessageService(db)
+    agent_svc = AgentService(db)
+
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # Resolve agent object if this is an agent session
+    agent = None
+    if session.agent_id:
+        agent = await agent_svc.get_by_id(session.agent_id)
+
     model_ids = body.model_ids or session.model_ids or []
-    # Filter out agent: prefixed entries from model_ids (they're not real models)
     model_ids = [m for m in model_ids if not m.startswith("agent:")]
-    # Validate and remap stale model_ids
     model_ids = await _validate_and_remap_model_ids(model_ids, db, session)
     if not model_ids:
-        # Try to resolve from agent's configuration
-        if session.agent_id and session.agent:
-            agent = session.agent
-            if agent.agent_models:
-                model_ids = [str(am.model_config_id) for am in sorted(agent.agent_models, key=lambda x: x.priority)]
+        if agent:
+            agent_models = await AgentModelService(db).get_by_agent(agent.id)
+            if agent_models:
+                model_ids = [str(am.model_config_id) for am in sorted(agent_models, key=lambda x: x.priority)]
                 model_ids = await _validate_and_remap_model_ids(model_ids, db)
             elif agent.model_id:
                 model_ids = [str(agent.model_id)]
                 model_ids = await _validate_and_remap_model_ids(model_ids, db)
-    # Fallback to base role model
     if not model_ids:
         base_model = await resolve_model_for_role(db, "base")
         if base_model:
@@ -826,17 +777,16 @@ async def send_message(
         raise HTTPException(status_code=400, detail="No models selected for this chat")
 
     # Save user message
-    user_msg = ChatMessage(
+    user_msg = MongoChatMessage(
         session_id=session.id,
         role="user",
         content=body.content,
     )
-    db.add(user_msg)
-    await db.flush()
+    user_msg = await msg_svc.create(user_msg)
 
     # ── Initialize thinking tracker (only for agent sessions) ──
     tracker = None
-    is_agent_session = bool(session.agent_id and session.agent)
+    is_agent_session = bool(agent)
     if is_agent_session:
         tracker = ThinkingTracker(db, session.agent_id, session.id, body.content)
         await tracker.start()
@@ -852,7 +802,6 @@ async def send_message(
 
     try:
         if is_agent_session:
-            agent = session.agent
             agent_name = agent.name
 
             # ── Step: Load agent config ──
@@ -897,7 +846,7 @@ async def send_message(
             # ── Step: Load protocols, skills, beliefs, aspirations ──
             if tracker:
                 tracker.start_step_timer()
-            agent_protocols = await _load_agent_protocols(agent, db)
+            agent_protocols = await _load_agent_protocols(agent.id, db)
             agent_skills = await _load_agent_skills(agent.id, db, agent=agent)
             agent_beliefs = read_beliefs(agent_name)
             from app.api.agent_aspirations import read_aspirations
@@ -1090,8 +1039,10 @@ async def send_message(
         if system_prompt:
             history.append({"role": "system", "content": system_prompt})
 
-        for msg in session.messages:
-            if msg.role != "system":
+        existing_msgs = await msg_svc.get_by_session(session.id)
+        existing_msgs.sort(key=lambda m: m.created_at if m.created_at else datetime.min)
+        for msg in existing_msgs:
+            if msg.role != "system" and msg.id != user_msg.id:
                 history.append({"role": msg.role, "content": msg.content})
         history.append({"role": "user", "content": body.content})
 
@@ -1115,10 +1066,9 @@ async def send_message(
 
         if is_multi_agent:
             # Multi-agent chat: each agent responds independently, first synthesizes
-            # Build conversation history without system prompt (each agent adds its own)
             bare_history = []
-            for msg in session.messages:
-                if msg.role != "system":
+            for msg in existing_msgs:
+                if msg.role != "system" and msg.id != user_msg.id:
                     bare_history.append({"role": msg.role, "content": msg.content})
             bare_history.append({"role": "user", "content": body.content})
 
@@ -1202,7 +1152,7 @@ async def send_message(
 
                 # Sync TODO items → persistent Tasks table
                 try:
-                    from app.services.autonomous_runner import sync_todos_to_tasks
+                    from app.services.todo_sync_service import sync_todos_to_tasks
                     updated_map = await sync_todos_to_tasks(
                         db, session.agent_id, new_todo,
                         todo_task_map=protocol_state.get("todo_task_map"),
@@ -1343,8 +1293,10 @@ async def send_message(
             # Save protocol state to session
             if tracker:
                 tracker.start_step_timer()
-            session.protocol_state = protocol_state
-            await db.flush()
+            await sess_svc.update(session.id, {
+                "protocol_state": protocol_state,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
             if tracker:
                 await tracker.step(
                     "protocol_update", "Save protocol state",
@@ -1357,19 +1309,17 @@ async def send_message(
                 )
 
         # Save assistant message
-        # For multi-agent, model_name already set by _multi_agent_chat
-        # For single agent sessions, prefix model_name with agent name
         display_model_name = response_data.get("model_name")
         if is_multi_agent:
-            pass  # already formatted as "multi-agent(...)"
-        elif is_agent_session and session.agent:
-            agent_display = session.agent.name
+            pass
+        elif is_agent_session and agent:
+            agent_display = agent.name
             if display_model_name:
                 display_model_name = f"{agent_display} ({display_model_name})"
             else:
                 display_model_name = agent_display
 
-        assistant_msg = ChatMessage(
+        assistant_msg = MongoChatMessage(
             session_id=session.id,
             role="assistant",
             content=response_data["content"],
@@ -1377,11 +1327,9 @@ async def send_message(
             model_responses=response_data.get("model_responses"),
             total_tokens=response_data.get("total_tokens", 0),
             duration_ms=elapsed_ms,
-            msg_metadata=msg_metadata or None,
+            metadata=msg_metadata or None,
         )
-        db.add(assistant_msg)
-        await db.flush()
-        await db.refresh(assistant_msg)
+        assistant_msg = await msg_svc.create(assistant_msg)
 
         # ── Complete thinking log ──
         if tracker:
@@ -1396,12 +1344,15 @@ async def send_message(
             )
 
         # Auto-title: if first user message, summarize to title
-        if len(session.messages) <= 2:
+        all_msgs = await msg_svc.get_by_session(session.id)
+        if len(all_msgs) <= 2:
             title = body.content[:60]
             if len(body.content) > 60:
                 title += "…"
-            session.title = title
-            await db.flush()
+            await sess_svc.update(session.id, {
+                "title": title,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
 
         return _message_to_response(assistant_msg)
 
@@ -1417,7 +1368,7 @@ async def _multi_model_chat(
     model_ids: list[str],
     history: list[dict],
     params: GenerationParams,
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
 ) -> dict:
     """
     Multi-model mode: query all models in parallel, then synthesize.
@@ -1515,9 +1466,10 @@ async def _multi_model_chat(
     }
 
 
-async def _build_agent_context(agent_id_str: str, db: AsyncSession, session_temperature: float = 0.7) -> dict:
+async def _build_agent_context(agent_id_str: str, db: AsyncIOMotorDatabase, session_temperature: float = 0.7) -> dict:
     """Build full agent context (system prompt, gen params, model) for multi-agent chat."""
-    agent = await db.get(Agent, uuid.UUID(agent_id_str))
+    agent_svc = AgentService(db)
+    agent = await agent_svc.get_by_id(agent_id_str)
     if not agent:
         return None
 
@@ -1541,7 +1493,7 @@ async def _build_agent_context(agent_id_str: str, db: AsyncSession, session_temp
             num_gpu=agent_settings.get("num_gpu", 1),
         )
 
-    protocols = await _load_agent_protocols(agent, db)
+    protocols = await _load_agent_protocols(agent.id, db)
     skills = await _load_agent_skills(agent.id, db, agent=agent)
     beliefs = read_beliefs(agent_name)
     from app.api.agent_aspirations import read_aspirations
@@ -1561,8 +1513,9 @@ async def _build_agent_context(agent_id_str: str, db: AsyncSession, session_temp
 
     # Resolve model for this agent
     model_id = None
-    if agent.agent_models:
-        model_id = str(sorted(agent.agent_models, key=lambda x: x.priority)[0].model_config_id)
+    agent_models = await AgentModelService(db).get_by_agent(agent.id)
+    if agent_models:
+        model_id = str(sorted(agent_models, key=lambda x: x.priority)[0].model_config_id)
     elif agent.model_id:
         model_id = str(agent.model_id)
 
@@ -1584,7 +1537,7 @@ async def _multi_agent_chat(
     agent_ids: list[str],
     user_content: str,
     conversation_history: list[dict],
-    db: AsyncSession,
+    db: AsyncIOMotorDatabase,
     session_temperature: float = 0.7,
 ) -> dict:
     """
@@ -1721,21 +1674,19 @@ async def _multi_agent_chat(
 @router.post("/sessions/{session_id}/auto-title")
 async def auto_title_session(
     session_id: str,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Generate a title for the session based on its content."""
-    result = await db.execute(
-        select(ChatSession).where(
-            ChatSession.id == uuid.UUID(session_id),
-            ChatSession.user_id == user.id,
-        )
-    )
-    session = result.scalar_one_or_none()
-    if not session:
+    sess_svc = ChatSessionService(db)
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
         raise HTTPException(status_code=404, detail="Session not found")
 
-    msgs = session.messages[:4]  # First few messages
+    msg_svc = ChatMessageService(db)
+    msgs = await msg_svc.get_by_session(session.id)
+    msgs.sort(key=lambda m: m.created_at if m.created_at else datetime.min)
+    msgs = msgs[:4]
     if not msgs:
         return {"title": session.title}
 
@@ -1748,8 +1699,10 @@ async def auto_title_session(
             prompt = [{"role": "user", "content": f"Generate a very short title (3-6 words) for this conversation:\n\n{summary}\n\nTitle:"}]
             resp = await _chat_with_model(provider, base_url, model_name, api_key, prompt, GenerationParams(temperature=0.3))
             new_title = resp.content.strip().strip('"').strip("'")[:100]
-            session.title = new_title
-            await db.flush()
+            await sess_svc.update(session.id, {
+                "title": new_title,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
             return {"title": new_title}
         except Exception:
             pass

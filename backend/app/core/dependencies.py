@@ -1,12 +1,12 @@
 import uuid
 from fastapi import Depends, HTTPException, status, Header, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from app.database import get_db
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.database import get_mongodb
 from app.core.security import decode_token, verify_api_key
-from app.models.user import User
-from app.models.api_key import ApiKey
+from app.mongodb.models.user import MongoUser
+from app.mongodb.models.api_key import MongoApiKey
+from app.mongodb.services import UserService, ApiKeyService
 from datetime import datetime, timezone
 
 security_scheme = HTTPBearer(auto_error=False)
@@ -15,8 +15,8 @@ security_scheme = HTTPBearer(auto_error=False)
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     x_api_key: str | None = Header(None, alias="X-API-Key"),
-    db: AsyncSession = Depends(get_db),
-) -> User:
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+) -> MongoUser:
     # Try API Key first
     if x_api_key:
         return await _authenticate_api_key(x_api_key, db)
@@ -35,8 +35,8 @@ async def get_current_user(
 async def get_ws_user(
     token: str | None = Query(None),
     api_key: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
-) -> User:
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+) -> MongoUser:
     """Authenticate WebSocket connections via query params."""
     if api_key:
         return await _authenticate_api_key(api_key, db)
@@ -45,7 +45,7 @@ async def get_ws_user(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
 
-async def _authenticate_jwt(token: str, db: AsyncSession) -> User:
+async def _authenticate_jwt(token: str, db: AsyncIOMotorDatabase) -> MongoUser:
     try:
         payload = decode_token(token)
         if payload.get("type") != "access":
@@ -60,24 +60,27 @@ async def _authenticate_jwt(token: str, db: AsyncSession) -> User:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
-    user = result.scalar_one_or_none()
+    user_service = UserService(db)
+    user = await user_service.get_by_id(user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
     return user
 
 
-async def _authenticate_api_key(key: str, db: AsyncSession) -> User:
-    prefix = key[:8] if len(key) > 8 else key
-    result = await db.execute(select(ApiKey).where(ApiKey.key_prefix == prefix))
-    api_keys = result.scalars().all()
-
-    for ak in api_keys:
-        if verify_api_key(key, ak.key_hash):
+async def _authenticate_api_key(key: str, db: AsyncIOMotorDatabase) -> MongoUser:
+    api_key_service = ApiKeyService(db)
+    user_service = UserService(db)
+    
+    # Get all API keys and verify
+    all_keys = await api_key_service.get_all(limit=1000)
+    for ak in all_keys:
+        if verify_api_key(key, ak.key):
+            # Update last used
             ak.last_used_at = datetime.now(timezone.utc)
-            await db.flush()
-            result = await db.execute(select(User).where(User.id == ak.user_id))
-            user = result.scalar_one_or_none()
+            await api_key_service.update(ak.id, {"last_used_at": ak.last_used_at.isoformat()})
+            
+            # Get user
+            user = await user_service.get_by_id(ak.user_id)
             if user and user.is_active:
                 return user
 

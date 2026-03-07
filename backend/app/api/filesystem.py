@@ -11,18 +11,17 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
 from app.api.settings import get_setting_value
 
 router = APIRouter(prefix="/api/fs", tags=["filesystem"])
 
 
 # ---------- Guard ----------
-async def _check_fs_enabled(db: AsyncSession):
+async def _check_fs_enabled(db: AsyncIOMotorDatabase):
     val = await get_setting_value(db, "filesystem_access_enabled")
     if val != "true":
         raise HTTPException(
@@ -91,8 +90,8 @@ class DeleteRequest(BaseModel):
 async def list_directory(
     path: str = Query("/", description="Directory path to list"),
     show_hidden: bool = Query(False),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """List files and directories at the given path."""
     await _check_fs_enabled(db)
@@ -124,8 +123,8 @@ async def read_file(
     path: str = Query(..., description="File path to read"),
     encoding: str = Query("utf-8"),
     max_size: int = Query(10 * 1024 * 1024, description="Max bytes to read (default 10 MB)"),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Read file contents."""
     await _check_fs_enabled(db)
@@ -155,8 +154,8 @@ async def read_file(
 @router.post("/write")
 async def write_file(
     body: WriteRequest,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Write content to a file."""
     await _check_fs_enabled(db)
@@ -178,8 +177,8 @@ async def write_file(
 @router.post("/mkdir")
 async def make_directory(
     body: MkdirRequest,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Create a directory (with parents)."""
     await _check_fs_enabled(db)
@@ -194,8 +193,8 @@ async def make_directory(
 @router.post("/delete")
 async def delete_path(
     body: DeleteRequest,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Delete a file or directory."""
     await _check_fs_enabled(db)
@@ -222,8 +221,8 @@ async def delete_path(
 @router.post("/move")
 async def move_path(
     body: MoveRequest,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Move or rename a file/directory."""
     await _check_fs_enabled(db)
@@ -245,8 +244,8 @@ async def move_path(
 @router.get("/info")
 async def path_info(
     path: str = Query(..., description="Path to inspect"),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get detailed info about a path."""
     await _check_fs_enabled(db)
@@ -269,8 +268,8 @@ async def search_files(
     path: str = Query("/", description="Root directory to search in"),
     pattern: str = Query(..., description="Glob pattern, e.g. *.py"),
     max_results: int = Query(200),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Search for files matching a glob pattern."""
     await _check_fs_enabled(db)
@@ -292,8 +291,8 @@ async def search_files(
 
 @router.get("/drives")
 async def list_drives(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """List root drives/mount points."""
     await _check_fs_enabled(db)

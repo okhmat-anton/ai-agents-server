@@ -21,12 +21,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import get_db
 from app.core.dependencies import get_current_user
-from app.models.user import User
 from app.schemas.common import MessageResponse
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -296,7 +293,7 @@ class ExecuteRequest(BaseModel):
 @router.get("")
 async def list_projects(
     status: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """List all projects."""
     _ensure_projects_dir()
@@ -317,7 +314,7 @@ async def list_projects(
 @router.get("/by-agent/{agent_id}")
 async def list_projects_for_agent(
     agent_id: str,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """List projects accessible by a given agent (allowed or access_level=full, or lead)."""
     _ensure_projects_dir()
@@ -346,7 +343,7 @@ async def list_projects_for_agent(
 @router.post("", status_code=201)
 async def create_project(
     body: ProjectCreate,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Create a new project."""
     _ensure_projects_dir()
@@ -395,7 +392,7 @@ async def create_project(
 @router.get("/{slug}")
 async def get_project(
     slug: str,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Get project details."""
     project_dir, config = _get_project_or_404(slug)
@@ -406,7 +403,7 @@ async def get_project(
 async def update_project(
     slug: str,
     body: ProjectUpdate,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Update project settings."""
     project_dir, config = _get_project_or_404(slug)
@@ -425,7 +422,7 @@ async def update_project(
 @router.delete("/{slug}")
 async def delete_project(
     slug: str,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Delete project and all its files."""
     project_dir, config = _get_project_or_404(slug)
@@ -441,7 +438,7 @@ async def delete_project(
 async def list_tasks(
     slug: str,
     status: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """List all tasks in the project backlog."""
     project_dir, _ = _get_project_or_404(slug)
@@ -457,7 +454,7 @@ async def list_tasks(
 async def create_task(
     slug: str,
     body: TaskCreate,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Create a new task in the project backlog."""
     project_dir, _ = _get_project_or_404(slug)
@@ -499,7 +496,7 @@ async def create_task(
 async def get_task(
     slug: str,
     task_id: str,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Get a single task."""
     project_dir, _ = _get_project_or_404(slug)
@@ -515,7 +512,7 @@ async def update_task(
     slug: str,
     task_id: str,
     body: TaskUpdate,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Update a task."""
     project_dir, _ = _get_project_or_404(slug)
@@ -556,7 +553,7 @@ async def update_task(
 async def delete_task(
     slug: str,
     task_id: str,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Delete a task."""
     project_dir, _ = _get_project_or_404(slug)
@@ -582,7 +579,7 @@ class TaskCommentCreate(BaseModel):
 async def list_task_comments(
     slug: str,
     task_id: str,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """List all comments on a task."""
     project_dir, _ = _get_project_or_404(slug)
@@ -598,7 +595,7 @@ async def add_task_comment(
     slug: str,
     task_id: str,
     body: TaskCommentCreate,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Add a comment to a task."""
     project_dir, _ = _get_project_or_404(slug)
@@ -631,7 +628,7 @@ async def delete_task_comment(
     slug: str,
     task_id: str,
     comment_id: str,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Delete a comment from a task."""
     project_dir, _ = _get_project_or_404(slug)
@@ -661,7 +658,7 @@ async def get_task_logs(
     slug: str,
     task_id: str,
     limit: int = Query(50, ge=1, le=200),
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Get project logs related to a specific task."""
     project_dir, _ = _get_project_or_404(slug)
@@ -691,7 +688,7 @@ async def get_task_logs(
 @router.get("/{slug}/files")
 async def list_code_files(
     slug: str,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """List all files in the project code directory (tree)."""
     project_dir, _ = _get_project_or_404(slug)
@@ -704,7 +701,7 @@ async def list_code_files(
 async def read_code_file(
     slug: str,
     path: str = Query(...),
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Read content of a file in the project code directory."""
     project_dir, _ = _get_project_or_404(slug)
@@ -725,7 +722,7 @@ async def read_code_file(
 async def create_code_file(
     slug: str,
     body: FileCreate,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Create a new file or folder in the project code directory."""
     project_dir, _ = _get_project_or_404(slug)
@@ -756,7 +753,7 @@ async def create_code_file(
 async def write_code_file(
     slug: str,
     body: FileWrite,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Write/update content of a file in the project code directory."""
     project_dir, _ = _get_project_or_404(slug)
@@ -777,7 +774,7 @@ async def write_code_file(
 async def delete_code_file(
     slug: str,
     path: str = Query(...),
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Delete a file or folder from the project code directory."""
     project_dir, _ = _get_project_or_404(slug)
@@ -799,7 +796,7 @@ async def delete_code_file(
 async def rename_code_file(
     slug: str,
     body: dict,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Rename/move a file or folder within the project code directory."""
     project_dir, _ = _get_project_or_404(slug)
@@ -830,7 +827,7 @@ async def rename_code_file(
 async def execute_in_project(
     slug: str,
     body: ExecuteRequest,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Execute a shell command in the project code directory."""
     project_dir, config = _get_project_or_404(slug)
@@ -895,7 +892,7 @@ async def execute_in_project(
 async def execute_stream_in_project(
     slug: str,
     body: ExecuteRequest,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Execute a command and stream output via SSE."""
     project_dir, config = _get_project_or_404(slug)
@@ -949,7 +946,7 @@ async def get_project_logs(
     limit: int = Query(50, ge=1, le=500),
     level: Optional[str] = None,
     source: Optional[str] = None,
-    _user: User = Depends(get_current_user),
+    _user = Depends(get_current_user),
 ):
     """Get project activity logs."""
     project_dir, _ = _get_project_or_404(slug)

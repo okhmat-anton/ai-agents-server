@@ -19,12 +19,12 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, update, delete
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.thinking_protocol import ThinkingProtocol
+from app.mongodb.models import MongoThinkingProtocol
+from app.mongodb.services import ThinkingProtocolService
 
 router = APIRouter(prefix="/api/protocols", tags=["thinking-protocols"], dependencies=[Depends(get_current_user)])
 
@@ -90,7 +90,7 @@ def _assign_ids(steps: list[dict], prefix: str = "s") -> list[dict]:
     return steps
 
 
-def _to_response(p: ThinkingProtocol) -> dict:
+def _to_response(p: MongoThinkingProtocol) -> dict:
     return {
         "id": str(p.id),
         "name": p.name,
@@ -106,81 +106,86 @@ def _to_response(p: ThinkingProtocol) -> dict:
 # ---------- Endpoints ----------
 
 @router.get("")
-async def list_protocols(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(ThinkingProtocol).order_by(ThinkingProtocol.is_default.desc(), ThinkingProtocol.name))
-    protos = result.scalars().all()
+async def list_protocols(db: AsyncIOMotorDatabase = Depends(get_mongodb)):
+    protocol_service = ThinkingProtocolService(db)
+    protos = await protocol_service.get_all(skip=0, limit=1000)
+    # Sort client-side: is_default desc, then name asc
+    protos = sorted(protos, key=lambda p: (not p.is_default, p.name))
     return [_to_response(p) for p in protos]
 
 
 @router.get("/{protocol_id}")
-async def get_protocol(protocol_id: str, db: AsyncSession = Depends(get_db)):
-    p = await db.get(ThinkingProtocol, protocol_id)
+async def get_protocol(protocol_id: str, db: AsyncIOMotorDatabase = Depends(get_mongodb)):
+    protocol_service = ThinkingProtocolService(db)
+    p = await protocol_service.get_by_id(protocol_id)
     if not p:
         raise HTTPException(404, "Protocol not found")
     return _to_response(p)
 
 
 @router.post("", status_code=201)
-async def create_protocol(body: ProtocolCreate, db: AsyncSession = Depends(get_db)):
+async def create_protocol(body: ProtocolCreate, db: AsyncIOMotorDatabase = Depends(get_mongodb)):
+    protocol_service = ThinkingProtocolService(db)
     steps_raw = [s.model_dump() for s in body.steps]
     steps_raw = _assign_ids(steps_raw)
-    p = ThinkingProtocol(
+    p = MongoThinkingProtocol(
         name=body.name,
         description=body.description,
         type=body.type if body.type in PROTOCOL_TYPES else "standard",
         steps=steps_raw,
     )
-    db.add(p)
-    await db.flush()
-    await db.refresh(p)
-    return _to_response(p)
+    created = await protocol_service.create(p)
+    return _to_response(created)
 
 
 @router.put("/{protocol_id}")
-async def update_protocol(protocol_id: str, body: ProtocolUpdate, db: AsyncSession = Depends(get_db)):
-    p = await db.get(ThinkingProtocol, protocol_id)
+async def update_protocol(protocol_id: str, body: ProtocolUpdate, db: AsyncIOMotorDatabase = Depends(get_mongodb)):
+    protocol_service = ThinkingProtocolService(db)
+    p = await protocol_service.get_by_id(protocol_id)
     if not p:
         raise HTTPException(404, "Protocol not found")
+    
+    update_data = {}
     if body.name is not None:
-        p.name = body.name
+        update_data["name"] = body.name
     if body.description is not None:
-        p.description = body.description
+        update_data["description"] = body.description
     if body.type is not None and body.type in PROTOCOL_TYPES:
-        p.type = body.type
+        update_data["type"] = body.type
     if body.steps is not None:
         steps_raw = [s.model_dump() for s in body.steps]
         steps_raw = _assign_ids(steps_raw)
-        p.steps = steps_raw
-    p.updated_at = datetime.now(timezone.utc)
-    await db.flush()
-    await db.refresh(p)
-    return _to_response(p)
+        update_data["steps"] = steps_raw
+    
+    update_data["updated_at"] = datetime.now(timezone.utc)
+    updated = await protocol_service.update(protocol_id, update_data)
+    return _to_response(updated)
 
 
 @router.delete("/{protocol_id}", status_code=204)
-async def delete_protocol(protocol_id: str, db: AsyncSession = Depends(get_db)):
-    p = await db.get(ThinkingProtocol, protocol_id)
+async def delete_protocol(protocol_id: str, db: AsyncIOMotorDatabase = Depends(get_mongodb)):
+    protocol_service = ThinkingProtocolService(db)
+    p = await protocol_service.get_by_id(protocol_id)
     if not p:
         raise HTTPException(404, "Protocol not found")
     if p.is_default:
         raise HTTPException(400, "Cannot delete the default protocol")
-    await db.delete(p)
+    await protocol_service.delete(protocol_id)
     return None
 
 
 @router.post("/{protocol_id}/duplicate")
-async def duplicate_protocol(protocol_id: str, db: AsyncSession = Depends(get_db)):
-    p = await db.get(ThinkingProtocol, protocol_id)
+async def duplicate_protocol(protocol_id: str, db: AsyncIOMotorDatabase = Depends(get_mongodb)):
+    protocol_service = ThinkingProtocolService(db)
+    p = await protocol_service.get_by_id(protocol_id)
     if not p:
         raise HTTPException(404, "Protocol not found")
-    new = ThinkingProtocol(
+    new = MongoThinkingProtocol(
         name=f"{p.name} (copy)",
         description=p.description,
         type=p.type,
         steps=p.steps,
         is_default=False,
     )
-    db.add(new)
-    await db.flush()
-    await db.refresh(new)
-    return _to_response(new)
+    created = await protocol_service.create(new)
+    return _to_response(created)

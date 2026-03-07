@@ -1,20 +1,16 @@
 import time
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timezone, timedelta
-from app.database import get_db
+from app.database import get_mongodb
 from app import database as _db
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.agent import Agent
-from app.models.task import Task
-from app.models.log import SystemLog
-from app.models.skill import Skill
-from app.models.memory import Memory
-from app.schemas.log import SystemLogResponse
+from app.mongodb.services import (
+    AgentService, TaskService, SkillService, MemoryService,
+)
 from app.schemas.common import MessageResponse, HealthResponse, SystemStatsResponse
 from app.config import get_settings
+from app.services.log_service import read_system_logs, clear_old_system_logs
 import httpx
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -22,13 +18,13 @@ _start_time = time.time()
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health(db: AsyncSession = Depends(get_db)):
+async def health(db: AsyncIOMotorDatabase = Depends(get_mongodb)):
     settings = get_settings()
 
-    # Check DB
+    # Check MongoDB
     db_status = "ok"
     try:
-        await db.execute(select(func.now()))
+        await db.command("ping")
     except Exception:
         db_status = "error"
 
@@ -48,7 +44,6 @@ async def health(db: AsyncSession = Depends(get_db)):
         async with httpx.AsyncClient(timeout=3) as client:
             r = await client.get(f"{settings.CHROMADB_URL}/api/v2/heartbeat")
             if r.status_code != 200:
-                # Fallback to v1
                 r = await client.get(f"{settings.CHROMADB_URL}/api/v1/heartbeat")
                 if r.status_code != 200:
                     chromadb_status = "error"
@@ -77,16 +72,23 @@ async def health(db: AsyncSession = Depends(get_db)):
 
 @router.get("/stats", response_model=SystemStatsResponse)
 async def stats(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    total_agents = (await db.execute(select(func.count(Agent.id)))).scalar() or 0
-    running_agents = (await db.execute(select(func.count(Agent.id)).where(Agent.status == "running"))).scalar() or 0
-    total_tasks = (await db.execute(select(func.count(Task.id)))).scalar() or 0
-    pending_tasks = (await db.execute(select(func.count(Task.id)).where(Task.status == "pending"))).scalar() or 0
-    total_skills = (await db.execute(select(func.count(Skill.id)))).scalar() or 0
-    total_memories = (await db.execute(select(func.count(Memory.id)))).scalar() or 0
-    total_system_logs = (await db.execute(select(func.count(SystemLog.id)))).scalar() or 0
+    total_agents = await AgentService(db).count()
+    running_agents = await AgentService(db).count(filter={"status": "running"})
+    total_tasks = await TaskService(db).count()
+    pending_tasks = await TaskService(db).count(filter={"status": "pending"})
+    total_skills = await SkillService(db).count()
+    total_memories = await MemoryService(db).count()
+
+    # Count system log lines from file
+    total_system_logs = 0
+    try:
+        logs = await read_system_logs(limit=0)  # just to get count
+        total_system_logs = len(logs) if logs else 0
+    except Exception:
+        pass
 
     return SystemStatsResponse(
         total_agents=total_agents,
@@ -99,7 +101,7 @@ async def stats(
     )
 
 
-@router.get("/logs", response_model=list[SystemLogResponse])
+@router.get("/logs")
 async def list_system_logs(
     level: str | None = Query(None),
     source: str | None = Query(None),
@@ -108,31 +110,40 @@ async def list_system_logs(
     date_to: datetime | None = Query(None),
     limit: int = Query(50, le=500),
     offset: int = Query(0, ge=0),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
 ):
-    q = select(SystemLog)
-    if level:
-        q = q.where(SystemLog.level == level)
-    if source:
-        q = q.where(SystemLog.source == source)
-    if search:
-        q = q.where(SystemLog.message.ilike(f"%{search}%"))
-    if date_from:
-        q = q.where(SystemLog.created_at >= date_from)
-    if date_to:
-        q = q.where(SystemLog.created_at <= date_to)
-    q = q.order_by(SystemLog.created_at.desc()).limit(limit).offset(offset)
-    result = await db.execute(q)
-    return result.scalars().all()
+    logs = await read_system_logs(limit=limit + offset + 500)
+
+    # Apply filters
+    filtered = []
+    for log in logs:
+        if level and log.get("level") != level:
+            continue
+        if source and log.get("source") != source:
+            continue
+        if search and search.lower() not in log.get("message", "").lower():
+            continue
+        if date_from:
+            ts = log.get("timestamp", "")
+            if ts and ts < date_from.isoformat():
+                continue
+        if date_to:
+            ts = log.get("timestamp", "")
+            if ts and ts > date_to.isoformat():
+                continue
+        filtered.append(log)
+
+    # Sort by timestamp descending
+    filtered.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+    # Apply pagination
+    return filtered[offset:offset + limit]
 
 
 @router.delete("/logs", response_model=MessageResponse)
-async def clear_system_logs(
+async def clear_system_logs_endpoint(
     days: int = Query(30, description="Delete logs older than N days"),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
 ):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    await db.execute(delete(SystemLog).where(SystemLog.created_at < cutoff))
-    return MessageResponse(message=f"Logs older than {days} days deleted")
+    removed = await clear_old_system_logs(days)
+    return MessageResponse(message=f"Logs older than {days} days deleted ({removed} removed)")

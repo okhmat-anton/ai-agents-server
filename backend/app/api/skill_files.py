@@ -9,14 +9,12 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.skill import Skill
+from app.mongodb.services import SkillService
 from app.schemas.skill import SkillFileInfo, SkillFileContent, SkillFileWrite, SkillFileCreate, SkillFileRename
 from app.schemas.common import MessageResponse
 
@@ -105,9 +103,9 @@ def _scan_dir(base_dir: Path, current_dir: Path) -> list[dict]:
     return items
 
 
-async def _get_skill_or_404(skill_id: UUID, db: AsyncSession) -> Skill:
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+async def _get_skill_or_404(skill_id, db: AsyncIOMotorDatabase):
+    svc = SkillService(db)
+    skill = await svc.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
     return skill
@@ -118,8 +116,8 @@ async def _get_skill_or_404(skill_id: UUID, db: AsyncSession) -> Skill:
 @router.get("/{skill_id}/files")
 async def list_skill_files(
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """List all files and folders in a skill directory (tree structure)."""
     skill = await _get_skill_or_404(skill_id, db)
@@ -139,8 +137,8 @@ async def list_skill_files(
 async def read_skill_file(
     skill_id: UUID,
     path: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> SkillFileContent:
     """Read content of a file in the skill directory."""
     skill = await _get_skill_or_404(skill_id, db)
@@ -166,8 +164,8 @@ async def read_skill_file(
 async def write_skill_file(
     skill_id: UUID,
     body: SkillFileWrite,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Write/update content of a file in the skill directory."""
     skill = await _get_skill_or_404(skill_id, db)
@@ -193,8 +191,8 @@ async def write_skill_file(
 async def create_skill_file(
     skill_id: UUID,
     body: SkillFileCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Create a new file or folder in the skill directory."""
     skill = await _get_skill_or_404(skill_id, db)
@@ -221,8 +219,8 @@ async def create_skill_file(
 async def delete_skill_file(
     skill_id: UUID,
     path: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Delete a file or folder from the skill directory."""
     skill = await _get_skill_or_404(skill_id, db)
@@ -250,8 +248,8 @@ async def delete_skill_file(
 async def rename_skill_file(
     skill_id: UUID,
     body: SkillFileRename,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Rename/move a file or folder within the skill directory."""
     skill = await _get_skill_or_404(skill_id, db)
@@ -275,7 +273,7 @@ async def rename_skill_file(
 
 # ===== Manifest helpers =====
 
-def _write_manifest(skill_dir: Path, skill: Skill):
+def _write_manifest(skill_dir: Path, skill):
     """Write manifest.json from Skill DB record."""
     manifest = {
         "name": skill.name,
@@ -298,7 +296,7 @@ def _write_manifest(skill_dir: Path, skill: Skill):
         entry.write_text(skill.code or "# Entry point\n", encoding="utf-8")
 
 
-async def _sync_manifest_to_db(skill: Skill, skill_dir: Path, db: AsyncSession):
+async def _sync_manifest_to_db(skill, skill_dir: Path, db: AsyncIOMotorDatabase):
     """Read manifest.json and sync fields back to DB."""
     manifest_path = skill_dir / "manifest.json"
     if not manifest_path.exists():
@@ -308,20 +306,22 @@ async def _sync_manifest_to_db(skill: Skill, skill_dir: Path, db: AsyncSession):
     except (json.JSONDecodeError, OSError):
         return
 
+    update_data = {}
     for field in ("display_name", "description", "description_for_agent", "category", "version"):
         if field in manifest:
-            setattr(skill, field, manifest[field])
+            update_data[field] = manifest[field]
 
     if "input_schema" in manifest:
-        skill.input_schema = manifest["input_schema"]
+        update_data["input_schema"] = manifest["input_schema"]
     if "output_schema" in manifest:
-        skill.output_schema = manifest["output_schema"]
+        update_data["output_schema"] = manifest["output_schema"]
 
-    await db.flush()
-    await db.refresh(skill)
+    if update_data:
+        svc = SkillService(db)
+        await svc.update(skill.id, update_data)
 
 
-def init_skill_directory(skill: Skill):
+def init_skill_directory(skill):
     """Create skill directory and manifest from a newly-created Skill."""
     _ensure_skills_dir()
     skill_dir = _get_skill_dir(skill.name)

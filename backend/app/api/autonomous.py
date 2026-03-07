@@ -13,14 +13,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.agent import Agent
-from app.models.autonomous_run import AutonomousRun
+from app.mongodb.models import MongoUser, MongoAgent, MongoAutonomousRun
+from app.mongodb.services import AgentService, AutonomousRunService, ThinkingProtocolService
 from app.services.autonomous_runner import (
     start_autonomous_run,
     stop_autonomous_run,
@@ -62,8 +60,8 @@ class AutonomousRunResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-def _run_to_response(run: AutonomousRun) -> AutonomousRunResponse:
-    """Convert AutonomousRun to response."""
+def _run_to_response(run: MongoAutonomousRun, protocol_name: str | None = None) -> AutonomousRunResponse:
+    """Convert MongoAutonomousRun to response."""
     return AutonomousRunResponse(
         id=str(run.id),
         agent_id=str(run.agent_id),
@@ -72,7 +70,7 @@ def _run_to_response(run: AutonomousRun) -> AutonomousRunResponse:
         max_cycles=run.max_cycles,
         completed_cycles=run.completed_cycles,
         loop_protocol_id=str(run.loop_protocol_id) if run.loop_protocol_id else None,
-        loop_protocol_name=run.loop_protocol.name if run.loop_protocol else None,
+        loop_protocol_name=protocol_name,
         status=run.status,
         error_message=run.error_message,
         cycle_state=run.cycle_state,
@@ -92,13 +90,13 @@ def _run_to_response(run: AutonomousRun) -> AutonomousRunResponse:
 async def api_start_autonomous(
     agent_id: UUID,
     body: StartAutonomousRequest,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Start autonomous work for an agent."""
     # Validate agent
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+    agent_service = AgentService(db)
+    agent = await agent_service.get_by_id(str(agent_id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -125,7 +123,13 @@ async def api_start_autonomous(
             loop_protocol_id=UUID(body.loop_protocol_id) if body.loop_protocol_id else None,
             user_id=user.id,
         )
-        return _run_to_response(run)
+        # Get protocol name if set
+        protocol_name = None
+        if run.loop_protocol_id:
+            protocol_service = ThinkingProtocolService(db)
+            protocol = await protocol_service.get_by_id(str(run.loop_protocol_id))
+            protocol_name = protocol.name if protocol else None
+        return _run_to_response(run, protocol_name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -133,12 +137,12 @@ async def api_start_autonomous(
 @router.post("/stop", response_model=AutonomousRunResponse)
 async def api_stop_autonomous(
     agent_id: UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Stop the active autonomous run for an agent."""
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+    agent_service = AgentService(db)
+    agent = await agent_service.get_by_id(str(agent_id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -148,7 +152,13 @@ async def api_stop_autonomous(
 
     try:
         run = await stop_autonomous_run(str(active.id))
-        return _run_to_response(run)
+        # Get protocol name if set
+        protocol_name = None
+        if run.loop_protocol_id:
+            protocol_service = ThinkingProtocolService(db)
+            protocol = await protocol_service.get_by_id(str(run.loop_protocol_id))
+            protocol_name = protocol.name if protocol else None
+        return _run_to_response(run, protocol_name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -156,20 +166,28 @@ async def api_stop_autonomous(
 @router.get("/status", response_model=Optional[AutonomousRunResponse])
 async def api_autonomous_status(
     agent_id: UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get the active autonomous run status for an agent."""
     # Get the most recent run (active or last completed)
-    result = await db.execute(
-        select(AutonomousRun).where(
-            AutonomousRun.agent_id == agent_id,
-        ).order_by(AutonomousRun.created_at.desc()).limit(1)
-    )
-    run = result.scalar_one_or_none()
+    run_service = AutonomousRunService(db)
+    runs = await run_service.get_all(filter={"agent_id": str(agent_id)}, limit=1)
+    # Sort client-side by created_at desc
+    runs = sorted(runs, key=lambda r: r.created_at, reverse=True)
+    run = runs[0] if runs else None
+    
     if not run:
         return None
-    return _run_to_response(run)
+    
+    # Get protocol name if set
+    protocol_name = None
+    if run.loop_protocol_id:
+        protocol_service = ThinkingProtocolService(db)
+        protocol = await protocol_service.get_by_id(str(run.loop_protocol_id))
+        protocol_name = protocol.name if protocol else None
+    
+    return _run_to_response(run, protocol_name)
 
 
 @router.get("/history", response_model=list[AutonomousRunResponse])
@@ -177,52 +195,72 @@ async def api_autonomous_history(
     agent_id: UUID,
     limit: int = Query(20, le=100),
     offset: int = Query(0, ge=0),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """List all autonomous runs for an agent, newest first."""
-    result = await db.execute(
-        select(AutonomousRun).where(
-            AutonomousRun.agent_id == agent_id,
-        ).order_by(AutonomousRun.created_at.desc()).limit(limit).offset(offset)
+    run_service = AutonomousRunService(db)
+    protocol_service = ThinkingProtocolService(db)
+    
+    runs = await run_service.get_all(
+        filter={"agent_id": str(agent_id)},
+        skip=offset,
+        limit=limit
     )
-    runs = result.scalars().all()
-    return [_run_to_response(r) for r in runs]
+    # Sort client-side by created_at desc
+    runs = sorted(runs, key=lambda r: r.created_at, reverse=True)
+    
+    # Build responses with protocol names
+    responses = []
+    for run in runs:
+        protocol_name = None
+        if run.loop_protocol_id:
+            protocol = await protocol_service.get_by_id(str(run.loop_protocol_id))
+            protocol_name = protocol.name if protocol else None
+        responses.append(_run_to_response(run, protocol_name))
+    
+    return responses
 
 
 @router.delete("/history")
 async def api_clear_autonomous_history(
     agent_id: UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Delete all completed/stopped/error autonomous runs for an agent (not running ones)."""
-    from sqlalchemy import delete
-    result = await db.execute(
-        delete(AutonomousRun).where(
-            AutonomousRun.agent_id == agent_id,
-            AutonomousRun.status.notin_(["running"]),
-        )
-    )
-    await db.commit()
-    return {"message": f"Deleted {result.rowcount} autonomous run(s)"}
+    run_service = AutonomousRunService(db)
+    
+    # Get all non-running runs
+    all_runs = await run_service.get_all(filter={"agent_id": str(agent_id)}, limit=10000)
+    deleted_count = 0
+    for run in all_runs:
+        if run.status != "running":
+            await run_service.delete(run.id)
+            deleted_count += 1
+    
+    return {"message": f"Deleted {deleted_count} autonomous run(s)"}
 
 
 @router.get("/{run_id}", response_model=AutonomousRunResponse)
 async def api_get_autonomous_run(
     agent_id: UUID,
     run_id: UUID,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Get a single autonomous run by ID."""
-    result = await db.execute(
-        select(AutonomousRun).where(
-            AutonomousRun.id == run_id,
-            AutonomousRun.agent_id == agent_id,
-        )
-    )
-    run = result.scalar_one_or_none()
-    if not run:
+    run_service = AutonomousRunService(db)
+    protocol_service = ThinkingProtocolService(db)
+    
+    run = await run_service.get_by_id(str(run_id))
+    if not run or run.agent_id != str(agent_id):
         raise HTTPException(status_code=404, detail="Autonomous run not found")
-    return _run_to_response(run)
+    
+    # Get protocol name if set
+    protocol_name = None
+    if run.loop_protocol_id:
+        protocol = await protocol_service.get_by_id(str(run.loop_protocol_id))
+        protocol_name = protocol.name if protocol else None
+    
+    return _run_to_response(run, protocol_name)

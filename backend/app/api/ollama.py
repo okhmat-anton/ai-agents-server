@@ -10,7 +10,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.config import get_settings
 from app.core.dependencies import get_current_user
-from app.models.user import User
 from app.services.log_service import syslog_bg
 from app.services.ollama_watchdog import (
     mark_model_manually_stopped, mark_model_started,
@@ -183,7 +182,7 @@ def _size_hr(size_bytes: int) -> str:
 # ── Endpoints ────────────────────────────────────────────
 
 @router.get("/status", response_model=OllamaStatus)
-async def ollama_status(_user: User = Depends(get_current_user)):
+async def ollama_status(_user = Depends(get_current_user)):
     """Check if Ollama is running and how many models are loaded."""
     settings = _settings()
     try:
@@ -198,7 +197,7 @@ async def ollama_status(_user: User = Depends(get_current_user)):
 
 
 @router.post("/start")
-async def start_ollama(_user: User = Depends(get_current_user)):
+async def start_ollama(_user = Depends(get_current_user)):
     """Attempt to start Ollama via `ollama serve`."""
     settings = _settings()
 
@@ -260,7 +259,7 @@ async def start_ollama(_user: User = Depends(get_current_user)):
 
 
 @router.post("/stop")
-async def stop_ollama(_user: User = Depends(get_current_user)):
+async def stop_ollama(_user = Depends(get_current_user)):
     """Stop the running Ollama process."""
     settings = _settings()
 
@@ -317,7 +316,7 @@ async def stop_ollama(_user: User = Depends(get_current_user)):
 
 
 @router.get("/models", response_model=list[OllamaModel])
-async def list_models(_user: User = Depends(get_current_user)):
+async def list_models(_user = Depends(get_current_user)):
     """List all locally available Ollama models."""
     settings = _settings()
     try:
@@ -345,7 +344,7 @@ async def list_models(_user: User = Depends(get_current_user)):
 
 
 @router.get("/models/catalog")
-async def models_catalog(_user: User = Depends(get_current_user)):
+async def models_catalog(_user = Depends(get_current_user)):
     """Return catalog of models from ollama.com library."""
     settings = _settings()
 
@@ -388,7 +387,7 @@ async def models_catalog(_user: User = Depends(get_current_user)):
 
 
 @router.get("/models/{model_name:path}/detail", response_model=OllamaModelDetail)
-async def model_detail(model_name: str, _user: User = Depends(get_current_user)):
+async def model_detail(model_name: str, _user = Depends(get_current_user)):
     """Get detailed info about a specific model."""
     settings = _settings()
     try:
@@ -412,7 +411,7 @@ async def model_detail(model_name: str, _user: User = Depends(get_current_user))
 
 
 @router.post("/models/pull")
-async def pull_model(body: PullRequest, _user: User = Depends(get_current_user)):
+async def pull_model(body: PullRequest, _user = Depends(get_current_user)):
     """Pull (download) a model from Ollama registry."""
     settings = _settings()
     model_name = body.model
@@ -448,7 +447,7 @@ async def pull_model(body: PullRequest, _user: User = Depends(get_current_user))
 
 
 @router.post("/models/pull/stream")
-async def pull_model_stream(body: PullRequest, _user: User = Depends(get_current_user)):
+async def pull_model_stream(body: PullRequest, _user = Depends(get_current_user)):
     """Pull a model with SSE streaming progress updates."""
     settings = _settings()
     model_name = body.model
@@ -516,7 +515,7 @@ async def pull_model_stream(body: PullRequest, _user: User = Depends(get_current
 
 
 @router.delete("/models/{model_name:path}")
-async def delete_model(model_name: str, _user: User = Depends(get_current_user)):
+async def delete_model(model_name: str, _user = Depends(get_current_user)):
     """Delete a locally cached model."""
     settings = _settings()
     try:
@@ -539,7 +538,7 @@ async def delete_model(model_name: str, _user: User = Depends(get_current_user))
 
 
 @router.post("/models/{model_name:path}/load")
-async def load_model(model_name: str, _user: User = Depends(get_current_user)):
+async def load_model(model_name: str, _user = Depends(get_current_user)):
     """Load a model into memory (warm up)."""
     settings = _settings()
     try:
@@ -564,7 +563,7 @@ async def load_model(model_name: str, _user: User = Depends(get_current_user)):
 
 
 @router.post("/models/{model_name:path}/unload")
-async def unload_model(model_name: str, _user: User = Depends(get_current_user)):
+async def unload_model(model_name: str, _user = Depends(get_current_user)):
     """Unload a model from memory."""
     settings = _settings()
     try:
@@ -598,7 +597,7 @@ async def unload_model(model_name: str, _user: User = Depends(get_current_user))
 
 
 @router.post("/chat")
-async def chat_with_model(body: ChatRequest, _user: User = Depends(get_current_user)):
+async def chat_with_model(body: ChatRequest, _user = Depends(get_current_user)):
     """Send a message to a model and get a response (non-streaming)."""
     settings = _settings()
     messages = []
@@ -641,7 +640,7 @@ async def chat_with_model(body: ChatRequest, _user: User = Depends(get_current_u
 
 
 @router.get("/running")
-async def running_models(_user: User = Depends(get_current_user)):
+async def running_models(_user = Depends(get_current_user)):
     """List models currently loaded in memory (running)."""
     settings = _settings()
     try:
@@ -666,7 +665,7 @@ async def running_models(_user: User = Depends(get_current_user)):
 
 
 @router.get("/watchdog")
-async def watchdog_status(_user: User = Depends(get_current_user)):
+async def watchdog_status(_user = Depends(get_current_user)):
     """Get watchdog status — tracked state of Ollama and models."""
     from app.services.ollama_watchdog import (
         is_ollama_manually_stopped as _is_oms,

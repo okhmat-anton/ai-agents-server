@@ -12,12 +12,11 @@ import json
 import logging
 
 import httpx
-from sqlalchemy import select
 
 from app.config import get_settings
-from app.database import redis_client, async_session
-from app.models.model_config import ModelConfig
-from app.models.model_role import ModelRoleAssignment
+from app.database import redis_client, get_mongodb
+from app.mongodb.models.model_config import MongoModelRoleAssignment
+from app.mongodb.services import ModelConfigService, ModelRoleAssignmentService
 from app.services.log_service import syslog, syslog_bg
 
 logger = logging.getLogger("ollama_watchdog")
@@ -218,62 +217,60 @@ async def _load_model(model_name: str) -> bool:
 async def _auto_assign_base_if_needed(running_models: set[str]):
     """If no base role is assigned, auto-assign the first running ollama model."""
     try:
-        async with async_session() as db:
-            # Check if base role is already assigned
-            result = await db.execute(
-                select(ModelRoleAssignment).where(ModelRoleAssignment.role == "base")
-            )
-            existing = result.scalar_one_or_none()
-            if existing:
-                # Base role exists — check if the model is still valid
-                model = await db.get(ModelConfig, existing.model_config_id)
-                if model and model.is_active:
-                    # If it's an ollama model, check if it's running
-                    if model.provider == "ollama" and model.model_id in running_models:
-                        return  # Base model is fine
-                    elif model.provider != "ollama":
-                        return  # API model, always available
-                    # Base model is Ollama but not running — don't reassign,
-                    # watchdog will try to restart it
-                    return
-                # Model deleted or inactive — fall through to reassign
+        db = get_mongodb()
+        role_svc = ModelRoleAssignmentService(db)
+        mc_svc = ModelConfigService(db)
 
-            # Find first running ollama model in model_configs
-            for model_name in sorted(running_models):
-                result = await db.execute(
-                    select(ModelConfig)
-                    .where(ModelConfig.provider == "ollama", ModelConfig.model_id == model_name, ModelConfig.is_active == True)
-                    .limit(1)
-                )
-                mc = result.scalar_one_or_none()
-                if mc:
-                    if existing:
-                        existing.model_config_id = mc.id
-                    else:
-                        db.add(ModelRoleAssignment(role="base", model_config_id=mc.id))
-                    await db.commit()
-                    await syslog(db, "info",
-                                 f"Auto-assigned base role to running model: {mc.name} ({mc.model_id})",
-                                 source="ollama_watchdog")
-                    logger.info(f"Auto-assigned base role to: {mc.name}")
-                    return
+        # Check if base role is already assigned
+        existing = await role_svc.find_one({"role": "base"})
+        if existing:
+            # Base role exists — check if the model is still valid
+            model = await mc_svc.get_by_id(existing.model_config_id)
+            if model and model.is_active:
+                # If it's an ollama model, check if it's running
+                if model.provider == "ollama" and model.model_id in running_models:
+                    return  # Base model is fine
+                elif model.provider != "ollama":
+                    return  # API model, always available
+                # Base model is Ollama but not running — don't reassign,
+                # watchdog will try to restart it
+                return
+            # Model deleted or inactive — fall through to reassign
 
-            # No running ollama model found — try first active API model
-            if not existing:
-                result = await db.execute(
-                    select(ModelConfig)
-                    .where(ModelConfig.provider != "ollama", ModelConfig.is_active == True)
-                    .order_by(ModelConfig.created_at)
-                    .limit(1)
+        # Find first running ollama model in model_configs
+        for model_name in sorted(running_models):
+            mc = await mc_svc.find_one({
+                "provider": "ollama",
+                "model_id": model_name,
+                "is_active": True,
+            })
+            if mc:
+                if existing:
+                    await role_svc.update(existing.id, {"model_config_id": mc.id})
+                else:
+                    new_assignment = MongoModelRoleAssignment(
+                        role="base", model_config_id=mc.id
+                    )
+                    await role_svc.create(new_assignment)
+                await syslog("info",
+                             f"Auto-assigned base role to running model: {mc.name} ({mc.model_id})",
+                             source="ollama_watchdog")
+                logger.info(f"Auto-assigned base role to: {mc.name}")
+                return
+
+        # No running ollama model found — try first active API model
+        if not existing:
+            all_models = await mc_svc.get_all(filter={"provider": {"$ne": "ollama"}, "is_active": True}, limit=1)
+            if all_models:
+                api_model = all_models[0]
+                new_assignment = MongoModelRoleAssignment(
+                    role="base", model_config_id=api_model.id
                 )
-                api_model = result.scalar_one_or_none()
-                if api_model:
-                    db.add(ModelRoleAssignment(role="base", model_config_id=api_model.id))
-                    await db.commit()
-                    await syslog(db, "info",
-                                 f"Auto-assigned base role to API model: {api_model.name}",
-                                 source="ollama_watchdog")
-                    logger.info(f"Auto-assigned base role to API: {api_model.name}")
+                await role_svc.create(new_assignment)
+                await syslog("info",
+                             f"Auto-assigned base role to API model: {api_model.name}",
+                             source="ollama_watchdog")
+                logger.info(f"Auto-assigned base role to API: {api_model.name}")
     except Exception as e:
         logger.error(f"Error in auto-assign base: {e}")
 
@@ -307,19 +304,16 @@ async def _watchdog_tick():
     # ── 1. Auto-restart Ollama if crashed ──
     if not ollama_running and not manually_stopped:
         logger.warning("Ollama is not running and was not manually stopped — attempting restart")
-        async with async_session() as db:
-            await syslog(db, "warning", "Ollama crashed — attempting auto-restart", source="ollama_watchdog")
+        await syslog("warning", "Ollama crashed — attempting auto-restart", source="ollama_watchdog")
 
         success = await _restart_ollama()
         if success:
             logger.info("Ollama auto-restarted successfully")
-            async with async_session() as db:
-                await syslog(db, "info", "Ollama auto-restarted successfully", source="ollama_watchdog")
+            await syslog("info", "Ollama auto-restarted successfully", source="ollama_watchdog")
             ollama_running = True
         else:
             logger.error("Failed to auto-restart Ollama")
-            async with async_session() as db:
-                await syslog(db, "error", "Failed to auto-restart Ollama", source="ollama_watchdog")
+            await syslog("error", "Failed to auto-restart Ollama", source="ollama_watchdog")
             return
 
     if not ollama_running:
@@ -340,25 +334,29 @@ async def _watchdog_tick():
                 continue
 
             logger.warning(f"Model '{model_name}' dropped from memory — attempting auto-restart")
-            async with async_session() as db:
-                await syslog(db, "warning",
-                             f"Model '{model_name}' dropped from memory — attempting auto-restart",
-                             source="ollama_watchdog")
+            await syslog("warning",
+                         f"Model '{model_name}' dropped from memory — attempting auto-restart",
+                         source="ollama_watchdog")
 
             success = await _load_model(model_name)
             if success:
                 current_running.add(model_name)
                 logger.info(f"Model '{model_name}' auto-restarted successfully")
-                async with async_session() as db:
-                    await syslog(db, "info",
-                                 f"Model '{model_name}' auto-restarted successfully",
-                                 source="ollama_watchdog")
+                await syslog("info",
+                             f"Model '{model_name}' auto-restarted successfully",
+                             source="ollama_watchdog")
             else:
                 logger.error(f"Failed to auto-restart model '{model_name}'")
-                async with async_session() as db:
-                    await syslog(db, "error",
-                                 f"Failed to auto-restart model '{model_name}'",
-                                 source="ollama_watchdog")
+                await syslog("error",
+                             f"Failed to auto-restart model '{model_name}'",
+                             source="ollama_watchdog")
+
+    # ── 4. Auto-assign base role if needed ──
+    if current_running:
+        await _auto_assign_base_if_needed(current_running)
+
+    # ── 5. Update last known running models ──
+    await _update_last_known_running(current_running)
 
     # ── 4. Auto-assign base role if needed ──
     if current_running:

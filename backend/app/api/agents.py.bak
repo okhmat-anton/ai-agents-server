@@ -1,19 +1,19 @@
 import os
 import shutil
 from uuid import UUID
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
-from app.database import get_mongodb
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, delete
+from sqlalchemy.orm import selectinload
+from app.database import get_db
 from app.core.dependencies import get_current_user
-from app.mongodb.models.agent import MongoAgent, MongoAgentModel, MongoAgentProtocol
-from app.mongodb.services import (
-    AgentService, AgentModelService, AgentProtocolService,
-    ThinkingProtocolService, ModelConfigService,
-    TaskService, AgentSkillService, AgentErrorService,
-)
+from app.models.user import User
+from app.models.agent import Agent
+from app.models.agent_model import AgentModel
+from app.models.task import Task
+from app.models.log import AgentLog
+from app.models.memory import Memory
+from app.models.skill import AgentSkill
 from app.schemas.agent import AgentCreate, AgentUpdate, AgentResponse, AgentStatsResponse, AgentModelResponse
 from app.schemas.common import MessageResponse
 from app.api.agent_files import (
@@ -23,21 +23,35 @@ from app.api.agent_files import (
 )
 from app.api.agent_beliefs import read_beliefs
 
+from app.models.thinking_protocol import ThinkingProtocol
+from app.models.agent_protocol import AgentProtocol
+
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
-async def _build_agent_response(
-    agent: MongoAgent, db: AsyncIOMotorDatabase
-) -> dict:
+async def _load_agent(db: AsyncSession, agent_id) -> Agent | None:
+    """Load agent with agent_models + nested model_config_rel eagerly."""
+    result = await db.execute(
+        select(Agent)
+        .where(Agent.id == agent_id)
+        .options(
+            selectinload(Agent.agent_models).selectinload(AgentModel.model_config_rel),
+            selectinload(Agent.thinking_protocol),
+            selectinload(Agent.agent_protocols).selectinload(AgentProtocol.protocol),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _build_agent_response(agent: Agent) -> dict:
     """Build response dict — DB identity + filesystem settings as source of truth."""
-    data = agent.model_dump()
-    data["id"] = agent.id
+    data = {c.key: getattr(agent, c.key) for c in agent.__table__.columns}
 
     # Overlay settings from filesystem (source of truth)
     config = read_agent_config(agent.name)
     if config:
         data["description"] = config.get("description", data.get("description", ""))
-        data["mission"] = config.get("mission", "")
+        data["mission"] = config.get("mission", data.get("mission", ""))
         data["system_prompt"] = config.get("system_prompt", data.get("system_prompt", ""))
 
     file_settings = read_agent_settings(agent.name)
@@ -57,33 +71,26 @@ async def _build_agent_response(
     data["aspirations"] = aspirations
 
     # Thinking protocol (main)
-    if agent.thinking_protocol_id:
-        tp_svc = ThinkingProtocolService(db)
-        tp = await tp_svc.get_by_id(agent.thinking_protocol_id)
-        if tp:
-            data["thinking_protocol"] = {
-                "id": tp.id,
-                "name": tp.name,
-                "description": tp.description or "",
-                "type": tp.type or "standard",
-                "steps": tp.steps or [],
-            }
-        else:
-            data["thinking_protocol"] = None
+    if agent.thinking_protocol:
+        tp = agent.thinking_protocol
+        data["thinking_protocol"] = {
+            "id": str(tp.id),
+            "name": tp.name,
+            "description": tp.description or "",
+            "type": tp.type or "standard",
+            "steps": tp.steps or [],
+        }
     else:
         data["thinking_protocol"] = None
-    data["thinking_protocol_id"] = agent.thinking_protocol_id
+    data["thinking_protocol_id"] = str(agent.thinking_protocol_id) if agent.thinking_protocol_id else None
 
     # All assigned protocols (multi-protocol)
-    ap_svc = AgentProtocolService(db)
-    tp_svc = ThinkingProtocolService(db)
-    agent_protocols = await ap_svc.get_by_agent(agent.id)
     protocols_out = []
-    for ap in agent_protocols:
-        p = await tp_svc.get_by_id(ap.protocol_id)
+    for ap in (agent.agent_protocols or []):
+        p = ap.protocol
         if p:
             protocols_out.append({
-                "id": p.id,
+                "id": str(p.id),
                 "name": p.name,
                 "description": p.description or "",
                 "type": p.type or "standard",
@@ -93,16 +100,12 @@ async def _build_agent_response(
             })
     data["protocols"] = protocols_out
 
-    # Agent models
-    am_svc = AgentModelService(db)
-    mc_svc = ModelConfigService(db)
-    agent_models = await am_svc.get_by_agent(agent.id)
     agent_models_out = []
-    for am in agent_models:
-        mcr = await mc_svc.get_by_id(am.model_config_id)
+    for am in (agent.agent_models or []):
+        mcr = am.model_config_rel
         agent_models_out.append(AgentModelResponse(
-            id=UUID(am.id),
-            model_config_id=UUID(am.model_config_id),
+            id=am.id,
+            model_config_id=am.model_config_id,
             model_name=mcr.model_id if mcr else None,
             model_display_name=mcr.name if mcr else None,
             task_type=am.task_type,
@@ -119,82 +122,74 @@ async def list_agents(
     status: str | None = Query(None),
     limit: int = Query(50, le=200),
     offset: int = Query(0, ge=0),
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    filter_dict = {}
+    q = select(Agent).options(
+        selectinload(Agent.agent_models).selectinload(AgentModel.model_config_rel),
+        selectinload(Agent.thinking_protocol),
+        selectinload(Agent.agent_protocols).selectinload(AgentProtocol.protocol),
+    )
     if status:
-        filter_dict["status"] = status
-    agents = await svc.get_all(filter=filter_dict, skip=offset, limit=limit)
-    agents.sort(key=lambda a: a.created_at, reverse=True)
-    return [await _build_agent_response(a, db) for a in agents]
+        q = q.where(Agent.status == status)
+    q = q.order_by(Agent.created_at.desc()).limit(limit).offset(offset)
+    result = await db.execute(q)
+    agents = result.scalars().all()
+    return [_build_agent_response(a) for a in agents]
 
 
 @router.post("", response_model=AgentResponse, status_code=201)
 async def create_agent(
     body: AgentCreate,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-
-    agent = MongoAgent(
-        name=body.name,
-        description=body.description,
-        system_prompt=body.system_prompt,
-        temperature=body.temperature,
-        top_p=body.top_p,
-        top_k=body.top_k,
-        max_tokens=body.max_tokens,
-        num_ctx=body.num_ctx,
-        repeat_penalty=body.repeat_penalty,
-        num_predict=body.num_predict,
-        stop=body.stop or [],
-        num_thread=body.num_thread,
-        num_gpu=body.num_gpu,
-        filesystem_access=body.filesystem_access,
-        system_access=body.system_access,
-        max_messages_before_response=body.max_messages_before_response,
-        self_thinking=body.self_thinking,
-        thinking_protocol_id=body.thinking_protocol_id,
-    )
-    await svc.create(agent)
+    agent_data = body.model_dump(exclude={"models", "thinking_protocol_id", "protocol_ids", "mission"})
+    # Handle thinking_protocol_id separately
+    if body.thinking_protocol_id:
+        agent_data["thinking_protocol_id"] = body.thinking_protocol_id
+    # self_thinking is already in agent_data from model_dump
+    agent = Agent(**agent_data)
+    db.add(agent)
+    await db.flush()
 
     # Create agent_model entries
-    am_svc = AgentModelService(db)
     for entry in body.models:
-        am = MongoAgentModel(
+        am = AgentModel(
             agent_id=agent.id,
-            model_config_id=str(entry.model_config_id),
+            model_config_id=entry.model_config_id,
             task_type=entry.task_type,
             tags=entry.tags,
             priority=entry.priority,
         )
-        await am_svc.create(am)
+        db.add(am)
 
     # Create agent_protocol entries (multi-protocol)
-    ap_svc = AgentProtocolService(db)
     if body.protocol_ids:
         for idx, pid in enumerate(body.protocol_ids):
-            ap = MongoAgentProtocol(
+            ap = AgentProtocol(
                 agent_id=agent.id,
-                protocol_id=pid,
+                protocol_id=UUID(pid),
                 is_main=(pid == body.thinking_protocol_id),
                 priority=idx,
             )
-            await ap_svc.create(ap)
+            db.add(ap)
     elif body.thinking_protocol_id:
-        ap = MongoAgentProtocol(
+        # If only main protocol specified, add it to the join table too
+        ap = AgentProtocol(
             agent_id=agent.id,
-            protocol_id=body.thinking_protocol_id,
+            protocol_id=UUID(body.thinking_protocol_id),
             is_main=True,
             priority=0,
         )
-        await ap_svc.create(ap)
+        db.add(ap)
+
+    await db.flush()
+    await db.refresh(agent)
 
     # Write files as source of truth
     init_agent_directory(agent)
+    # Write config files from the provided data (not from DB defaults)
     write_agent_config(agent.name, {
         "name": agent.name,
         "description": body.description or "",
@@ -215,97 +210,95 @@ async def create_agent(
         "principles": [],
     })
 
-    return await _build_agent_response(agent, db)
+    agent = await _load_agent(db, agent.id)
+    return _build_agent_response(agent)
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
 async def get_agent(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    agent = await _load_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    return await _build_agent_response(agent, db)
+    return _build_agent_response(agent)
 
 
 @router.put("/{agent_id}", response_model=AgentResponse)
 async def update_agent(
     agent_id: UUID,
     body: AgentUpdate,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     update_data = body.model_dump(exclude_unset=True, exclude={"models", "protocol_ids"})
     old_name = agent.name
 
-    # Build MongoDB update dict
-    mongo_update = {}
-    for key in ("name", "filesystem_access", "system_access", "self_thinking"):
-        if key in update_data:
-            mongo_update[key] = update_data[key]
+    # Update DB identity fields
+    if "name" in update_data:
+        agent.name = update_data["name"]
+    if "filesystem_access" in update_data:
+        agent.filesystem_access = update_data["filesystem_access"]
+    if "system_access" in update_data:
+        agent.system_access = update_data["system_access"]
+    if "self_thinking" in update_data:
+        agent.self_thinking = update_data["self_thinking"]
     if "thinking_protocol_id" in update_data:
         val = update_data["thinking_protocol_id"]
-        mongo_update["thinking_protocol_id"] = val if val else None
-
-    mongo_update["updated_at"] = datetime.now(timezone.utc).isoformat()
-
-    if mongo_update:
-        await svc.update(str(agent_id), mongo_update)
-
-    # Refresh agent
-    agent = await svc.get_by_id(str(agent_id))
+        agent.thinking_protocol_id = val if val else None
 
     # If models list is provided, replace all agent_model entries
-    am_svc = AgentModelService(db)
     if body.models is not None:
-        await am_svc.delete_by_agent(str(agent_id))
+        await db.execute(delete(AgentModel).where(AgentModel.agent_id == agent_id))
         for entry in body.models:
-            am = MongoAgentModel(
-                agent_id=str(agent_id),
-                model_config_id=str(entry.model_config_id),
+            am = AgentModel(
+                agent_id=agent.id,
+                model_config_id=entry.model_config_id,
                 task_type=entry.task_type,
                 tags=entry.tags,
                 priority=entry.priority,
             )
-            await am_svc.create(am)
+            db.add(am)
 
     # If protocol_ids list is provided, replace all agent_protocol entries
-    ap_svc = AgentProtocolService(db)
     if body.protocol_ids is not None:
-        await ap_svc.delete_by_agent(str(agent_id))
-        main_id = body.thinking_protocol_id if "thinking_protocol_id" in body.model_dump(exclude_unset=True) else agent.thinking_protocol_id
+        await db.execute(delete(AgentProtocol).where(AgentProtocol.agent_id == agent_id))
+        main_id = body.thinking_protocol_id if "thinking_protocol_id" in body.model_dump(exclude_unset=True) else str(agent.thinking_protocol_id) if agent.thinking_protocol_id else None
         for idx, pid in enumerate(body.protocol_ids):
-            ap = MongoAgentProtocol(
-                agent_id=str(agent_id),
-                protocol_id=pid,
+            ap = AgentProtocol(
+                agent_id=agent.id,
+                protocol_id=UUID(pid),
                 is_main=(pid == main_id),
                 priority=idx,
             )
-            await ap_svc.create(ap)
+            db.add(ap)
     elif "thinking_protocol_id" in update_data:
-        # Update is_main flags on existing entries
-        existing_aps = await ap_svc.get_by_agent(str(agent_id))
+        # If only main protocol changed but protocol_ids not provided,
+        # update the is_main flag on existing entries
+        existing_aps = await db.execute(
+            select(AgentProtocol).where(AgentProtocol.agent_id == agent_id)
+        )
         main_val = update_data["thinking_protocol_id"]
-        for ap in existing_aps:
-            new_is_main = (ap.protocol_id == main_val) if main_val else False
-            if ap.is_main != new_is_main:
-                await ap_svc.update(ap.id, {"is_main": new_is_main})
+        for ap in existing_aps.scalars().all():
+            ap.is_main = (str(ap.protocol_id) == main_val) if main_val else False
+
+    await db.flush()
+    await db.refresh(agent)
 
     # Handle rename: move directory
-    new_name = agent.name
-    if new_name != old_name:
+    if agent.name != old_name:
+        import shutil
         from app.api.agent_files import _get_agent_dir, _ensure_agents_dir
         _ensure_agents_dir()
         old_dir = _get_agent_dir(old_name)
-        new_dir = _get_agent_dir(new_name)
+        new_dir = _get_agent_dir(agent.name)
         if old_dir.exists():
             shutil.move(str(old_dir), str(new_dir))
 
@@ -339,29 +332,26 @@ async def update_agent(
         elif f in settings_data:
             new_settings[f] = settings_data[f]
         else:
-            new_settings[f] = getattr(agent, f, None)
+            new_settings[f] = getattr(agent, f)
+    new_settings["principles"] = settings_data.get("principles", [])
     write_agent_settings(agent.name, new_settings)
 
-    return await _build_agent_response(agent, db)
+    agent = await _load_agent(db, agent.id)
+    return _build_agent_response(agent)
 
 
 @router.delete("/{agent_id}", response_model=MessageResponse)
 async def delete_agent(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     agent_name = agent.name
-
-    # Delete related data
-    await AgentModelService(db).delete_by_agent(str(agent_id))
-    await AgentProtocolService(db).delete_by_agent(str(agent_id))
-    await AgentErrorService(db).delete_by_agent(str(agent_id))
-    await svc.delete(str(agent_id))
+    await db.delete(agent)
     delete_agent_directory(agent_name)
     return MessageResponse(message="Agent deleted")
 
@@ -369,148 +359,141 @@ async def delete_agent(
 @router.post("/{agent_id}/start", response_model=AgentResponse)
 async def start_agent(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    agent = await svc.update(str(agent_id), {
-        "status": "running",
-        "last_run_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
-    return await _build_agent_response(agent, db)
+    agent.status = "running"
+    from datetime import datetime, timezone
+    agent.last_run_at = datetime.now(timezone.utc)
+    await db.flush()
+    agent = await _load_agent(db, agent_id)
+    return _build_agent_response(agent)
 
 
 @router.post("/{agent_id}/stop", response_model=AgentResponse)
 async def stop_agent(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    agent = await svc.update(str(agent_id), {
-        "status": "stopped",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
-    return await _build_agent_response(agent, db)
+    agent.status = "stopped"
+    await db.flush()
+    agent = await _load_agent(db, agent_id)
+    return _build_agent_response(agent)
 
 
 @router.post("/{agent_id}/pause", response_model=AgentResponse)
 async def pause_agent(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    agent = await svc.update(str(agent_id), {
-        "status": "paused",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
-    return await _build_agent_response(agent, db)
+    agent.status = "paused"
+    await db.flush()
+    agent = await _load_agent(db, agent_id)
+    return _build_agent_response(agent)
 
 
 @router.post("/{agent_id}/resume", response_model=AgentResponse)
 async def resume_agent(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    agent = result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    agent = await svc.update(str(agent_id), {
-        "status": "running",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    })
-    return await _build_agent_response(agent, db)
+    agent.status = "running"
+    await db.flush()
+    agent = await _load_agent(db, agent_id)
+    return _build_agent_response(agent)
 
 
 @router.post("/{agent_id}/duplicate", response_model=AgentResponse, status_code=201)
 async def duplicate_agent(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    agent = await _load_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     new_name = f"{agent.name} (copy)"
-    new_agent = MongoAgent(
-        name=new_name,
-        thinking_protocol_id=agent.thinking_protocol_id,
-    )
-    await svc.create(new_agent)
+    new_agent = Agent(name=new_name, thinking_protocol_id=agent.thinking_protocol_id)
+    db.add(new_agent)
+    await db.flush()
 
     # Duplicate agent_models
-    am_svc = AgentModelService(db)
-    agent_models = await am_svc.get_by_agent(agent.id)
-    for am in agent_models:
-        new_am = MongoAgentModel(
+    for am in agent.agent_models:
+        new_am = AgentModel(
             agent_id=new_agent.id,
             model_config_id=am.model_config_id,
             task_type=am.task_type,
             tags=am.tags,
             priority=am.priority,
         )
-        await am_svc.create(new_am)
+        db.add(new_am)
 
     # Duplicate agent_protocols
-    ap_svc = AgentProtocolService(db)
-    agent_protocols = await ap_svc.get_by_agent(agent.id)
-    for ap in agent_protocols:
-        new_ap = MongoAgentProtocol(
+    for ap in (agent.agent_protocols or []):
+        new_ap = AgentProtocol(
             agent_id=new_agent.id,
             protocol_id=ap.protocol_id,
             is_main=ap.is_main,
             priority=ap.priority,
         )
-        await ap_svc.create(new_ap)
+        db.add(new_ap)
+    await db.flush()
 
-    # Duplicate filesystem directory
+    # Duplicate filesystem directory (copies all files including settings)
     duplicate_agent_directory(agent.name, new_name)
+    # Update agent.json with new name
     config = read_agent_config(new_name)
     config["name"] = new_name
     write_agent_config(new_name, config)
 
-    return await _build_agent_response(new_agent, db)
+    new_agent = await _load_agent(db, new_agent.id)
+    return _build_agent_response(new_agent)
 
 
 @router.get("/{agent_id}/stats", response_model=AgentStatsResponse)
 async def agent_stats(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
-    if not agent:
+    # Verify agent exists
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    aid = str(agent_id)
-    total_tasks = await TaskService(db).count({"agent_id": aid})
-    completed = await TaskService(db).count({"agent_id": aid, "status": "completed"})
-    failed = await TaskService(db).count({"agent_id": aid, "status": "failed"})
-    skills = len(await AgentSkillService(db).get_by_agent(aid))
-    errors = await AgentErrorService(db).count({"agent_id": aid})
+    total_tasks = (await db.execute(select(func.count(Task.id)).where(Task.agent_id == agent_id))).scalar() or 0
+    completed = (await db.execute(select(func.count(Task.id)).where(Task.agent_id == agent_id, Task.status == "completed"))).scalar() or 0
+    failed = (await db.execute(select(func.count(Task.id)).where(Task.agent_id == agent_id, Task.status == "failed"))).scalar() or 0
+    logs = (await db.execute(select(func.count(AgentLog.id)).where(AgentLog.agent_id == agent_id))).scalar() or 0
+    memories = (await db.execute(select(func.count(Memory.id)).where(Memory.agent_id == agent_id))).scalar() or 0
+    skills = (await db.execute(select(func.count(AgentSkill.skill_id)).where(AgentSkill.agent_id == agent_id))).scalar() or 0
 
     return AgentStatsResponse(
         total_tasks=total_tasks,
         completed_tasks=completed,
         failed_tasks=failed,
-        total_logs=0,
-        total_memories=0,
+        total_logs=logs,
+        total_memories=memories,
         total_skills=skills,
     )
 
@@ -519,37 +502,42 @@ async def agent_stats(
 
 AVATAR_MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 AVATAR_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-AVATAR_RESIZE_PX = 256
+AVATAR_RESIZE_PX = 256  # Max width/height for non-GIF images
 
 
 @router.post("/{agent_id}/avatar")
 async def upload_avatar(
     agent_id: UUID,
     file: UploadFile = File(...),
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Upload or replace agent avatar."""
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    """Upload or replace agent avatar. Photos are resized; GIFs are kept as-is."""
+    agent = await _load_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    # Validate content type
     content_type = file.content_type or ""
     if content_type not in AVATAR_ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail=f"Unsupported image type: {content_type}. Allowed: {', '.join(AVATAR_ALLOWED_TYPES)}")
 
+    # Read file data
     data = await file.read()
     if len(data) > AVATAR_MAX_SIZE:
         raise HTTPException(status_code=400, detail=f"File too large. Max {AVATAR_MAX_SIZE // (1024*1024)} MB")
 
     is_gif = content_type == "image/gif"
+
+    # Determine extension
     ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}
     ext = ext_map.get(content_type, "png")
 
+    # Agent avatar directory
     base_dir = os.path.join("..", "data", "agents", agent.name)
     os.makedirs(base_dir, exist_ok=True)
 
+    # Remove old avatar files
     for old in os.listdir(base_dir):
         if old.startswith("avatar."):
             os.remove(os.path.join(base_dir, old))
@@ -558,19 +546,29 @@ async def upload_avatar(
     avatar_path = os.path.join(base_dir, avatar_filename)
 
     if is_gif:
+        # GIF — save as-is, no resize
         with open(avatar_path, "wb") as f:
             f.write(data)
     else:
+        # Resize photo using Pillow
         from PIL import Image
         import io
         img = Image.open(io.BytesIO(data))
+
+        # Convert RGBA/P to RGB for JPEG
         if ext == "jpg" and img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
+
+        # Resize keeping aspect ratio, fit within AVATAR_RESIZE_PX x AVATAR_RESIZE_PX
         img.thumbnail((AVATAR_RESIZE_PX, AVATAR_RESIZE_PX), Image.LANCZOS)
         img.save(avatar_path, quality=90)
 
+    # Build URL relative path (served via /api/uploads/agents/<name>/avatar.<ext>)
     avatar_url = f"/api/uploads/agents/{agent.name}/{avatar_filename}"
-    await svc.update(str(agent_id), {"avatar_url": avatar_url})
+
+    # Update DB
+    agent.avatar_url = avatar_url
+    await db.commit()
 
     return {"avatar_url": avatar_url}
 
@@ -578,12 +576,11 @@ async def upload_avatar(
 @router.delete("/{agent_id}/avatar")
 async def delete_avatar(
     agent_id: UUID,
-    _user = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    _user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Remove agent avatar."""
-    svc = AgentService(db)
-    agent = await svc.get_by_id(str(agent_id))
+    agent = await _load_agent(db, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -593,5 +590,7 @@ async def delete_avatar(
             if old.startswith("avatar."):
                 os.remove(os.path.join(base_dir, old))
 
-    await svc.update(str(agent_id), {"avatar_url": None})
+    agent.avatar_url = None
+    await db.commit()
+
     return {"detail": "Avatar deleted"}

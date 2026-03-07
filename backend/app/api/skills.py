@@ -1,19 +1,17 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from app.database import get_db
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.agent import Agent
-from app.models.skill import Skill, AgentSkill
+from app.mongodb.models.user import MongoUser
+from app.mongodb.models.agent import MongoAgent
+from app.mongodb.models.skill import MongoSkill, MongoAgentSkill
+from app.mongodb.services import SkillService, AgentSkillService, AgentService
 from app.schemas.skill import (
     SkillCreate, SkillUpdate, SkillResponse, AgentSkillCreate, AgentSkillResponse,
 )
 from app.schemas.common import MessageResponse
 from app.api.skill_files import init_skill_directory, delete_skill_directory, duplicate_skill_directory
-from sqlalchemy.orm import selectinload
-from sqlalchemy import or_
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 agent_skill_router = APIRouter(prefix="/api/agents/{agent_id}/skills", tags=["agent-skills"])
@@ -25,58 +23,68 @@ async def list_skills(
     category: str | None = Query(None),
     is_shared: bool | None = Query(None),
     search: str | None = Query(None),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    q = select(Skill)
+    skill_service = SkillService(db)
+    all_skills = await skill_service.get_all(skip=0, limit=1000)
+    
+    # Apply filters
+    filtered_skills = all_skills
     if category:
-        q = q.where(Skill.category == category)
+        filtered_skills = [s for s in filtered_skills if s.category == category]
     if is_shared is not None:
-        q = q.where(Skill.is_shared == is_shared)
+        filtered_skills = [s for s in filtered_skills if s.is_shared == is_shared]
     if search:
-        q = q.where(Skill.name.ilike(f"%{search}%") | Skill.description.ilike(f"%{search}%"))
-    q = q.order_by(Skill.created_at.desc())
-    result = await db.execute(q)
-    return result.scalars().all()
+        search_lower = search.lower()
+        filtered_skills = [s for s in filtered_skills 
+                          if search_lower in s.name.lower() or search_lower in s.description.lower()]
+    
+    # Sort by created_at desc
+    filtered_skills.sort(key=lambda s: s.created_at, reverse=True)
+    return filtered_skills
 
 
 @router.post("", response_model=SkillResponse, status_code=201)
 async def create_skill(
     body: SkillCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    existing = await db.execute(select(Skill).where(Skill.name == body.name))
-    if existing.scalar_one_or_none():
+    skill_service = SkillService(db)
+    existing = await skill_service.get_by_name(body.name)
+    if existing:
         raise HTTPException(status_code=409, detail="Skill with this name already exists")
-    skill = Skill(**body.model_dump())
-    db.add(skill)
-    await db.flush()
-    await db.refresh(skill)
+    
+    skill = MongoSkill(**body.model_dump())
+    created = await skill_service.create(skill)
 
     # Create skill directory + manifest + default entry file
-    init_skill_directory(skill)
+    init_skill_directory(created)
 
-    return skill
+    return created
 
 
 @router.get("/shared", response_model=list[SkillResponse])
 async def list_shared_skills(
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Skill).where(Skill.is_shared == True).order_by(Skill.name))
-    return result.scalars().all()
+    skill_service = SkillService(db)
+    all_skills = await skill_service.get_all(skip=0, limit=1000)
+    shared = [s for s in all_skills if s.is_shared]
+    shared.sort(key=lambda s: s.name)
+    return shared
 
 
 @router.get("/{skill_id}", response_model=SkillResponse)
 async def get_skill(
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
     return skill
@@ -86,41 +94,44 @@ async def get_skill(
 async def update_skill(
     skill_id: UUID,
     body: SkillUpdate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
     if skill.is_system:
         raise HTTPException(status_code=403, detail="Cannot edit system skill")
-    for key, value in body.model_dump(exclude_unset=True).items():
-        setattr(skill, key, value)
-    await db.flush()
-    await db.refresh(skill)
-    return skill
+    
+    update_data = body.model_dump(exclude_unset=True)
+    updated = await skill_service.update(str(skill_id), update_data)
+    return updated
 
 
 @router.delete("/{skill_id}", response_model=MessageResponse)
 async def delete_skill(
     skill_id: UUID,
     force: bool = Query(False),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
     if skill.is_system:
         raise HTTPException(status_code=403, detail="Cannot delete system skill")
+    
     if not force:
-        usage = await db.execute(select(AgentSkill).where(AgentSkill.skill_id == skill_id))
-        if usage.scalars().first():
+        agent_skill_service = AgentSkillService(db)
+        all_agent_skills = await agent_skill_service.get_all(skip=0, limit=1000)
+        usage = [ass for ass in all_agent_skills if ass.skill_id == str(skill_id)]
+        if usage:
             raise HTTPException(status_code=409, detail="Skill is in use. Use force=true to delete")
+    
     skill_name = skill.name
-    await db.delete(skill)
+    await skill_service.delete(str(skill_id))
 
     # Remove skill directory from filesystem
     delete_skill_directory(skill_name)
@@ -131,46 +142,45 @@ async def delete_skill(
 @router.post("/{skill_id}/share", response_model=SkillResponse)
 async def share_skill(
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
-    skill.is_shared = True
-    await db.flush()
-    await db.refresh(skill)
-    return skill
+    
+    updated = await skill_service.update(str(skill_id), {"is_shared": True})
+    return updated
 
 
 @router.post("/{skill_id}/unshare", response_model=SkillResponse)
 async def unshare_skill(
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
-    skill.is_shared = False
-    await db.flush()
-    await db.refresh(skill)
-    return skill
+    
+    updated = await skill_service.update(str(skill_id), {"is_shared": False})
+    return updated
 
 
 @router.post("/{skill_id}/duplicate", response_model=SkillResponse, status_code=201)
 async def duplicate_skill(
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
-    new_skill = Skill(
+    
+    new_skill = MongoSkill(
         name=f"{skill.name}_copy",
         display_name=f"{skill.display_name} (copy)",
         description=skill.description,
@@ -181,36 +191,34 @@ async def duplicate_skill(
         input_schema=skill.input_schema,
         output_schema=skill.output_schema,
     )
-    db.add(new_skill)
-    await db.flush()
-    await db.refresh(new_skill)
+    created = await skill_service.create(new_skill)
 
     # Copy entire skill directory
-    duplicate_skill_directory(skill.name, new_skill.name)
+    duplicate_skill_directory(skill.name, created.name)
 
-    return new_skill
+    return created
 
 
 # ------- Agent Skills -------
 @agent_skill_router.get("", response_model=list[AgentSkillResponse])
 async def list_agent_skills(
     agent_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    if not result.scalar_one_or_none():
+    agent_service = AgentService(db)
+    agent = await agent_service.get_by_id(str(agent_id))
+    if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    result = await db.execute(
-        select(AgentSkill).where(AgentSkill.agent_id == agent_id)
-    )
-    agent_skills = result.scalars().all()
+    agent_skill_service = AgentSkillService(db)
+    skill_service = SkillService(db)
+    
+    agent_skills = await agent_skill_service.get_by_agent(str(agent_id))
 
     responses = []
     for asl in agent_skills:
-        skill_result = await db.execute(select(Skill).where(Skill.id == asl.skill_id))
-        skill = skill_result.scalar_one_or_none()
+        skill = await skill_service.get_by_id(asl.skill_id)
         responses.append(AgentSkillResponse(
             skill_id=asl.skill_id,
             agent_id=asl.agent_id,
@@ -226,25 +234,26 @@ async def list_agent_skills(
 async def attach_skill(
     agent_id: UUID,
     body: AgentSkillCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    if not result.scalar_one_or_none():
+    agent_service = AgentService(db)
+    agent = await agent_service.get_by_id(str(agent_id))
+    if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    result = await db.execute(select(Skill).where(Skill.id == body.skill_id))
-    if not result.scalar_one_or_none():
+    
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(body.skill_id))
+    if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
 
-    existing = await db.execute(
-        select(AgentSkill).where(AgentSkill.agent_id == agent_id, AgentSkill.skill_id == body.skill_id)
-    )
-    if existing.scalar_one_or_none():
+    agent_skill_service = AgentSkillService(db)
+    existing = await agent_skill_service.get_by_agent_and_skill(str(agent_id), str(body.skill_id))
+    if existing:
         raise HTTPException(status_code=409, detail="Skill already attached")
 
-    asl = AgentSkill(agent_id=agent_id, skill_id=body.skill_id, config=body.config)
-    db.add(asl)
-    await db.flush()
+    asl = MongoAgentSkill(agent_id=str(agent_id), skill_id=str(body.skill_id), config=body.config)
+    await agent_skill_service.create(asl)
     return MessageResponse(message="Skill attached")
 
 
@@ -252,16 +261,14 @@ async def attach_skill(
 async def detach_skill(
     agent_id: UUID,
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(
-        select(AgentSkill).where(AgentSkill.agent_id == agent_id, AgentSkill.skill_id == skill_id)
-    )
-    asl = result.scalar_one_or_none()
+    agent_skill_service = AgentSkillService(db)
+    asl = await agent_skill_service.get_by_agent_and_skill(str(agent_id), str(skill_id))
     if not asl:
         raise HTTPException(status_code=404, detail="Skill not attached to agent")
-    await db.delete(asl)
+    await agent_skill_service.delete(asl.id)
     return MessageResponse(message="Skill detached")
 
 
@@ -270,18 +277,15 @@ async def update_agent_skill(
     agent_id: UUID,
     skill_id: UUID,
     is_enabled: bool | None = Query(None),
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    result = await db.execute(
-        select(AgentSkill).where(AgentSkill.agent_id == agent_id, AgentSkill.skill_id == skill_id)
-    )
-    asl = result.scalar_one_or_none()
+    agent_skill_service = AgentSkillService(db)
+    asl = await agent_skill_service.get_by_agent_and_skill(str(agent_id), str(skill_id))
     if not asl:
         raise HTTPException(status_code=404, detail="Skill not attached to agent")
     if is_enabled is not None:
-        asl.is_enabled = is_enabled
-    await db.flush()
+        await agent_skill_service.update(asl.id, {"is_enabled": is_enabled})
     return MessageResponse(message="Updated")
 
 
@@ -290,8 +294,8 @@ async def update_agent_skill(
 @agent_skill_router.get("/available", response_model=list[dict])
 async def list_available_skills(
     agent_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """
     Returns ALL skills available to this agent:
@@ -302,34 +306,30 @@ async def list_available_skills(
     Each skill includes 'enabled' flag showing whether agent has it active
     and 'ownership' field: 'system' | 'public' | 'personal'
     """
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+    agent_service = AgentService(db)
+    agent = await agent_service.get_by_id(str(agent_id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     # Get all skills available to this agent
-    result = await db.execute(
-        select(Skill).where(
-            or_(
-                Skill.is_system == True,
-                Skill.is_shared == True,
-                Skill.author_agent_id == agent_id,
-            )
-        ).order_by(Skill.category, Skill.name)
-    )
-    all_skills = result.scalars().all()
+    skill_service = SkillService(db)
+    all_skills_list = await skill_service.get_all(skip=0, limit=1000)
+    
+    # Filter: system OR shared OR authored by this agent
+    available = [s for s in all_skills_list 
+                if s.is_system or s.is_shared or s.author_agent_id == str(agent_id)]
+    available.sort(key=lambda s: (s.category, s.name))
 
     # Get agent's enabled/disabled state
-    result = await db.execute(
-        select(AgentSkill).where(AgentSkill.agent_id == agent_id)
-    )
-    agent_skill_map = {str(ask.skill_id): ask for ask in result.scalars().all()}
+    agent_skill_service = AgentSkillService(db)
+    agent_skills = await agent_skill_service.get_by_agent(str(agent_id))
+    agent_skill_map = {ask.skill_id: ask for ask in agent_skills}
 
     items = []
-    for s in all_skills:
-        sid = str(s.id)
+    for s in available:
+        sid = s.id
         ask = agent_skill_map.get(sid)
-        ownership = "system" if s.is_system else "personal" if s.author_agent_id == agent_id else "public"
+        ownership = "system" if s.is_system else "personal" if s.author_agent_id == str(agent_id) else "public"
         # Default: public/system skills are enabled unless explicitly disabled
         # Personal skills are disabled unless explicitly enabled
         if ask:
@@ -349,7 +349,7 @@ async def list_available_skills(
             "is_system": s.is_system,
             "is_shared": s.is_shared,
             "ownership": ownership,
-            "author_agent_id": str(s.author_agent_id) if s.author_agent_id else None,
+            "author_agent_id": s.author_agent_id,
             "enabled": enabled,
             "attached": ask is not None,
         })
@@ -360,35 +360,34 @@ async def list_available_skills(
 async def toggle_skill(
     agent_id: UUID,
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Toggle a skill on/off for an agent. Creates AgentSkill if needed."""
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    if not result.scalar_one_or_none():
+    agent_service = AgentService(db)
+    agent = await agent_service.get_by_id(str(agent_id))
+    if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
 
     # Check if already attached
-    result = await db.execute(
-        select(AgentSkill).where(AgentSkill.agent_id == agent_id, AgentSkill.skill_id == skill_id)
-    )
-    existing = result.scalar_one_or_none()
+    agent_skill_service = AgentSkillService(db)
+    existing = await agent_skill_service.get_by_agent_and_skill(str(agent_id), str(skill_id))
 
     if existing:
-        existing.is_enabled = not existing.is_enabled
-        state = "enabled" if existing.is_enabled else "disabled"
+        new_state = not existing.is_enabled
+        await agent_skill_service.update(existing.id, {"is_enabled": new_state})
+        state = "enabled" if new_state else "disabled"
     else:
         # Attach and enable
-        asl = AgentSkill(agent_id=agent_id, skill_id=skill_id, is_enabled=True)
-        db.add(asl)
+        asl = MongoAgentSkill(agent_id=str(agent_id), skill_id=str(skill_id), is_enabled=True)
+        await agent_skill_service.create(asl)
         state = "enabled"
 
-    await db.flush()
     return MessageResponse(message=f"Skill {state}")
 
 
@@ -396,46 +395,45 @@ async def toggle_skill(
 async def create_personal_skill(
     agent_id: UUID,
     body: SkillCreate,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Create a personal skill owned by this agent."""
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+    agent_service = AgentService(db)
+    agent = await agent_service.get_by_id(str(agent_id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     # Check for name conflict
-    existing = await db.execute(select(Skill).where(Skill.name == body.name))
-    if existing.scalar_one_or_none():
+    skill_service = SkillService(db)
+    existing = await skill_service.get_by_name(body.name)
+    if existing:
         raise HTTPException(status_code=409, detail="Skill with this name already exists")
 
-    skill = Skill(
+    skill = MongoSkill(
         **body.model_dump(),
-        author_agent_id=agent_id,
+        author_agent_id=str(agent_id),
     )
-    db.add(skill)
-    await db.flush()
-    await db.refresh(skill)
+    created_skill = await skill_service.create(skill)
 
     # Create skill directory
-    init_skill_directory(skill)
+    init_skill_directory(created_skill)
 
     # Auto-attach and enable for this agent
-    asl = AgentSkill(agent_id=agent_id, skill_id=skill.id, is_enabled=True)
-    db.add(asl)
-    await db.flush()
+    agent_skill_service = AgentSkillService(db)
+    asl = MongoAgentSkill(agent_id=str(agent_id), skill_id=created_skill.id, is_enabled=True)
+    await agent_skill_service.create(asl)
 
     return {
-        "id": str(skill.id),
-        "name": skill.name,
-        "display_name": skill.display_name,
-        "description": skill.description,
-        "description_for_agent": skill.description_for_agent,
-        "category": skill.category,
-        "version": skill.version,
-        "is_system": skill.is_system,
-        "is_shared": skill.is_shared,
+        "id": created_skill.id,
+        "name": created_skill.name,
+        "display_name": created_skill.display_name,
+        "description": created_skill.description,
+        "description_for_agent": created_skill.description_for_agent,
+        "category": created_skill.category,
+        "version": created_skill.version,
+        "is_system": created_skill.is_system,
+        "is_shared": created_skill.is_shared,
         "ownership": "personal",
         "author_agent_id": str(agent_id),
         "enabled": True,
@@ -447,18 +445,18 @@ async def create_personal_skill(
 async def agent_share_skill(
     agent_id: UUID,
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Share an agent's personal skill publicly."""
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
     if skill.is_system:
         raise HTTPException(status_code=400, detail="Cannot share system skills")
-    skill.is_shared = True
-    await db.flush()
+    
+    await skill_service.update(str(skill_id), {"is_shared": True})
     return MessageResponse(message="Skill shared")
 
 
@@ -466,16 +464,16 @@ async def agent_share_skill(
 async def agent_unshare_skill(
     agent_id: UUID,
     skill_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Unshare a skill (make private)."""
-    result = await db.execute(select(Skill).where(Skill.id == skill_id))
-    skill = result.scalar_one_or_none()
+    skill_service = SkillService(db)
+    skill = await skill_service.get_by_id(str(skill_id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
     if skill.is_system:
-        raise HTTPException(status_code=400, detail="Cannot modify system skills")
-    skill.is_shared = False
-    await db.flush()
+        raise HTTPException(status_code=400, detail="Cannot unshare system skills")
+    
+    await skill_service.update(str(skill_id), {"is_shared": False})
     return MessageResponse(message="Skill unshared")

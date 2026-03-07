@@ -13,14 +13,13 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_mongodb
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.agent import Agent
+from app.mongodb.services import AgentService
+from app.mongodb.models import MongoAgent
 from app.schemas.common import MessageResponse
 
 router = APIRouter(prefix="/api/agents", tags=["agent-files"])
@@ -86,7 +85,7 @@ def _scan_dir(base_dir: Path, current_dir: Path) -> list[dict]:
 
 # ===== JSON config helpers =====
 
-def _write_agent_json(agent_dir: Path, agent: Agent):
+def _write_agent_json(agent_dir: Path, agent: MongoAgent):
     """Write agent.json — profile/description. Preserves mission from existing file."""
     # Read existing mission from file (mission is file-only, not in DB)
     existing = {}
@@ -107,7 +106,7 @@ def _write_agent_json(agent_dir: Path, agent: Agent):
     )
 
 
-def _write_settings_json(agent_dir: Path, agent: Agent):
+def _write_settings_json(agent_dir: Path, agent: MongoAgent):
     """Write settings.json — generation params."""
     settings_path = agent_dir / "settings.json"
     data = {
@@ -127,7 +126,7 @@ def _write_settings_json(agent_dir: Path, agent: Agent):
     )
 
 
-async def _sync_agent_json_to_db(agent: Agent, agent_dir: Path, db: AsyncSession):
+async def _sync_agent_json_to_db(agent_id: str, agent_dir: Path, db: AsyncIOMotorDatabase):
     """Read agent.json and sync fields back to DB."""
     path = agent_dir / "agent.json"
     if not path.exists():
@@ -136,14 +135,15 @@ async def _sync_agent_json_to_db(agent: Agent, agent_dir: Path, db: AsyncSession
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return
+    update = {}
     for field in ("name", "description", "system_prompt"):
         if field in data:
-            setattr(agent, field, data[field])
-    await db.flush()
-    await db.refresh(agent)
+            update[field] = data[field]
+    if update:
+        await AgentService(db).update(agent_id, update)
 
 
-async def _sync_settings_json_to_db(agent: Agent, agent_dir: Path, db: AsyncSession):
+async def _sync_settings_json_to_db(agent_id: str, agent_dir: Path, db: AsyncIOMotorDatabase):
     """Read settings.json and sync generation params back to DB."""
     path = agent_dir / "settings.json"
     if not path.exists():
@@ -152,15 +152,16 @@ async def _sync_settings_json_to_db(agent: Agent, agent_dir: Path, db: AsyncSess
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return
+    update = {}
     for field in ("temperature", "top_p", "top_k", "max_tokens", "num_ctx",
                   "repeat_penalty", "num_predict", "stop", "num_thread", "num_gpu"):
         if field in data:
-            setattr(agent, field, data[field])
-    await db.flush()
-    await db.refresh(agent)
+            update[field] = data[field]
+    if update:
+        await AgentService(db).update(agent_id, update)
 
 
-def init_agent_directory(agent: Agent):
+def init_agent_directory(agent: MongoAgent):
     """Create agent directory structure from a newly-created Agent."""
     from app.api.agent_beliefs import init_beliefs_file
     _ensure_agents_dir()
@@ -189,7 +190,7 @@ def duplicate_agent_directory(src_name: str, dst_name: str):
         shutil.copytree(src, dst)
 
 
-def sync_agent_to_filesystem(agent: Agent):
+def sync_agent_to_filesystem(agent: MongoAgent):
     """Update agent.json and settings.json from DB state (after DB update)."""
     _ensure_agents_dir()
     agent_dir = _get_agent_dir(agent.name)
@@ -249,9 +250,8 @@ def write_agent_settings(agent_name: str, data: dict):
     )
 
 
-async def _get_agent_or_404(agent_id: UUID, db: AsyncSession) -> Agent:
-    result = await db.execute(select(Agent).where(Agent.id == agent_id))
-    agent = result.scalar_one_or_none()
+async def _get_agent_or_404(agent_id: UUID, db: AsyncIOMotorDatabase):
+    agent = await AgentService(db).get_by_id(str(agent_id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return agent
@@ -262,8 +262,8 @@ async def _get_agent_or_404(agent_id: UUID, db: AsyncSession) -> Agent:
 @router.get("/{agent_id}/files")
 async def list_agent_files(
     agent_id: UUID,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """List all files and folders in the agent directory (tree structure)."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -280,8 +280,8 @@ async def list_agent_files(
 async def read_agent_file(
     agent_id: UUID,
     path: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Read content of a file in the agent directory."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -304,8 +304,8 @@ async def write_agent_file(
     agent_id: UUID,
     path: str = Query(...),
     content: str = "",
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Write/update content of a file in the agent directory."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -319,9 +319,9 @@ async def write_agent_file(
 
     # Sync JSON config files back to DB
     if path == "agent.json":
-        await _sync_agent_json_to_db(agent, agent_dir, db)
+        await _sync_agent_json_to_db(str(agent_id), agent_dir, db)
     elif path == "settings.json":
-        await _sync_settings_json_to_db(agent, agent_dir, db)
+        await _sync_settings_json_to_db(str(agent_id), agent_dir, db)
 
     return MessageResponse(message="File saved")
 
@@ -330,8 +330,8 @@ async def write_agent_file(
 async def write_agent_file_json(
     agent_id: UUID,
     body: dict,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Write file content via JSON body {path, content}."""
     path = body.get("path", "")
@@ -349,9 +349,9 @@ async def write_agent_file_json(
     file_path.write_text(content, encoding="utf-8")
 
     if path == "agent.json":
-        await _sync_agent_json_to_db(agent, agent_dir, db)
+        await _sync_agent_json_to_db(str(agent_id), agent_dir, db)
     elif path == "settings.json":
-        await _sync_settings_json_to_db(agent, agent_dir, db)
+        await _sync_settings_json_to_db(str(agent_id), agent_dir, db)
 
     return MessageResponse(message="File saved")
 
@@ -360,8 +360,8 @@ async def write_agent_file_json(
 async def create_agent_file(
     agent_id: UUID,
     body: dict,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Create a new file or folder in the agent directory."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -392,8 +392,8 @@ async def create_agent_file(
 async def delete_agent_file(
     agent_id: UUID,
     path: str,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Delete a file or folder from the agent directory."""
     agent = await _get_agent_or_404(agent_id, db)
@@ -421,8 +421,8 @@ async def delete_agent_file(
 async def rename_agent_file(
     agent_id: UUID,
     body: dict,
-    _user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    _user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ) -> MessageResponse:
     """Rename/move a file or folder within the agent directory."""
     agent = await _get_agent_or_404(agent_id, db)

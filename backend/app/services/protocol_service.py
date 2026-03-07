@@ -3,10 +3,10 @@ Service for managing default thinking protocols.
 Creates the standard protocols on first startup.
 """
 
-from sqlalchemy import select, func as sa_func
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.models.thinking_protocol import ThinkingProtocol
+from app.mongodb.models import MongoThinkingProtocol
+from app.mongodb.services import ThinkingProtocolService, AgentProtocolService
 
 
 DEFAULT_PROTOCOLS = [
@@ -550,26 +550,25 @@ DEFAULT_PROTOCOLS = [
 ]
 
 
-async def create_default_protocols(db: AsyncSession):
+async def create_default_protocols(db: AsyncIOMotorDatabase):
     """Create default thinking protocols if they don't exist."""
-    result = await db.execute(select(ThinkingProtocol).limit(1))
-    if result.scalar_one_or_none():
+    svc = ThinkingProtocolService(db)
+    count = await svc.count()
+    if count > 0:
         return  # Protocols already exist
 
     # First pass: create all protocols
-    proto_map = {}  # name -> ThinkingProtocol instance
+    proto_map = {}  # name -> MongoThinkingProtocol instance
     for proto_data in DEFAULT_PROTOCOLS:
-        proto = ThinkingProtocol(
+        proto = MongoThinkingProtocol(
             name=proto_data["name"],
             description=proto_data["description"],
             type=proto_data.get("type", "standard"),
             steps=proto_data["steps"],
             is_default=proto_data.get("is_default", False),
         )
-        db.add(proto)
+        proto = await svc.create(proto)
         proto_map[proto_data["name"]] = proto
-
-    await db.flush()
 
     # Second pass: wire orchestrator delegate steps to actual protocol IDs
     # Collect IDs by category
@@ -577,7 +576,6 @@ async def create_default_protocols(db: AsyncSession):
     programmer_id = str(proto_map["Programmer"].id) if "Programmer" in proto_map else None
     tester_id = str(proto_map["Tester"].id) if "Tester" in proto_map else None
     reviewer_id = str(proto_map["Code Reviewer"].id) if "Code Reviewer" in proto_map else None
-    dev_orchestrator_id = str(proto_map["Development Orchestrator"].id) if "Development Orchestrator" in proto_map else None
 
     # Wire Development Orchestrator → Programmer, Tester, Code Reviewer
     dev_orch = proto_map.get("Development Orchestrator")
@@ -595,7 +593,7 @@ async def create_default_protocols(db: AsyncSession):
                     step["protocol_ids"] = [reviewer_id]
                 else:
                     step["protocol_ids"] = dev_child_ids
-        dev_orch.steps = steps
+        await svc.update(dev_orch.id, {"steps": steps})
 
     # Wire Master Orchestrator → ALL protocols (both standard and mid-level orchestrators)
     master = proto_map.get("Master Orchestrator")
@@ -605,7 +603,7 @@ async def create_default_protocols(db: AsyncSession):
         for step in steps:
             if step.get("type") == "delegate":
                 step["protocol_ids"] = all_ids
-        master.steps = steps
+        await svc.update(master.id, {"steps": steps})
 
     # Keep backward compat: wire the old Adaptive Orchestrator too (if present)
     adaptive = proto_map.get("Adaptive Orchestrator")
@@ -614,67 +612,58 @@ async def create_default_protocols(db: AsyncSession):
         for step in steps:
             if step.get("type") == "delegate":
                 step["protocol_ids"] = all_standard_ids
-        adaptive.steps = steps
-
-    await db.commit()
+        await svc.update(adaptive.id, {"steps": steps})
 
 
-async def deduplicate_protocols(db: AsyncSession):
+async def deduplicate_protocols(db: AsyncIOMotorDatabase):
     """
     Remove duplicate ThinkingProtocol records (same name + type).
-    Keeps the protocol that has the most agent assignments; deletes the rest.
+    Keeps the protocol created first; deletes the rest.
     Re-points orphaned agent_protocols to the surviving record.
     """
-    from app.models.agent_protocol import AgentProtocol
+    svc = ThinkingProtocolService(db)
+    ap_svc = AgentProtocolService(db)
 
-    # Find (name, type) groups with more than 1 protocol
-    dup_q = (
-        select(ThinkingProtocol.name, ThinkingProtocol.type)
-        .group_by(ThinkingProtocol.name, ThinkingProtocol.type)
-        .having(sa_func.count() > 1)
-    )
-    dup_groups = (await db.execute(dup_q)).all()
+    # Find duplicate groups using aggregation pipeline
+    pipeline = [
+        {"$group": {"_id": {"name": "$name", "type": "$type"}, "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gt": 1}}},
+    ]
+    cursor = svc.collection.aggregate(pipeline)
+    dup_groups = await cursor.to_list(length=500)
     if not dup_groups:
         return 0
 
     removed = 0
-    for name, ptype in dup_groups:
+    for group in dup_groups:
+        name = group["_id"]["name"]
+        ptype = group["_id"]["type"]
+
         # Get all protocols in this group, ordered by created_at (keep oldest)
-        protos = (
-            await db.execute(
-                select(ThinkingProtocol)
-                .where(ThinkingProtocol.name == name, ThinkingProtocol.type == ptype)
-                .order_by(ThinkingProtocol.created_at.asc())
-            )
-        ).scalars().all()
+        protos = await svc.get_all(
+            filter={"name": name, "type": ptype},
+            limit=100,
+        )
+        protos.sort(key=lambda p: p.created_at or "")
 
         keeper = protos[0]
         duplicates = protos[1:]
 
         for dup in duplicates:
             # Re-point any agent_protocol references to the keeper
-            agent_protos = (
-                await db.execute(
-                    select(AgentProtocol).where(AgentProtocol.protocol_id == dup.id)
-                )
-            ).scalars().all()
+            agent_protos = await ap_svc.get_all(filter={"protocol_id": dup.id}, limit=500)
             for ap in agent_protos:
                 # Check if keeper is already assigned to this agent
-                existing = (
-                    await db.execute(
-                        select(AgentProtocol).where(
-                            AgentProtocol.agent_id == ap.agent_id,
-                            AgentProtocol.protocol_id == keeper.id,
-                        )
-                    )
-                ).scalar_one_or_none()
+                existing = await ap_svc.find_one({
+                    "agent_id": ap.agent_id,
+                    "protocol_id": keeper.id,
+                })
                 if existing:
-                    await db.delete(ap)
+                    await ap_svc.delete(ap.id)
                 else:
-                    ap.protocol_id = keeper.id
+                    await ap_svc.update(ap.id, {"protocol_id": keeper.id})
 
-            await db.delete(dup)
+            await svc.delete(dup.id)
             removed += 1
 
-    await db.commit()
     return removed
