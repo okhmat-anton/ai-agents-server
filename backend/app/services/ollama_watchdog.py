@@ -47,6 +47,14 @@ async def mark_model_manually_stopped(model_name: str):
             await redis_client.sadd(REDIS_KEY_MANUALLY_STOPPED_MODELS, model_name)
     except Exception:
         pass
+    # Also remove from last_known_running to prevent watchdog from trying to restart it
+    global _last_known_running
+    _last_known_running.discard(model_name)
+    try:
+        if redis_client:
+            await redis_client.srem(REDIS_KEY_LAST_KNOWN_RUNNING, model_name)
+    except Exception:
+        pass
     logger.info(f"Model '{model_name}' marked as manually stopped")
 
 

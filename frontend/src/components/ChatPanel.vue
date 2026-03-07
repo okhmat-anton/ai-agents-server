@@ -139,7 +139,7 @@
 
       <!-- Messages -->
       <div
-        v-for="msg in chatStore.messages"
+        v-for="(msg, msgIndex) in chatStore.messages"
         :key="msg.id"
         class="message-bubble"
         :class="msg.role"
@@ -158,6 +158,20 @@
         </div>
 
         <div class="message-content text-body-2" v-html="renderMarkdown(msg.content)"></div>
+
+        <!-- Retry button for unanswered user messages -->
+        <div v-if="msg.role === 'user' && isUnanswered(msgIndex)" class="mt-2">
+          <v-btn 
+            size="x-small" 
+            variant="tonal" 
+            color="warning"
+            prepend-icon="mdi-refresh"
+            :disabled="chatStore.sending"
+            @click="retryMessage(msgIndex)"
+          >
+            Retry
+          </v-btn>
+        </div>
 
         <!-- Protocol metadata: Todo list -->
         <div v-if="msg.metadata?.todo_list?.length" class="mt-2 protocol-todo-widget">
@@ -537,6 +551,25 @@ function renderMarkdown(content) {
     .trim()
   try { return DOMPurify.sanitize(marked.parse(clean)) }
   catch { return clean }
+}
+
+// Check if message has no response (unanswered)
+function isUnanswered(msgIndex) {
+  const msg = chatStore.messages[msgIndex]
+  if (!msg || msg.role !== 'user') return false
+  
+  // Check if next message is from assistant
+  const nextMsg = chatStore.messages[msgIndex + 1]
+  return !nextMsg || nextMsg.role !== 'assistant'
+}
+
+// Retry sending a message
+async function retryMessage(msgIndex) {
+  const msg = chatStore.messages[msgIndex]
+  if (!msg || msg.role !== 'user' || chatStore.sending) return
+  
+  await chatStore.sendMessage(msg.content)
+  scrollToBottom()
 }
 
 // Todo list helpers

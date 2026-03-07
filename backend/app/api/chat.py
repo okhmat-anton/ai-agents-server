@@ -771,6 +771,47 @@ async def send_message(
             elif agent.model_id:
                 model_ids = [str(agent.model_id)]
                 model_ids = await _validate_and_remap_model_ids(model_ids, db)
+    
+    # Filter out non-running Ollama models for agent chats
+    if model_ids and agent:
+        filtered_model_ids = []
+        model_svc = ModelConfigService(db)
+        settings = get_settings()
+        
+        # Get list of running Ollama models
+        running_ollama_names = set()
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                r = await client.get(f"{settings.OLLAMA_BASE_URL}/api/ps")
+                if r.status_code == 200:
+                    for om in r.json().get("models", []):
+                        running_ollama_names.add(om.get("name", ""))
+        except Exception:
+            pass
+        
+        # Check each model - keep only running Ollama models or non-Ollama models
+        for mid in model_ids:
+            if mid.startswith("ollama:"):
+                model_name = mid[7:]
+                if model_name in running_ollama_names:
+                    filtered_model_ids.append(mid)
+            else:
+                try:
+                    uid = str(uuid.UUID(mid))
+                    mc = await model_svc.get_by_id(uid)
+                    if mc:
+                        if mc.provider == "ollama":
+                            if mc.model_id in running_ollama_names:
+                                filtered_model_ids.append(mid)
+                        else:
+                            filtered_model_ids.append(mid)
+                    else:
+                        filtered_model_ids.append(mid)
+                except ValueError:
+                    filtered_model_ids.append(mid)
+        
+        model_ids = filtered_model_ids
+    
     if not model_ids:
         base_model = await resolve_model_for_role(db, "base")
         if base_model:
