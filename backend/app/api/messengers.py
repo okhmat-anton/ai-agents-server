@@ -589,6 +589,11 @@ class TestMessageRequest(BaseModel):
     message: str = "Hello from AI Agent test! 🤖"
 
 
+class SendMessageRequest(BaseModel):
+    recipient: str  # chat_id, @username, or phone number
+    message: str
+
+
 @router.get("/{messenger_id}/contacts")
 async def list_messenger_contacts(
     agent_id: str,
@@ -626,6 +631,84 @@ async def list_messenger_contacts(
         raise HTTPException(500, detail=f"Failed to load contacts: {str(e)}")
 
     return dialogs
+
+
+@router.post("/{messenger_id}/send")
+async def send_messenger_message(
+    agent_id: str,
+    messenger_id: str,
+    body: SendMessageRequest,
+    _user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Send a message to a specific Telegram user/chat using the agent's messenger account."""
+    svc = MessengerAccountService(db)
+    raw_doc = await svc.collection.find_one({"_id": messenger_id})
+    if not raw_doc or raw_doc.get("agent_id") != agent_id:
+        raise HTTPException(404, "Messenger account not found")
+
+    if not raw_doc.get("is_authenticated"):
+        raise HTTPException(400, "Account not authenticated")
+
+    encrypted = raw_doc.get("credentials_encrypted", "")
+    if not encrypted:
+        raise HTTPException(400, "No credentials stored")
+
+    try:
+        creds = decrypt_dict(encrypted)
+    except Exception:
+        raise HTTPException(400, "Failed to decrypt credentials")
+
+    await _create_messenger_log(
+        db, messenger_id, agent_id,
+        level="info", event="manual_send",
+        message=f"Sending message to {body.recipient}",
+        context={"recipient": body.recipient, "length": len(body.message)},
+    )
+
+    from app.services.telegram_service import send_telegram_message
+    try:
+        result = await send_telegram_message(
+            messenger_id=messenger_id,
+            creds=creds,
+            recipient=body.recipient,
+            message=body.message,
+        )
+    except Exception as e:
+        await _create_messenger_error(
+            db, messenger_id, agent_id,
+            error_type="messenger_send_error",
+            message=f"Failed to send message: {str(e)}",
+            context={"recipient": body.recipient},
+        )
+        raise HTTPException(500, detail=f"Failed to send message: {str(e)}")
+
+    await _create_messenger_log(
+        db, messenger_id, agent_id,
+        level="info", event="manual_send_completed",
+        message=f"Message sent to {result.get('sent_to', body.recipient)}",
+        context=result,
+    )
+
+    # Log outgoing message
+    from app.mongodb.models.messenger import MongoMessengerMessage
+    from app.mongodb.services import MessengerMessageService
+    msg_svc = MessengerMessageService(db)
+    outgoing_msg = MongoMessengerMessage(
+        messenger_id=messenger_id,
+        agent_id=agent_id,
+        chat_id=result.get("chat_id", ""),
+        user_id="",
+        username="",
+        display_name="",
+        direction="outgoing",
+        content=body.message,
+        is_command=False,
+        is_trusted_user=False,
+    )
+    await msg_svc.create(outgoing_msg)
+
+    return result
 
 
 @router.post("/{messenger_id}/test")

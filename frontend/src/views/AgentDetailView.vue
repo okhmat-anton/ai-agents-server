@@ -1025,6 +1025,9 @@
                   <v-btn v-if="acc.is_authenticated" size="small" color="info" variant="tonal" @click="testMessenger(acc)">
                     Test
                   </v-btn>
+                  <v-btn v-if="acc.is_authenticated" size="small" color="primary" variant="tonal" @click="openWriteDialog(acc)" prepend-icon="mdi-pencil">
+                    Write
+                  </v-btn>
                   <v-btn size="small" variant="text" icon="mdi-cog" @click="openEditMessenger(acc)" />
                   <v-btn size="small" variant="text" icon="mdi-message-text-outline" @click="openMessengerMessages(acc)" />
                   <v-btn size="small" variant="text" icon="mdi-text-box-outline" @click="openMessengerLogs(acc)" title="Logs" />
@@ -1311,6 +1314,143 @@
                     @click.stop="sendTestToSpecific(c)"
                     :loading="messengerTestSending"
                     title="Send test message"
+                  />
+                </template>
+              </v-list-item>
+            </v-list>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- Write Message Dialog -->
+    <v-dialog v-model="writeDialog" max-width="700">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2">mdi-pencil</v-icon>
+          Write Message — {{ writeAccount?.name }}
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="writeDialog = false" />
+        </v-card-title>
+        <v-card-text>
+          <!-- Send Result Alert -->
+          <v-alert v-if="writeSendResult?.status === 'success'" type="success" variant="tonal" class="mb-3" closable @click:close="writeSendResult = null">
+            Message sent to <strong>{{ writeSendResult.sent_to }}</strong>
+          </v-alert>
+          <v-alert v-else-if="writeSendResult?.status === 'error'" type="error" variant="tonal" class="mb-3" closable @click:close="writeSendResult = null">
+            {{ writeSendResult?.error || 'Failed to send' }}
+          </v-alert>
+
+          <!-- New Recipient Input -->
+          <div class="mb-3">
+            <div class="text-subtitle-2 mb-2">Send to new contact</div>
+            <div class="d-flex ga-2 align-center">
+              <v-text-field
+                v-model="writeRecipient"
+                label="@username or phone (+79001234567)"
+                density="compact"
+                variant="outlined"
+                hide-details
+                style="max-width: 350px"
+                @keyup.enter="writeRecipient && writeMessageText ? sendWriteMessage(writeRecipient) : null"
+              />
+            </div>
+          </div>
+
+          <!-- Message Text -->
+          <v-textarea
+            v-model="writeMessageText"
+            label="Message"
+            density="compact"
+            variant="outlined"
+            rows="3"
+            auto-grow
+            class="mb-2"
+            hide-details
+          />
+
+          <!-- Send Buttons -->
+          <div class="d-flex ga-2 mb-4">
+            <v-btn
+              v-if="writeRecipient"
+              size="small" color="primary" variant="tonal"
+              @click="sendWriteMessage(writeRecipient)"
+              :loading="writeSending"
+              :disabled="!writeMessageText.trim()"
+              prepend-icon="mdi-send"
+            >
+              Send to {{ writeRecipient }}
+            </v-btn>
+            <v-btn
+              v-if="writeSelectedContact"
+              size="small" color="success" variant="tonal"
+              @click="sendWriteMessage(writeSelectedContact.id)"
+              :loading="writeSending"
+              :disabled="!writeMessageText.trim()"
+              prepend-icon="mdi-send"
+            >
+              Send to {{ writeSelectedContact.name || writeSelectedContact.username }}
+            </v-btn>
+          </div>
+
+          <v-divider class="mb-3" />
+
+          <!-- Contacts List -->
+          <div class="d-flex align-center mb-2">
+            <div class="text-subtitle-2">Contacts & Chats</div>
+            <v-spacer />
+            <v-btn size="small" variant="text" icon="mdi-refresh" @click="loadWriteContacts" :loading="writeContactsLoading" />
+          </div>
+
+          <v-text-field
+            v-if="writeContacts.length > 5"
+            v-model="writeContactSearch"
+            label="Search contacts..."
+            density="compact"
+            variant="outlined"
+            hide-details
+            prepend-inner-icon="mdi-magnify"
+            clearable
+            class="mb-2"
+          />
+
+          <v-progress-linear v-if="writeContactsLoading" indeterminate color="primary" class="mb-2" />
+
+          <div style="max-height: 350px; overflow-y: auto;">
+            <v-alert v-if="!writeContacts.length && !writeContactsLoading" type="info" variant="tonal" density="compact">
+              No contacts loaded. Click refresh to load.
+            </v-alert>
+            <v-list density="compact" v-if="filteredWriteContacts.length">
+              <v-list-item
+                v-for="c in filteredWriteContacts"
+                :key="c.id"
+                :active="writeSelectedContact?.id === c.id"
+                @click="writeSelectedContact = (writeSelectedContact?.id === c.id ? null : c)"
+                class="rounded mb-1"
+              >
+                <template #prepend>
+                  <v-icon size="20" :color="c.type === 'user' ? 'blue' : c.type === 'group' ? 'green' : 'orange'">
+                    {{ c.type === 'user' ? 'mdi-account' : c.type === 'group' ? 'mdi-account-group' : 'mdi-bullhorn' }}
+                  </v-icon>
+                </template>
+                <v-list-item-title class="text-body-2">
+                  {{ c.name || 'Unknown' }}
+                  <span v-if="c.username" class="text-caption text-grey ml-1">@{{ c.username }}</span>
+                </v-list-item-title>
+                <v-list-item-subtitle class="text-caption">
+                  <v-chip size="x-small" variant="tonal" :color="c.type === 'user' ? 'blue' : c.type === 'group' ? 'green' : 'orange'" class="mr-1">
+                    {{ c.type }}
+                  </v-chip>
+                  <span v-if="c.last_message" class="text-grey ml-1">{{ c.last_message.substring(0, 50) }}{{ c.last_message.length > 50 ? '...' : '' }}</span>
+                </v-list-item-subtitle>
+                <template #append>
+                  <v-btn
+                    size="x-small" variant="text" icon="mdi-send"
+                    color="primary"
+                    @click.stop="sendWriteMessage(c.id)"
+                    :loading="writeSending"
+                    :disabled="!writeMessageText.trim()"
+                    title="Send message"
                   />
                 </template>
               </v-list-item>
@@ -1740,6 +1880,18 @@ const messengerLogs = ref([])
 const messengerLogsLoading = ref(false)
 const messengerLogsLevel = ref('all')
 
+// Write dialog state
+const writeDialog = ref(false)
+const writeAccount = ref(null)
+const writeRecipient = ref('')
+const writeMessageText = ref('')
+const writeSending = ref(false)
+const writeSendResult = ref(null)
+const writeContacts = ref([])
+const writeContactsLoading = ref(false)
+const writeContactSearch = ref('')
+const writeSelectedContact = ref(null)
+
 // Messenger errors state
 const messengerErrorsDialog = ref(false)
 const messengerErrorsAccount = ref(null)
@@ -1751,6 +1903,14 @@ const filteredContacts = computed(() => {
   if (!contactSearch.value) return messengerContacts.value
   const q = contactSearch.value.toLowerCase()
   return messengerContacts.value.filter(c =>
+    (c.name || '').toLowerCase().includes(q) ||
+    (c.username || '').toLowerCase().includes(q)
+  )
+})
+const filteredWriteContacts = computed(() => {
+  if (!writeContactSearch.value) return writeContacts.value
+  const q = writeContactSearch.value.toLowerCase()
+  return writeContacts.value.filter(c =>
     (c.name || '').toLowerCase().includes(q) ||
     (c.username || '').toLowerCase().includes(q)
   )
@@ -2781,6 +2941,51 @@ async function _sendTest(chatId) {
     messengerTestResult.value = { status: 'error', error: e.response?.data?.detail || e.message }
   } finally {
     messengerTestSending.value = false
+  }
+}
+
+// ── Write Dialog ──────────────────────────────────────────────────────
+async function openWriteDialog(acc) {
+  writeAccount.value = acc
+  writeRecipient.value = ''
+  writeMessageText.value = ''
+  writeSendResult.value = null
+  writeContacts.value = []
+  writeSelectedContact.value = null
+  writeContactSearch.value = ''
+  writeDialog.value = true
+  await loadWriteContacts()
+}
+
+async function loadWriteContacts() {
+  if (!writeAccount.value) return
+  writeContactsLoading.value = true
+  try {
+    const { data } = await api.get(`/agents/${agent.value.id}/messengers/${writeAccount.value.id}/contacts?limit=100`)
+    writeContacts.value = data
+  } catch (e) {
+    console.error('Load write contacts error', e)
+    writeContacts.value = []
+  } finally {
+    writeContactsLoading.value = false
+  }
+}
+
+async function sendWriteMessage(recipient) {
+  if (!writeAccount.value || !writeMessageText.value.trim()) return
+  writeSending.value = true
+  try {
+    const { data } = await api.post(`/agents/${agent.value.id}/messengers/${writeAccount.value.id}/send`, {
+      recipient: String(recipient),
+      message: writeMessageText.value,
+    })
+    writeSendResult.value = data
+    // Clear message after successful send but keep recipient for follow-up
+    writeMessageText.value = ''
+  } catch (e) {
+    writeSendResult.value = { status: 'error', error: e.response?.data?.detail || e.message }
+  } finally {
+    writeSending.value = false
   }
 }
 

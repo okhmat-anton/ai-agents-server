@@ -249,6 +249,85 @@ async def get_telegram_dialogs(
                 pass
 
 
+async def send_telegram_message(
+    messenger_id: str,
+    creds: dict,
+    recipient: str,
+    message: str,
+) -> dict:
+    """
+    Send a message to a specific Telegram user/chat.
+    recipient can be: chat_id (numeric), @username, or phone number.
+    Uses active client if available, otherwise creates a temporary connection.
+    """
+    api_id = int(creds["api_id"])
+    api_hash = creds["api_hash"]
+    session_file = _session_path(messenger_id)
+
+    existing = _active_clients.get(messenger_id)
+    client = existing["client"] if existing else TelegramClient(session_file, api_id, api_hash)
+    own_client = not existing
+
+    try:
+        if own_client:
+            await client.connect()
+
+        if not await client.is_user_authorized():
+            raise RuntimeError("Client not authenticated.")
+
+        # Resolve recipient
+        target = None
+        if recipient.lstrip('-').isdigit():
+            target = int(recipient)
+        elif recipient.startswith("@"):
+            target = recipient[1:]  # Remove @ for Telethon
+        elif recipient.startswith("+"):
+            target = recipient  # Phone number
+        else:
+            target = recipient  # try as-is (username without @)
+
+        # Get entity for display name
+        try:
+            entity = await client.get_entity(target)
+            name = getattr(entity, 'first_name', '') or getattr(entity, 'title', '') or str(target)
+            username = getattr(entity, 'username', '') or ''
+            display = f"{name} (@{username})" if username else name
+        except Exception:
+            entity = None
+            display = str(recipient)
+
+        # Send with typing indicator for realism
+        try:
+            if entity:
+                await client(SetTypingRequest(
+                    peer=entity,
+                    action=SendMessageTypingAction()
+                ))
+                # Brief typing delay
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+        except Exception:
+            pass
+
+        sent = await client.send_message(target, message)
+
+        return {
+            "status": "success",
+            "message_id": sent.id,
+            "sent_to": display,
+            "chat_id": str(sent.chat_id) if hasattr(sent, 'chat_id') else str(target),
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to send message for {messenger_id}: {e}")
+        raise
+    finally:
+        if own_client:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+
 async def submit_auth_code(messenger_id: str, code: str, phone_code_hash: str = None) -> dict:
     """Submit the verification code."""
     pending = _pending_auth.get(messenger_id)
@@ -578,8 +657,23 @@ async def _handle_incoming_message(
         except Exception:
             pass
 
-    delay = random.uniform(delay_min, delay_max)
+    # Calculate realistic typing delay based on response length
+    # ~40 chars/sec typing speed with some randomness
+    typing_time = len(response_text) / random.uniform(30, 50)
+    delay = max(delay_min, min(delay_max, typing_time))
+    delay = random.uniform(delay * 0.8, delay * 1.2)
+    delay = max(delay_min, min(delay_max, delay))
     await asyncio.sleep(delay)
+
+    # Re-send typing indicator if delay was long
+    if typing_indicator and delay > 3:
+        try:
+            await client(SetTypingRequest(
+                peer=event.chat_id,
+                action=SendMessageTypingAction()
+            ))
+        except Exception:
+            pass
 
     # Send response
     try:
@@ -644,7 +738,7 @@ async def _generate_agent_response(
     chat_id: str,
 ) -> Optional[str]:
     """Call the agent's LLM to generate a response for a Telegram message."""
-    from app.mongodb.services import AgentService, ModelConfigService, MessengerMessageService
+    from app.mongodb.services import AgentService, ModelConfigService, MessengerMessageService, ModelRoleAssignmentService
     from app.llm.ollama import OllamaProvider
     from app.llm.openai_compatible import OpenAICompatibleProvider
     from app.llm.base import Message, GenerationParams
@@ -657,37 +751,59 @@ async def _generate_agent_response(
 
     # Resolve model
     settings = get_settings()
-    resolved_model = agent.model_name
+    mc_svc = ModelConfigService(db)
+    resolved_model = None
     provider_instance = None
+    model_cfg = None
 
-    if resolved_model:
-        mc_svc = ModelConfigService(db)
-        # Try to find model config
+    # 1) Try agent's own model
+    if agent.model_name or agent.model_id:
         configs = await mc_svc.get_all()
-        model_cfg = None
         for cfg in configs:
-            if cfg.model_id == resolved_model or cfg.id == (agent.model_id or ""):
+            if cfg.model_id == agent.model_name or cfg.id == (agent.model_id or ""):
                 model_cfg = cfg
                 break
 
-        if model_cfg:
-            resolved_model = model_cfg.model_id
-            if model_cfg.provider == "ollama":
-                provider_instance = OllamaProvider(
-                    base_url=settings.OLLAMA_BASE_URL,
-                )
-            elif model_cfg.provider in ("openai", "openai_compatible"):
-                provider_instance = OpenAICompatibleProvider(
-                    base_url=model_cfg.base_url or "https://api.openai.com/v1",
-                    api_key=model_cfg.api_key or "",
-                )
+    # 2) Fallback: use model role "dialog" or "base"
+    if not model_cfg:
+        role_svc = ModelRoleAssignmentService(db)
+        all_roles = await role_svc.get_all(skip=0, limit=100)
+        role_model_id = None
+        for r in all_roles:
+            if r.role == "dialog":
+                role_model_id = r.model_config_id
+                break
+        if not role_model_id:
+            for r in all_roles:
+                if r.role == "base":
+                    role_model_id = r.model_config_id
+                    break
+        if role_model_id:
+            model_cfg = await mc_svc.get_by_id(role_model_id)
+
+    # 3) Last resort: first active non-embedding model
+    if not model_cfg:
+        configs = await mc_svc.get_all()
+        for cfg in configs:
+            if cfg.is_active and "embed" not in (cfg.model_id or "").lower():
+                model_cfg = cfg
+                break
+
+    if model_cfg:
+        resolved_model = model_cfg.model_id
+        if model_cfg.provider == "ollama":
+            provider_instance = OllamaProvider(
+                base_url=settings.OLLAMA_BASE_URL,
+            )
+        elif model_cfg.provider in ("openai", "openai_compatible"):
+            provider_instance = OpenAICompatibleProvider(
+                base_url=model_cfg.base_url or "https://api.openai.com/v1",
+                api_key=model_cfg.api_key or "",
+            )
 
     if not provider_instance:
-        # Fallback: try first available ollama model
-        resolved_model = resolved_model or "llama3.2"
-        provider_instance = OllamaProvider(
-            base_url=settings.OLLAMA_BASE_URL,
-        )
+        logger.error(f"No LLM model available for messenger {messenger_id}")
+        return None
 
     # Build system prompt
     system_parts = [agent.system_prompt] if agent.system_prompt else []
@@ -730,14 +846,23 @@ async def _generate_agent_response(
     try:
         params = GenerationParams(
             temperature=agent.temperature if humanize else 0.7,
-            max_tokens=min(agent.max_tokens, 500),  # Keep telegram responses short
+            max_tokens=min(agent.max_tokens or 2048, 500),  # Keep telegram responses short
         )
+        logger.info(f"Calling LLM model={resolved_model} for messenger {messenger_id}")
         response = await provider_instance.chat(
             model=resolved_model,
             messages=messages,
             params=params,
         )
-        return response.content.strip() if response and response.content else None
+        if response and response.content:
+            return response.content.strip()
+        logger.warning(f"LLM returned empty content for messenger {messenger_id}, model={resolved_model}")
+        return None
     except Exception as e:
-        logger.error(f"LLM error for messenger response: {e}")
+        logger.error(f"LLM error for messenger response (model={resolved_model}): {e}", exc_info=True)
+        await _log_messenger_error(
+            messenger_id, agent_id,
+            "llm_error", f"LLM call failed: {e}",
+            {"model": resolved_model, "exception": type(e).__name__, "detail": str(e)},
+        )
         return None
