@@ -32,6 +32,7 @@ export const useAgentsStore = defineStore('agents', {
 
     async updateAgent(id, payload) {
       const { data } = await api.put(`/agents/${id}`, payload)
+      this._updateLocal(data)
       return data
     },
 

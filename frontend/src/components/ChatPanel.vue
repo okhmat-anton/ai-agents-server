@@ -74,7 +74,7 @@
             :class="{ active: chatStore.currentSession?.id === session.id }"
             @click="editingSessionId !== session.id && loadSession(session.id)"
           >
-            <v-icon size="14" class="mr-2 flex-shrink-0" :color="(session.agent_ids?.length > 1) ? 'success' : session.multi_model ? 'warning' : 'primary'">
+            <v-icon size="14" class="mr-2 flex-shrink-0" :color="session.isDisabledAgent ? 'grey' : (session.agent_ids?.length > 1) ? 'success' : session.multi_model ? 'warning' : 'primary'">
               {{ (session.agent_ids?.length > 1) ? 'mdi-robot-outline' : session.multi_model ? 'mdi-brain' : 'mdi-chat-outline' }}
             </v-icon>
             <div class="flex-grow-1 text-truncate">
@@ -111,7 +111,7 @@
             </v-btn>
             <span class="text-caption text-medium-emphasis ml-1 flex-shrink-0">{{ formatDate(session.updated_at) }}</span>
             <v-btn
-              v-if="!(activeChatType === 'agent' && session.chat_type === 'agent') && !(activeChatType === 'project_task' && session.chat_type === 'project_task')"
+              v-if="!session.isPseudo && !(activeChatType === 'project_task' && session.chat_type === 'project_task')"
               icon
               size="x-small"
               variant="text"
@@ -311,7 +311,8 @@
         <v-textarea
           ref="inputRef"
           v-model="messageInput"
-          :placeholder="chatStore.currentSession ? 'Send a message…' : 'Ask a question to start a new chat…'"
+          :placeholder="isCurrentAgentDisabled ? 'Agent is disabled' : chatStore.currentSession ? 'Send a message…' : 'Ask a question to start a new chat…'"
+          :disabled="isCurrentAgentDisabled"
           variant="outlined"
           density="compact"
           rows="4"
@@ -406,12 +407,12 @@ const filteredSessions = computed(() => {
   let results = []
 
   if (activeChatType.value === 'agent') {
-    // For agent chats: show only enabled agents (regardless of sessions)
+    // For agent chats: show enabled agents + real sessions for disabled agents
     const realSessions = chatStore.sortedSessions.filter(s => s.chat_type === 'agent')
-    const sessionAgentIds = new Set(realSessions.filter(s => s.agent_ids?.length === 1).map(s => s.agent_ids[0]))
+    const enabledAgents = agentsStore.agents.filter(a => a.enabled === true)
+    const enabledAgentIds = new Set(enabledAgents.map(a => a.id))
 
     // Create pseudo-sessions for enabled agents only
-    const enabledAgents = agentsStore.agents.filter(a => a.enabled !== false)
     results = enabledAgents.map(agent => {
       const existingSession = realSessions.find(s => s.agent_ids?.length === 1 && s.agent_ids[0] === agent.id)
       if (existingSession) {
@@ -429,8 +430,17 @@ const filteredSessions = computed(() => {
       }
     })
 
-    // Add multi-agent sessions that don't match single agent
-    const multiAgentSessions = realSessions.filter(s => !s.agent_ids?.length || s.agent_ids.length > 1)
+    // Keep real sessions for disabled agents (mark them as disabled) only if they have messages
+    const disabledAgentSessions = realSessions.filter(s =>
+      s.agent_ids?.length === 1 && !enabledAgentIds.has(s.agent_ids[0]) && s.message_count > 0
+    ).map(s => ({ ...s, isDisabledAgent: true }))
+    results.push(...disabledAgentSessions)
+
+    // Add multi-agent sessions only if all their agents are enabled
+    const multiAgentSessions = realSessions.filter(s =>
+      (!s.agent_ids?.length || s.agent_ids.length > 1) &&
+      (!s.agent_ids?.length || s.agent_ids.every(id => enabledAgentIds.has(id)))
+    )
     results.push(...multiAgentSessions)
   } else if (activeChatType.value === 'project_task') {
     // For project/task chats: show all projects (regardless of sessions), but tasks only if they have sessions
@@ -481,7 +491,18 @@ const filteredSessions = computed(() => {
   })
 })
 
+const isCurrentAgentDisabled = computed(() => {
+  const session = chatStore.currentSession
+  if (!session || session.chat_type !== 'agent') return false
+  if (session.agent_ids?.length === 1) {
+    const agent = agentsStore.agents.find(a => a.id === session.agent_ids[0])
+    return agent && agent.enabled === false
+  }
+  return false
+})
+
 const canSend = computed(() => {
+  if (isCurrentAgentDisabled.value) return false
   if (!messageInput.value?.trim()) return false
   const models = resolvedModelIds.value
   return models.length > 0

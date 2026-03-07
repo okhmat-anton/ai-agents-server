@@ -16,11 +16,19 @@
         Autonomous · Cycle {{ autonomousRun.completed_cycles }}{{ autonomousRun.max_cycles ? '/' + autonomousRun.max_cycles : '' }}
       </v-chip>
       <v-spacer />
-      <v-btn-group v-if="agent.status !== 'running'" variant="flat" density="default" class="mr-2">
-        <v-btn color="success" prepend-icon="mdi-play" @click="start">Chat</v-btn>
-        <v-btn color="green-darken-3" prepend-icon="mdi-sync" @click="openAutonomousDialog" :disabled="!hasLoopProtocol">Autonomous</v-btn>
-      </v-btn-group>
-      <v-btn v-if="agent.status === 'running'" color="error" prepend-icon="mdi-stop" @click="stopAgent" class="mr-2">Stop</v-btn>
+      <div class="d-flex align-center mr-4">
+        <span class="text-subtitle-2 mr-2">Enabled</span>
+        <v-switch
+          :model-value="agent.enabled !== false"
+          color="success"
+          density="compact"
+          hide-details
+          class="mr-2"
+          @update:model-value="toggleEnabled"
+        />
+      </div>
+      <v-btn v-if="autonomousRun && autonomousRun.status === 'running'" color="error" variant="flat" prepend-icon="mdi-stop" @click="stopAgent" class="mr-2">Stop</v-btn>
+      <v-btn color="green-darken-3" variant="flat" prepend-icon="mdi-sync" @click="openAutonomousDialog" :disabled="!hasLoopProtocol || (autonomousRun && autonomousRun.status === 'running')" class="mr-2">Autonomous</v-btn>
       <v-btn prepend-icon="mdi-pencil" :to="`/agents/${agent.id}`">Edit</v-btn>
     </div>
 
@@ -937,17 +945,9 @@
                 <v-spacer />
                 <v-btn v-if="fileModified" color="success" size="x-small" variant="flat" @click="saveFile" :loading="fileSaving">Save</v-btn>
               </div>
-              <!-- Textarea editor -->
+              <!-- CodeMirror editor -->
               <div v-if="currentFilePath" class="flex-grow-1" style="overflow: hidden;">
-                <textarea
-                  ref="editorArea"
-                  v-model="fileContent"
-                  class="agent-file-editor"
-                  spellcheck="false"
-                  @input="fileModified = true"
-                  @keydown.ctrl.s.prevent="saveFile"
-                  @keydown.meta.s.prevent="saveFile"
-                />
+                <div ref="editorContainer" class="agent-file-editor-cm" />
               </div>
               <!-- Empty state -->
               <div v-else class="d-flex align-center justify-center flex-grow-1">
@@ -1163,7 +1163,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { useAgentsStore } from '../stores/agents'
@@ -1172,6 +1172,23 @@ import { useProjectsStore } from '../stores/projects'
 import { useAgentErrorsStore } from '../stores/agentErrors'
 import ProtocolFlow from '../components/ProtocolFlow.vue'
 import TaskFormDialog from '../components/TaskFormDialog.vue'
+
+// CodeMirror imports
+import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from '@codemirror/view'
+import { EditorState } from '@codemirror/state'
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import { syntaxHighlighting, defaultHighlightStyle, indentOnInput, bracketMatching, foldGutter, foldKeymap } from '@codemirror/language'
+import { oneDark } from '@codemirror/theme-one-dark'
+import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
+import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { python } from '@codemirror/lang-python'
+import { javascript } from '@codemirror/lang-javascript'
+import { json as jsonLang } from '@codemirror/lang-json'
+import { markdown } from '@codemirror/lang-markdown'
+import { html as htmlLang } from '@codemirror/lang-html'
+import { css } from '@codemirror/lang-css'
+import { yaml } from '@codemirror/lang-yaml'
+import { sql } from '@codemirror/lang-sql'
 
 const route = useRoute()
 const router = useRouter()
@@ -1243,7 +1260,8 @@ const newFileIsDir = ref(false)
 const newFilePath = ref('')
 const deleteFileDialog = ref(false)
 const deleteFilePath = ref('')
-const editorArea = ref(null)
+const editorContainer = ref(null)
+let editorView = null
 
 // Beliefs tab state
 const beliefs = ref({ core: [], additional: [] })
@@ -1593,6 +1611,60 @@ const fileIcon = (node) => {
   return map[ext] || 'mdi-file-outline'
 }
 
+// ===== CodeMirror =====
+const getLanguageFromPath = (path) => {
+  const ext = path.split('.').pop().toLowerCase()
+  const map = {
+    py: python(), js: javascript(), ts: javascript({ typescript: true }),
+    json: jsonLang(), md: markdown(), html: htmlLang(), css: css(),
+    yaml: yaml(), yml: yaml(), sql: sql(),
+  }
+  return map[ext] || []
+}
+
+const initEditor = (content, filePath) => {
+  destroyEditor()
+  if (!editorContainer.value) return
+
+  const extensions = [
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightSpecialChars(),
+    history(),
+    foldGutter(),
+    drawSelection(),
+    dropCursor(),
+    EditorState.allowMultipleSelections.of(true),
+    indentOnInput(),
+    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    bracketMatching(),
+    closeBrackets(),
+    autocompletion(),
+    rectangularSelection(),
+    crosshairCursor(),
+    highlightActiveLine(),
+    highlightSelectionMatches(),
+    keymap.of([
+      ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap,
+      ...historyKeymap, ...foldKeymap, ...completionKeymap,
+      indentWithTab,
+      { key: 'Mod-s', run: () => { saveFile(); return true } },
+    ]),
+    oneDark,
+    EditorView.updateListener.of((update) => { if (update.docChanged) fileModified.value = true }),
+    EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { overflow: 'auto' } }),
+    getLanguageFromPath(filePath),
+  ].flat()
+
+  editorView = new EditorView({
+    state: EditorState.create({ doc: content, extensions }),
+    parent: editorContainer.value,
+  })
+}
+
+const destroyEditor = () => { if (editorView) { editorView.destroy(); editorView = null } }
+onBeforeUnmount(destroyEditor)
+
 const openFile = async (node) => {
   if (fileModified.value && currentFilePath.value) {
     if (!confirm('Unsaved changes will be lost. Continue?')) return
@@ -1602,6 +1674,8 @@ const openFile = async (node) => {
     currentFilePath.value = data.path
     fileContent.value = data.content
     fileModified.value = false
+    await nextTick()
+    initEditor(data.content, data.path)
   } catch (e) { console.error('Failed to open file:', e) }
 }
 
@@ -1609,7 +1683,9 @@ const saveFile = async () => {
   if (!currentFilePath.value) return
   fileSaving.value = true
   try {
-    await api.put(`/agents/${id.value}/files/write-json`, { path: currentFilePath.value, content: fileContent.value })
+    const content = editorView ? editorView.state.doc.toString() : fileContent.value
+    await api.put(`/agents/${id.value}/files/write-json`, { path: currentFilePath.value, content })
+    fileContent.value = content
     fileModified.value = false
     // Reload agent data if config files changed
     if (['agent.json', 'settings.json'].includes(currentFilePath.value)) {
@@ -1777,7 +1853,7 @@ const doDeleteFile = async () => {
     await api.delete(`/agents/${id.value}/files/delete`, { params: { path: deleteFilePath.value } })
     deleteFileDialog.value = false
     if (currentFilePath.value === deleteFilePath.value || currentFilePath.value?.startsWith(deleteFilePath.value + '/')) {
-      currentFilePath.value = null; fileContent.value = ''; fileModified.value = false
+      currentFilePath.value = null; fileContent.value = ''; fileModified.value = false; destroyEditor()
     }
     await loadFiles()
   } catch (e) { alert(e.response?.data?.detail || 'Failed to delete') }
@@ -1927,6 +2003,16 @@ const stopAgent = async () => {
   }
 }
 
+const toggleEnabled = async (enabled) => {
+  try {
+    await agentsStore.updateAgent(id.value, { enabled })
+    agent.value.enabled = enabled
+    // Only show snackbar if not handled globally or just silently update
+  } catch (e) {
+    console.error('Failed to update agent enabled status:', e)
+  }
+}
+
 onMounted(async () => {
   await loadData()
   await loadAutonomousStatus()
@@ -1945,19 +2031,13 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.agent-file-editor {
+.agent-file-editor-cm {
   width: 100%;
   height: 100%;
-  background: #1e1e1e;
-  color: #d4d4d4;
-  border: none;
-  outline: none;
-  resize: none;
-  padding: 12px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  tab-size: 2;
+}
+
+.agent-file-editor-cm .cm-editor {
+  height: 100%;
 }
 
 .file-node:hover {

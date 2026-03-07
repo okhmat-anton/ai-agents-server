@@ -50,12 +50,7 @@
           </template>
           <template #item.actions="{ item }">
             <div class="d-flex align-center ga-0">
-              <!-- Chat / Start -->
-              <v-btn icon size="small" variant="text" color="success" @click.stop="handleStart(item)" v-if="item.status !== 'running'">
-                <v-icon>mdi-chat</v-icon>
-                <v-tooltip activator="parent" location="top">Start Chat</v-tooltip>
-              </v-btn>
-              <v-btn icon size="small" variant="text" color="error" @click.stop="handleStop(item)" v-else>
+              <v-btn icon size="small" variant="text" color="error" @click.stop="handleStop(item)" v-if="item.status === 'running'">
                 <v-icon>mdi-stop</v-icon>
                 <v-tooltip activator="parent" location="top">Stop Agent</v-tooltip>
               </v-btn>
@@ -198,11 +193,6 @@ const toggleEnabled = async (agent, enabled) => {
   } catch (e) {
     showSnackbar('Failed to update agent')
   }
-}
-
-const handleStart = async (agent) => {
-  await store.startAgent(agent.id)
-  showSnackbar(`${agent.name} started`)
 }
 
 const handleStop = async (agent) => {
