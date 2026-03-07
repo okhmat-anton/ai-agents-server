@@ -3,7 +3,7 @@
     <div class="d-flex align-center mb-6">
       <div class="text-h4 font-weight-bold">Tasks</div>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" to="/tasks/new">New Task</v-btn>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="taskDialog = true">New Task</v-btn>
     </div>
 
     <v-card>
@@ -19,6 +19,12 @@
         <v-data-table :headers="headers" :items="store.tasks" :loading="store.loading" hover>
           <template #item.status="{ item }">
             <v-chip :color="statusColor(item.status)" size="small" variant="tonal">{{ item.status }}</v-chip>
+          </template>
+          <template #item.agent_name="{ item }">
+            <router-link v-if="item.agent_id" :to="`/agents/${item.agent_id}/detail`" class="text-decoration-none">
+              <v-chip size="small" variant="tonal" color="primary">{{ item.agent_name || 'Agent' }}</v-chip>
+            </router-link>
+            <span v-else class="text-grey">—</span>
           </template>
           <template #item.priority="{ item }">
             <v-chip :color="priorityColor(item.priority)" size="x-small" variant="flat">{{ item.priority }}</v-chip>
@@ -40,6 +46,8 @@
       :message="`Are you sure you want to delete &quot;${deleteTarget?.title}&quot;?`"
       @confirm="confirmDelete"
     />
+
+    <TaskFormDialog v-model="taskDialog" @saved="load" />
   </div>
 </template>
 
@@ -47,15 +55,18 @@
 import { ref, watch, onMounted } from 'vue'
 import { useTasksStore } from '../stores/tasks'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
+import TaskFormDialog from '../components/TaskFormDialog.vue'
 
 const store = useTasksStore()
 const filterStatus = ref('all')
 const filterPriority = ref('all')
 const deleteDialog = ref(false)
 const deleteTarget = ref(null)
+const taskDialog = ref(false)
 
 const headers = [
   { title: 'Title', key: 'title' },
+  { title: 'Agent', key: 'agent_name', width: 150 },
   { title: 'Status', key: 'status', width: 120 },
   { title: 'Priority', key: 'priority', width: 100 },
   { title: 'Type', key: 'type', width: 100 },

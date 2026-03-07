@@ -28,10 +28,10 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:4200", "http://localhost:4700"]
 
     # Skills
-    SKILLS_DIR: str = "./data/skills"
+    SKILLS_DIR: str = "../data/skills"
 
     # Agents
-    AGENTS_DIR: str = "./data/agents"
+    AGENTS_DIR: str = "../data/agents"
 
     # Projects (code storage for agents)
     PROJECTS_DIR: str = "../data/projects"

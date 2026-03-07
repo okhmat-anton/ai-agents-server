@@ -36,6 +36,7 @@ from app.services.protocol_executor import (
     parse_skill_invocations,
     parse_todo_list,
     parse_delegate,
+    parse_delegate_done,
 )
 from app.services.thinking_log_service import ThinkingTracker
 from app.services.model_role_service import resolve_model_for_role
@@ -869,22 +870,33 @@ async def send_message(
                     duration_ms=tracker.elapsed_step_ms(),
                 )
 
-            # Get current protocol state (todo list, active child protocol)
+            # Get current protocol state (todo list, delegation stack)
             protocol_state = session.protocol_state or {}
             current_todo = protocol_state.get("todo_list")
-            active_child = protocol_state.get("active_child_protocol")
+            # Support both old (active_child_protocol) and new (delegation_stack) format
+            delegation_stack = protocol_state.get("delegation_stack", [])
+            if not delegation_stack and protocol_state.get("active_child_protocol"):
+                delegation_stack = [protocol_state["active_child_protocol"]]
+            active_child = delegation_stack[-1] if delegation_stack else None
 
             # ── Step: Build system prompt ──
             if tracker:
                 tracker.start_step_timer()
             if agent_protocols:
                 if active_child:
+                    # Find the active child protocol
                     child_proto = None
                     for p in agent_protocols:
                         if p["name"] == active_child or p["id"] == active_child:
                             child_proto = p
                             break
                     if child_proto:
+                        # If child is an orchestrator itself, attach its child protocols
+                        if child_proto.get("type") == "orchestrator":
+                            child_proto["child_protocols"] = [
+                                p for p in agent_protocols
+                                if p["id"] != child_proto["id"] and p.get("type") != "orchestrator"
+                            ]
                         system_prompt = build_agent_system_prompt(
                             base_system_prompt=base_system_prompt,
                             agent_name=agent_name,
@@ -894,6 +906,11 @@ async def send_message(
                             beliefs=agent_beliefs,
                             aspirations=agent_aspirations,
                         )
+                        # Add delegation context
+                        if len(delegation_stack) > 0:
+                            stack_info = " → ".join(delegation_stack)
+                            system_prompt += f"\n\n_Active delegation chain: {stack_info}_\n"
+                            system_prompt += "When done with this delegated work, output: `<<<DELEGATE_DONE:summary>>>`\n"
                     else:
                         system_prompt = build_agent_system_prompt(
                             base_system_prompt=base_system_prompt,
@@ -921,6 +938,7 @@ async def send_message(
                 await tracker.step(
                     "prompt_build", "Build system prompt",
                     input_data={
+                        "delegation_stack": delegation_stack,
                         "active_child_protocol": active_child,
                         "has_todo": bool(current_todo),
                     },
@@ -1057,9 +1075,33 @@ async def send_message(
                 except Exception as e:
                     print(f"[CHAT] Warning: failed to sync todos to tasks: {e}")
 
-            # 2. Parse delegation
+            # 2. Parse delegation (new delegation or returning from one)
             delegate_to = parse_delegate(llm_content)
+            delegate_done = parse_delegate_done(llm_content)
+
+            # Initialize delegation_stack in protocol_state if not present
+            if "delegation_stack" not in protocol_state:
+                # Migrate from old format
+                old_child = protocol_state.get("active_child_protocol")
+                protocol_state["delegation_stack"] = [old_child] if old_child else []
+
+            if delegate_done:
+                # Child protocol finished → pop from delegation stack, return to parent
+                if protocol_state["delegation_stack"]:
+                    finished_protocol = protocol_state["delegation_stack"].pop()
+                    msg_metadata["delegate_done_from"] = finished_protocol
+                    msg_metadata["delegate_done_summary"] = delegate_done.get("summary", "")
+                    if delegate_done.get("result"):
+                        msg_metadata["delegate_result"] = delegate_done["result"]
+                # Update active_child_protocol for backward compat
+                protocol_state["active_child_protocol"] = (
+                    protocol_state["delegation_stack"][-1]
+                    if protocol_state["delegation_stack"] else None
+                )
+
             if delegate_to:
+                # Push new delegation onto the stack
+                protocol_state["delegation_stack"].append(delegate_to)
                 protocol_state["active_child_protocol"] = delegate_to
                 msg_metadata["delegated_to"] = delegate_to
 
@@ -1073,6 +1115,8 @@ async def send_message(
                         "todo_found": bool(new_todo),
                         "delegation_found": bool(delegate_to),
                         "delegation_target": delegate_to,
+                        "delegate_done": bool(delegate_done),
+                        "delegation_stack": protocol_state.get("delegation_stack", []),
                         "skill_calls_found": len(skill_calls) if skill_calls else 0,
                         "skill_calls": [c["skill_name"] for c in skill_calls] if skill_calls else [],
                     },
@@ -1171,6 +1215,7 @@ async def send_message(
                     output_data={
                         "has_todo": bool(protocol_state.get("todo_list")),
                         "active_child": protocol_state.get("active_child_protocol"),
+                        "delegation_stack": protocol_state.get("delegation_stack", []),
                     },
                     duration_ms=tracker.elapsed_step_ms(),
                 )

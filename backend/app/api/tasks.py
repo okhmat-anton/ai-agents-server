@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
+from sqlalchemy.orm import selectinload
 from app.models.task import Task
 from app.models.agent import Agent
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
@@ -25,14 +26,21 @@ async def list_tasks(
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(Task).where(Task.agent_id.is_(None))
+    q = select(Task).options(selectinload(Task.agent))
     if status:
         q = q.where(Task.status == status)
     if priority:
         q = q.where(Task.priority == priority)
     q = q.order_by(Task.created_at.desc()).limit(limit).offset(offset)
     result = await db.execute(q)
-    return result.scalars().all()
+    tasks = result.scalars().all()
+    return [
+        TaskResponse(
+            **{c.key: getattr(t, c.key) for c in Task.__table__.columns},
+            agent_name=t.agent.name if t.agent else None,
+        )
+        for t in tasks
+    ]
 
 
 @common_router.post("", response_model=TaskResponse, status_code=201)

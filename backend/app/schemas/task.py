@@ -26,6 +26,7 @@ class TaskUpdate(BaseModel):
 class TaskResponse(BaseModel):
     id: UUID
     agent_id: UUID | None
+    agent_name: str | None = None
     title: str
     description: str
     type: str

@@ -15,7 +15,7 @@ from app.services.auth_service import create_default_admin
 from app.services.skill_service import create_system_skills
 from app.services.model_service import sync_ollama_models
 from app.services.log_service import syslog_bg
-from app.services.protocol_service import create_default_protocols
+from app.services.protocol_service import create_default_protocols, deduplicate_protocols
 
 from app.api.auth import router as auth_router
 from app.api.settings import router as settings_router
@@ -58,6 +58,9 @@ async def lifespan(app: FastAPI):
         await create_system_skills(db)
         await sync_ollama_models(db)
         await create_default_protocols(db)
+        removed = await deduplicate_protocols(db)
+        if removed:
+            await syslog_bg("info", f"Removed {removed} duplicate protocol(s)", source="system")
 
     # Clean up orphaned autonomous runs (e.g. from server restart during active run)
     from app.services.autonomous_runner import cleanup_orphaned_runs

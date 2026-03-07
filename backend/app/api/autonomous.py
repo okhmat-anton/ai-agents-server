@@ -190,6 +190,24 @@ async def api_autonomous_history(
     return [_run_to_response(r) for r in runs]
 
 
+@router.delete("/history")
+async def api_clear_autonomous_history(
+    agent_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all completed/stopped/error autonomous runs for an agent (not running ones)."""
+    from sqlalchemy import delete
+    result = await db.execute(
+        delete(AutonomousRun).where(
+            AutonomousRun.agent_id == agent_id,
+            AutonomousRun.status.notin_(["running"]),
+        )
+    )
+    await db.commit()
+    return {"message": f"Deleted {result.rowcount} autonomous run(s)"}
+
+
 @router.get("/{run_id}", response_model=AutonomousRunResponse)
 async def api_get_autonomous_run(
     agent_id: UUID,

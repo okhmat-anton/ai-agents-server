@@ -47,7 +47,7 @@ from app.services.protocol_executor import (
     parse_todo_list,
     parse_stop,
 )
-from app.services.log_service import syslog_bg
+from app.services.log_service import syslog_bg, agent_log_bg
 
 # ── Global registry of active runs ──
 # Maps run_id -> asyncio.Task
@@ -290,6 +290,8 @@ async def start_autonomous_run(
 
     await syslog_bg("info", f"Autonomous run started: {run_id} (mode={mode}, max_cycles={max_cycles})",
                      source="autonomous", metadata={"run_id": run_id, "agent_id": agent_id_str})
+    await agent_log_bg(agent_id, "info", f"Autonomous run started (mode={mode}, max_cycles={max_cycles})",
+                       metadata={"run_id": run_id, "mode": mode})
 
     # Return fresh run from new session
     async with async_session() as db:
@@ -426,6 +428,8 @@ async def _run_autonomous_loop(run_id: str, agent_id_str: str):
                     await syslog_bg("error", f"Autonomous cycle error: {e}\n{error_tb}",
                                     source="autonomous",
                                     metadata={"run_id": run_id, "cycle": run.completed_cycles})
+                    await agent_log_bg(agent_id_str, "error", f"Autonomous cycle {run.completed_cycles + 1} failed: {e}",
+                                       metadata={"run_id": run_id})
                     break
 
             # Brief pause between cycles (avoid tight loops)
@@ -460,6 +464,8 @@ async def _run_autonomous_loop(run_id: str, agent_id_str: str):
 
         await syslog_bg("info", f"Autonomous run ended: {run_id}",
                         source="autonomous", metadata={"run_id": run_id})
+        await agent_log_bg(agent_id_str, "info", f"Autonomous run ended",
+                           metadata={"run_id": run_id})
 
 
 async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> bool:
@@ -542,6 +548,16 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
                 seeded_map[str(idx)] = str(t.id)
             run.cycle_state["todo_list"] = seeded_todo
             run.cycle_state["todo_task_map"] = seeded_map
+
+        # ── Enrich thinking log title with current task ──
+        _todo_list = (run.cycle_state or {}).get("todo_list", [])
+        if _todo_list:
+            _in_prog = [t for t in _todo_list if t.get("status") == "in_progress"]
+            _chosen = _in_prog[0] if _in_prog else next((t for t in _todo_list if t.get("status") == "pending"), None)
+            if _chosen and _chosen.get("task") and tracker.log:
+                _task_label = _chosen["task"][:80]
+                tracker.log.user_input = f"[Autonomous cycle {cycle_num}] {_task_label}"
+                await db.flush()
 
         # Load the loop protocol
         result = await db.execute(select(ThinkingProtocol).where(ThinkingProtocol.id == run.loop_protocol_id))
@@ -942,6 +958,13 @@ async def _execute_cycle(db: AsyncSession, run: AutonomousRun, agent: Agent) -> 
             prompt_tokens=getattr(llm_resp, "prompt_tokens", 0),
             completion_tokens=getattr(llm_resp, "completion_tokens", 0),
             llm_calls_count=llm_calls,
+        )
+
+        # Log cycle completion for agent logs tab
+        await agent_log_bg(
+            str(agent.id), "info",
+            f"Cycle {cycle_num} completed ({total_tokens} tokens, {llm_calls} LLM calls)",
+            metadata={"run_id": str(run.id), "cycle": cycle_num, "tokens": total_tokens},
         )
 
         # Check stop conditions

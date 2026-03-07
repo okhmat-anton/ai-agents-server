@@ -459,12 +459,13 @@
 
         <!-- Tasks Tab -->
         <div v-if="tab === 'tasks'">
-          <v-btn color="primary" size="small" prepend-icon="mdi-plus" @click="createAgentTask" class="mb-3">New Task</v-btn>
+          <v-btn color="primary" size="small" prepend-icon="mdi-plus" @click="agentTaskDialog = true" class="mb-3">New Task</v-btn>
           <v-data-table :headers="taskHeaders" :items="tasks" density="compact" hover>
             <template #item.status="{ item }">
               <v-chip :color="taskStatusColor(item.status)" size="x-small" variant="tonal">{{ item.status }}</v-chip>
             </template>
           </v-data-table>
+          <TaskFormDialog v-model="agentTaskDialog" :agent-id="id" @saved="loadTasks" />
         </div>
 
         <!-- Thinking Logs Tab -->
@@ -577,6 +578,7 @@
             </div>
             <v-spacer />
             <v-btn size="small" variant="tonal" color="primary" prepend-icon="mdi-refresh" @click="loadAutonomousHistory" :loading="autoHistoryLoading" class="mr-2">Refresh</v-btn>
+            <v-btn v-if="autoHistory.length" size="small" variant="tonal" color="error" prepend-icon="mdi-delete" @click="clearAutonomousHistory" class="mr-2">Clear History</v-btn>
             <v-btn v-if="agent.status !== 'running'" size="small" variant="flat" color="green" prepend-icon="mdi-play" @click="openAutonomousDialog" :disabled="!hasLoopProtocol">New Run</v-btn>
           </div>
 
@@ -607,8 +609,8 @@
                   </div>
                   <div class="d-flex flex-column align-end">
                     <v-btn v-if="run.status === 'running'" size="x-small" color="error" variant="tonal" prepend-icon="mdi-stop" @click="stopAutonomous">Stop</v-btn>
-                    <v-btn v-if="run.session_id" size="x-small" variant="text" @click="openAutoSession(run)" class="mt-1">
-                      <v-icon size="14" class="mr-1">mdi-chat</v-icon>View Session
+                    <v-btn v-if="run.session_id" size="x-small" variant="text" @click="viewAutoSession(run)" class="mt-1">
+                      <v-icon size="14" class="mr-1">mdi-head-cog-outline</v-icon>View Traces
                     </v-btn>
                   </div>
                 </div>
@@ -1169,6 +1171,7 @@ import { useSettingsStore } from '../stores/settings'
 import { useProjectsStore } from '../stores/projects'
 import { useAgentErrorsStore } from '../stores/agentErrors'
 import ProtocolFlow from '../components/ProtocolFlow.vue'
+import TaskFormDialog from '../components/TaskFormDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -1180,6 +1183,7 @@ const tab = ref('info')
 const agent = ref(null)
 const stats = ref({})
 const tasks = ref([])
+const agentTaskDialog = ref(false)
 const showProtocolPreview = ref(false)
 const previewProtocol = ref(null)
 const logs = ref([])
@@ -1883,6 +1887,19 @@ const openAutoSession = (run) => {
   }
 }
 
+const viewAutoSession = (run) => {
+  // Switch to thinking tab to show reasoning traces for this session
+  tab.value = 'thinking'
+}
+
+const clearAutonomousHistory = async () => {
+  if (!confirm('Clear all completed autonomous run history?')) return
+  try {
+    await api.delete(`/agents/${id.value}/autonomous/history`)
+    await loadAutonomousHistory()
+  } catch (e) { console.error('Failed to clear autonomous history', e) }
+}
+
 const startAutoPolling = () => {
   if (autoPollingTimer) return
   autoPollingTimer = setInterval(async () => {
@@ -1909,7 +1926,6 @@ const stopAgent = async () => {
     await stop()
   }
 }
-const createAgentTask = () => router.push(`/tasks/new?agent_id=${id.value}`)
 
 onMounted(async () => {
   await loadData()

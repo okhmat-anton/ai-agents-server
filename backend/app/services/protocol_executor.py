@@ -38,6 +38,16 @@ DELEGATE_PATTERN = re.compile(
     r"<<<DELEGATE:(.+?)>>>",
 )
 
+DELEGATE_DONE_PATTERN = re.compile(
+    r"<<<DELEGATE_DONE(?::([^>]+))?>>>",
+    re.DOTALL,
+)
+
+DELEGATE_RESULT_PATTERN = re.compile(
+    r"<<<DELEGATE_RESULT>>>(.*?)<<<END_DELEGATE_RESULT>>>",
+    re.DOTALL,
+)
+
 
 # ── Step Formatters ────────────────────────────────────────
 
@@ -101,8 +111,17 @@ def _format_delegate_step(step: dict, child_protocols: list[dict], indent: str =
     if available:
         lines.append(f"{indent}  Available protocols to delegate to:")
         for cp in available:
-            lines.append(f"{indent}    - \"{cp['name']}\": {cp.get('description', 'No description')}")
-        lines.append(f"{indent}  To delegate, output: <<<DELEGATE:protocol_name>>>")
+            cp_type = cp.get('type', 'standard')
+            type_label = f" [orchestrator]" if cp_type == "orchestrator" else ""
+            lines.append(f"{indent}    - \"{cp['name']}\"{type_label}: {cp.get('description', 'No description')}")
+        lines.append(f"{indent}")
+        lines.append(f"{indent}  **Delegation commands:**")
+        lines.append(f"{indent}  - To delegate: `<<<DELEGATE:protocol_name>>>`")
+        lines.append(f"{indent}  - When delegated work is complete: `<<<DELEGATE_DONE:brief summary of results>>>`")
+        lines.append(f"{indent}  - To include detailed result: `<<<DELEGATE_RESULT>>>...details...<<<END_DELEGATE_RESULT>>>`")
+        lines.append(f"{indent}")
+        lines.append(f"{indent}  You can delegate to multiple protocols sequentially.")
+        lines.append(f"{indent}  After each delegation completes, evaluate the result and decide next steps.")
     else:
         lines.append(f"{indent}  (No child protocols configured)")
 
@@ -190,8 +209,21 @@ def format_protocol_prompt(
 
     # Protocol type info
     if proto_type == "orchestrator":
-        sections.append("You are operating as an **orchestrator** — your job is to analyze the task, "
-                        "select the best approach, and delegate to specialized protocols when needed.")
+        sections.append("You are operating as an **orchestrator** — your role is to:")
+        sections.append("1. **Analyze** the user's request to understand intent, scope, and complexity")
+        sections.append("2. **Decompose** complex tasks into sub-tasks if needed")
+        sections.append("3. **Select** the best child protocol(s) for each sub-task")
+        sections.append("4. **Delegate** to child protocols sequentially")
+        sections.append("5. **Evaluate** results from each delegation")
+        sections.append("6. **Iterate** — re-delegate or try another protocol if the result is insufficient")
+        sections.append("7. **Synthesize** final results from all delegations into a coherent response")
+        sections.append("")
+        sections.append("**Important orchestrator principles:**")
+        sections.append("- You may delegate to the same protocol multiple times with different context")
+        sections.append("- You may delegate to multiple protocols in sequence to solve complex tasks")
+        sections.append("- Some child protocols are themselves orchestrators — they can manage their own sub-delegations")
+        sections.append("- If no child protocol fits perfectly, you can handle the task directly using your skills")
+        sections.append("- Always review the quality of delegated work before presenting to the user")
         sections.append("")
 
     # Steps
@@ -243,7 +275,13 @@ def format_protocol_prompt(
     sections.append("- When creating or updating a todo list, use <<<TODO>>>...<<<END_TODO>>> markers")
     sections.append("- When invoking a skill, use <<<SKILL:name>>> {args} <<<END_SKILL>>> markers")
     if proto_type == "orchestrator":
-        sections.append("- When delegating to a child protocol, use <<<DELEGATE:protocol_name>>>")
+        sections.append("")
+        sections.append("**Orchestrator delegation commands:**")
+        sections.append("- To delegate to a child protocol: `<<<DELEGATE:protocol_name>>>`")
+        sections.append("- When your delegated work is complete, signal: `<<<DELEGATE_DONE:brief result summary>>>`")
+        sections.append("- To attach detailed results: `<<<DELEGATE_RESULT>>>...<<<END_DELEGATE_RESULT>>>`")
+        sections.append("- You can delegate multiple times in a conversation — each delegation is a separate step")
+        sections.append("- After delegation completes, you'll see the results. Evaluate and decide next action.")
     sections.append("- Always explain your reasoning before taking actions")
     sections.append("")
 
@@ -255,6 +293,7 @@ def format_child_protocol_prompt(
     available_skills: list[dict] | None = None,
     current_todo: list[dict] | None = None,
     parent_context: str = "",
+    delegation_stack: list[str] | None = None,
 ) -> str:
     """
     Format a child protocol after delegation from an orchestrator.
@@ -264,19 +303,39 @@ def format_child_protocol_prompt(
         available_skills: Skills available
         current_todo: Current todo list state
         parent_context: Context from the orchestrator about why this was delegated
+        delegation_stack: Current delegation hierarchy (parent protocol names)
     """
     sections = []
+
+    if delegation_stack:
+        chain = " → ".join(delegation_stack)
+        sections.append(f"_Delegation chain: {chain} → **{child_protocol.get('name', 'Protocol')}**_")
+        sections.append("")
 
     if parent_context:
         sections.append(f"## Orchestrator Context")
         sections.append(f"The orchestrator has delegated this task to you because: {parent_context}")
         sections.append("")
 
+    # If this child protocol is itself an orchestrator, pass child protocols through
+    child_type = child_protocol.get("type", "standard")
+    child_protos = child_protocol.get("child_protocols") if child_type == "orchestrator" else None
+
     sections.append(format_protocol_prompt(
         child_protocol,
+        child_protocols=child_protos,
         available_skills=available_skills,
         current_todo=current_todo,
     ))
+
+    # Add instructions about returning results to parent
+    sections.append("### Returning Results to Orchestrator")
+    sections.append("When you have completed the delegated work:")
+    sections.append("1. Summarize what you accomplished")
+    sections.append("2. Signal completion: `<<<DELEGATE_DONE:brief summary>>>`")
+    sections.append("3. Optionally provide detailed results: `<<<DELEGATE_RESULT>>>...<<<END_DELEGATE_RESULT>>>`")
+    sections.append("Control will return to the parent orchestrator which may delegate further work.")
+    sections.append("")
 
     return "\n".join(sections)
 
@@ -353,11 +412,37 @@ def parse_delegate(response_text: str) -> str | None:
     return None
 
 
+def parse_delegate_done(response_text: str) -> dict | None:
+    """
+    Parse <<<DELEGATE_DONE>>> or <<<DELEGATE_DONE:summary>>> marker.
+    Indicates the child protocol has finished and control should return
+    to the parent orchestrator.
+
+    Returns {"summary": str, "result": str | None} or None.
+    """
+    match = DELEGATE_DONE_PATTERN.search(response_text)
+    if not match:
+        return None
+
+    summary = (match.group(1) or "").strip() or None
+
+    # Also extract detailed result block if present
+    result_match = DELEGATE_RESULT_PATTERN.search(response_text)
+    result_text = result_match.group(1).strip() if result_match else None
+
+    return {
+        "summary": summary,
+        "result": result_text,
+    }
+
+
 def strip_markers(response_text: str) -> str:
     """Remove all protocol markers from response text for clean display."""
     text = SKILL_PATTERN.sub("", response_text)
     text = TODO_PATTERN.sub("", text)
     text = DELEGATE_PATTERN.sub("", text)
+    text = DELEGATE_DONE_PATTERN.sub("", text)
+    text = DELEGATE_RESULT_PATTERN.sub("", text)
     return text.strip()
 
 
