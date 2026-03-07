@@ -555,7 +555,14 @@ async def _execute_cycle(db, run: MongoAutonomousRun, agent) -> bool:
 
         await tracker.step(
             "history_build", "Build conversation history",
-            output_data={"history_messages": len(history), "total_chars": sum(len(m["content"]) for m in history)},
+            output_data={
+                "history_messages": len(history),
+                "total_chars": sum(len(m["content"]) for m in history),
+                "messages": [
+                    {"role": m["role"], "content_length": len(m["content"]), "content": m["content"]}
+                    for m in history
+                ],
+            },
             duration_ms=tracker.elapsed_step_ms(),
         )
 
@@ -588,7 +595,7 @@ async def _execute_cycle(db, run: MongoAutonomousRun, agent) -> bool:
             input_data={"model": model_name, "history_messages": len(history)},
             output_data={
                 "response_length": len(llm_resp.content),
-                "response_preview": llm_resp.content[:500],
+                "response": llm_resp.content,
                 "total_tokens": llm_resp.total_tokens,
                 "prompt_tokens": getattr(llm_resp, "prompt_tokens", 0),
                 "completion_tokens": getattr(llm_resp, "completion_tokens", 0),
@@ -621,9 +628,12 @@ async def _execute_cycle(db, run: MongoAutonomousRun, agent) -> bool:
             "response_parse", "Parse autonomous cycle response",
             output_data={
                 "todo_found": bool(new_todo),
+                "todo_list": new_todo,
                 "skill_calls_found": len(skill_calls) if skill_calls else 0,
+                "skill_calls": [{"skill": c["skill_name"], "args": c["args"]} for c in skill_calls] if skill_calls else [],
                 "stop_requested": stop_reason is not None,
                 "stop_reason": stop_reason,
+                "raw_response": llm_content,
             },
             duration_ms=tracker.elapsed_step_ms(),
         )
@@ -694,10 +704,22 @@ async def _execute_cycle(db, run: MongoAutonomousRun, agent) -> bool:
 
             await tracker.step(
                 "skill_exec", f"Execute {len(skill_results)} skill(s)",
-                input_data={"skills": [c["skill_name"] for c in skill_calls]},
+                input_data={
+                    "skills": [c["skill_name"] for c in skill_calls],
+                    "args": [c["args"] for c in skill_calls],
+                },
                 output_data={
-                    "results": [{"skill": sr["skill"], "has_error": "error" in sr["result"]} for sr in skill_results],
+                    "results": [
+                        {
+                            "skill": sr["skill"],
+                            "args": sr["args"],
+                            "has_error": "error" in sr["result"],
+                            "result": sr["result"],
+                        }
+                        for sr in skill_results
+                    ],
                     "errors_logged": len(errors_in_cycle),
+                    "errors": errors_in_cycle,
                 },
                 duration_ms=tracker.elapsed_step_ms(),
             )
@@ -758,6 +780,7 @@ async def _execute_cycle(db, run: MongoAutonomousRun, agent) -> bool:
                     "follow_up_call", f"Follow-up after skills ({model_name})",
                     output_data={
                         "response_length": len(follow_resp.content),
+                        "response": follow_resp.content,
                         "tokens": follow_resp.total_tokens,
                     },
                     duration_ms=tracker.elapsed_step_ms(),

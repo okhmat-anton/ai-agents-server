@@ -821,6 +821,7 @@ async def send_message(
                         output_data={
                             "has_project_context": bool(context_summary_parts),
                             "context_summary_length": sum(len(p) for p in context_summary_parts),
+                            "context_parts": context_summary_parts,
                         },
                         duration_ms=tracker.elapsed_step_ms(),
                     )
@@ -839,6 +840,7 @@ async def send_message(
                         output_data={
                             "has_overview": bool(general_context),
                             "overview_length": len(general_context) if general_context else 0,
+                            "overview": general_context or "",
                         },
                         duration_ms=tracker.elapsed_step_ms(),
                     )
@@ -891,6 +893,10 @@ async def send_message(
                     "history_messages": len(history),
                     "total_chars": sum(len(m["content"]) for m in history),
                     "has_summary": bool(session.summary),
+                    "messages": [
+                        {"role": m["role"], "content_length": len(m["content"]), "content": m["content"]}
+                        for m in history
+                    ],
                 },
             )
 
@@ -1001,7 +1007,7 @@ async def send_message(
                 },
                 output_data={
                     "response_length": len(response_data["content"]),
-                    "response_preview": response_data["content"][:500],
+                    "response": response_data["content"],
                     "total_tokens": response_data.get("total_tokens", 0),
                     "prompt_tokens": response_data.get("prompt_tokens", 0),
                     "completion_tokens": response_data.get("completion_tokens", 0),
@@ -1068,11 +1074,16 @@ async def send_message(
                     "response_parse", "Parse LLM response (todo, delegation, skills)",
                     output_data={
                         "todo_found": bool(engine_result.todo_list),
+                        "todo_list": engine_result.todo_list,
                         "delegation_found": bool(engine_result.delegate_to),
                         "delegation_target": engine_result.delegate_to,
                         "delegate_done": bool(engine_result.delegate_done),
+                        "delegate_done_data": engine_result.delegate_done,
                         "delegation_stack": protocol_state.get("delegation_stack", []),
                         "skill_calls_found": len(engine_result.skill_results),
+                        "skill_results": engine_result.skill_results,
+                        "clean_content": engine_result.content,
+                        "raw_content": engine_result.raw_content,
                     },
                     duration_ms=tracker.elapsed_step_ms(),
                 )
@@ -1089,8 +1100,10 @@ async def send_message(
                     "protocol_update", "Save protocol state",
                     output_data={
                         "has_todo": bool(protocol_state.get("todo_list")),
+                        "todo_list": protocol_state.get("todo_list"),
                         "active_child": protocol_state.get("active_child_protocol"),
                         "delegation_stack": protocol_state.get("delegation_stack", []),
+                        "full_protocol_state": protocol_state,
                     },
                     duration_ms=tracker.elapsed_step_ms(),
                 )

@@ -735,6 +735,7 @@ class AgentChatEngine:
                         output_data={
                             "has_project_context": bool(context_parts),
                             "context_summary_length": sum(len(p) for p in context_parts),
+                            "context_parts": context_parts,
                         },
                         duration_ms=tracker.elapsed_step_ms(),
                     )
@@ -753,6 +754,7 @@ class AgentChatEngine:
                         output_data={
                             "has_overview": bool(general_context),
                             "overview_length": len(general_context) if general_context else 0,
+                            "overview": general_context or "",
                         },
                         duration_ms=tracker.elapsed_step_ms(),
                     )
@@ -800,6 +802,10 @@ class AgentChatEngine:
                         "history_messages": len(messages),
                         "total_chars": sum(len(m["content"]) for m in messages),
                         "has_summary": bool(summary),
+                        "messages": [
+                            {"role": m["role"], "content_length": len(m["content"]), "content": m["content"]}
+                            for m in messages
+                        ],
                     },
                 )
 
@@ -910,10 +916,17 @@ class AgentChatEngine:
                     "model": model_name,
                     "provider": provider,
                     "history_messages": len(messages),
+                    "gen_params": {
+                        "temperature": gen_params.temperature,
+                        "top_p": gen_params.top_p,
+                        "top_k": gen_params.top_k,
+                        "max_tokens": gen_params.max_tokens,
+                        "num_ctx": gen_params.num_ctx,
+                    },
                 },
                 output_data={
                     "response_length": len(llm_content),
-                    "response_preview": llm_content[:500] if llm_content else "",
+                    "response": llm_content or "",
                     "total_tokens": total_tokens,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
@@ -969,11 +982,19 @@ class AgentChatEngine:
                     if tracker:
                         await tracker.step(
                             "skill_exec", f"Execute skills (iteration {iteration})",
-                            input_data={"skills": [c["skill_name"] for c in skill_calls]},
+                            input_data={
+                                "skills": [c["skill_name"] for c in skill_calls],
+                                "args": [c["args"] for c in skill_calls],
+                            },
                             output_data={
                                 "results_count": len(iter_results),
-                                "results_preview": [
-                                    {"skill": r["skill"], "has_error": "error" in r["result"]}
+                                "results": [
+                                    {
+                                        "skill": r["skill"],
+                                        "args": r["args"],
+                                        "has_error": "error" in r["result"],
+                                        "result": r["result"],
+                                    }
                                     for r in iter_results
                                 ],
                             },
@@ -1043,10 +1064,14 @@ class AgentChatEngine:
                 "response_parse", "Parse LLM response (todo, delegation, skills)",
                 output_data={
                     "todo_found": bool(result_todo),
+                    "todo_list": result_todo,
                     "delegation_found": bool(result_delegate_to),
                     "delegation_target": result_delegate_to,
                     "delegate_done": bool(result_delegate_done),
+                    "delegate_done_data": result_delegate_done,
                     "skill_calls_total": len(all_skill_results),
+                    "clean_content": clean_content,
+                    "raw_content": raw_content,
                 },
             )
 
