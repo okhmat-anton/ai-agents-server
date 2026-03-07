@@ -21,6 +21,11 @@ class MongoChatSession(BaseModel):
     temperature: float = 0.7
     protocol_state: Optional[Dict[str, Any]] = None
     unread_count: int = 0
+    # Conversation summarization (AIS-35)
+    summary: Optional[str] = None
+    summary_up_to_message_id: Optional[str] = None
+    summary_created_at: Optional[datetime] = None
+    summary_token_count: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -29,6 +34,8 @@ class MongoChatSession(BaseModel):
         doc["_id"] = doc.pop("id")
         doc["created_at"] = doc["created_at"].isoformat()
         doc["updated_at"] = doc["updated_at"].isoformat()
+        if doc.get("summary_created_at"):
+            doc["summary_created_at"] = doc["summary_created_at"].isoformat()
         return doc
 
     @classmethod
@@ -40,6 +47,8 @@ class MongoChatSession(BaseModel):
             doc["created_at"] = datetime.fromisoformat(doc["created_at"])
         if isinstance(doc.get("updated_at"), str):
             doc["updated_at"] = datetime.fromisoformat(doc["updated_at"])
+        if isinstance(doc.get("summary_created_at"), str):
+            doc["summary_created_at"] = datetime.fromisoformat(doc["summary_created_at"])
         return cls(**doc)
 
 

@@ -137,6 +137,68 @@
         <p class="text-body-2 text-medium-emphasis">Ask anything to start a new chat</p>
       </div>
 
+      <!-- Summary Indicator (AIS-35) -->
+      <div v-if="summaryInfo?.has_summary && chatStore.messages.length > 0" class="summary-indicator mx-3 mt-2 mb-3">
+        <v-alert
+          type="info"
+          variant="tonal"
+          density="compact"
+          closable
+          @click:close="summaryExpanded = false"
+        >
+          <template #prepend>
+            <v-icon>mdi-text-box-multiple-outline</v-icon>
+          </template>
+          <div class="d-flex align-center">
+            <span class="text-caption flex-grow-1">
+              ✨ {{ summaryInfo.summarized_messages }} older messages summarized
+            </span>
+            <v-btn
+              size="x-small"
+              variant="text"
+              @click.stop="summaryExpanded = !summaryExpanded"
+              class="ml-2"
+            >
+              {{ summaryExpanded ? 'Hide' : 'View' }} Summary
+            </v-btn>
+            <v-btn
+              size="x-small"
+              variant="text"
+              color="primary"
+              @click.stop="triggerSummarization"
+              :loading="summarizing"
+              class="ml-1"
+            >
+              <v-icon size="14" start>mdi-refresh</v-icon>
+              Regenerate
+            </v-btn>
+          </div>
+          <v-expand-transition>
+            <div v-if="summaryExpanded" class="mt-2 pt-2" style="border-top: 1px solid rgba(255,255,255,0.1)">
+              <div class="text-caption summary-content" v-html="renderMarkdown(summaryInfo.summary)"></div>
+              <div class="text-caption text-medium-emphasis mt-1">
+                Last updated: {{ formatDate(summaryInfo.summary_created_at) }} • 
+                {{ summaryInfo.summary_token_count }} tokens
+              </div>
+            </div>
+          </v-expand-transition>
+        </v-alert>
+      </div>
+
+      <!-- Manual Summarize Button (if no summary but enough messages) -->
+      <div v-else-if="!summaryInfo?.has_summary && chatStore.messages.length >= 10" class="text-center my-2">
+        <v-btn
+          size="x-small"
+          variant="tonal"
+          color="info"
+          @click="triggerSummarization"
+          :loading="summarizing"
+          prepend-icon="mdi-text-box-multiple-outline"
+        >
+          Summarize Conversation
+        </v-btn>
+      </div>
+
       <!-- Messages -->
       <div
         v-for="(msg, msgIndex) in chatStore.messages"
@@ -385,6 +447,11 @@ const allProjects = ref([]) // All projects loaded from API
 const editingSessionId = ref(null)
 const editingSessionTitle = ref('')
 
+// Summary state (AIS-35)
+const summaryInfo = ref(null)
+const summaryExpanded = ref(false)
+const summarizing = ref(false)
+
 let titleTimeout = null
 
 const modelItems = computed(() => chatStore.availableModels || [])
@@ -590,6 +657,45 @@ function formatDate(dateStr) {
   return date.toLocaleDateString()
 }
 
+// Fetch summary info for current session (AIS-35)
+async function fetchSummaryInfo() {
+  if (!chatStore.currentSession) {
+    summaryInfo.value = null
+    return
+  }
+  
+  try {
+    const response = await api.get(`/chat/sessions/${chatStore.currentSession.id}/summary`)
+    summaryInfo.value = response.data
+  } catch (error) {
+    console.error('Failed to fetch summary:', error)
+    summaryInfo.value = null
+  }
+}
+
+// Manually trigger summarization (AIS-35)
+async function triggerSummarization() {
+  if (!chatStore.currentSession || summarizing.value) return
+  
+  summarizing.value = true
+  try {
+    const response = await api.post(`/chat/sessions/${chatStore.currentSession.id}/summary`)
+    summaryInfo.value = {
+      has_summary: true,
+      summary: response.data.summary,
+      summary_token_count: response.data.summary_token_count,
+      summarized_messages: response.data.summarized_messages,
+      summary_created_at: new Date().toISOString(),
+    }
+    summaryExpanded.value = true
+  } catch (error) {
+    console.error('Failed to create summary:', error)
+    alert(error.response?.data?.detail || 'Failed to create summary')
+  } finally {
+    summarizing.value = false
+  }
+}
+
 function newChat() {
   chatStore.newChat()
   selectedModels.value = []
@@ -636,6 +742,9 @@ async function handleSend() {
   sessionsExpanded.value = false
 
   await chatStore.sendMessage(msg)
+
+  // Fetch updated summary info (in case auto-summarization triggered)
+  await fetchSummaryInfo()
 
   // Set title from first message immediately
   if (chatStore.currentSession && chatStore.messages.length <= 3) {
@@ -751,6 +860,8 @@ async function loadSession(sessionId) {
     sessionsExpanded.value = false
   }
   await nextTick()
+  // Fetch summary info for this session (AIS-35)
+  await fetchSummaryInfo()
   scrollToBottom()
 }
 

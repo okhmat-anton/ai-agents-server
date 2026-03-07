@@ -36,6 +36,11 @@ class ChatSession(Base):
     protocol_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Unread messages count for user
     unread_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Conversation summarization (AIS-35)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_up_to_message_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    summary_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    summary_token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

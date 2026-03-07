@@ -40,6 +40,11 @@ from app.services.protocol_executor import (
 )
 from app.services.thinking_log_service import ThinkingTracker
 from app.services.model_role_service import resolve_model_for_role
+from app.services.chat_summary_service import (
+    should_summarize_session,
+    create_summary,
+    get_session_messages_for_llm,
+)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -1078,15 +1083,20 @@ async def send_message(
                 )
 
         # Build conversation history
-        history = []
-        if system_prompt:
-            history.append({"role": "system", "content": system_prompt})
-
+        # Get existing messages
         existing_msgs = await msg_svc.get_by_session(session.id)
         existing_msgs.sort(key=lambda m: m.created_at if m.created_at else datetime.min)
-        for msg in existing_msgs:
-            if msg.role != "system" and msg.id != user_msg.id:
-                history.append({"role": msg.role, "content": msg.content})
+        
+        # Check if auto-summarization is needed (AIS-35)
+        if should_summarize_session(existing_msgs, context_limit=gen_params.num_ctx or 32768):
+            # Create summary in background (non-blocking for this request)
+            # Note: Summary will be used in next message
+            asyncio.create_task(create_summary(session, existing_msgs, db))
+        
+        # Build history with summary injection (if session has summary)
+        history = await get_session_messages_for_llm(session, existing_msgs, system_prompt)
+        
+        # Add current user message
         history.append({"role": "user", "content": body.content})
 
         if tracker:
@@ -1095,6 +1105,7 @@ async def send_message(
                 output_data={
                     "history_messages": len(history),
                     "total_chars": sum(len(m["content"]) for m in history),
+                    "has_summary": bool(session.summary),
                 },
             )
 
@@ -1751,3 +1762,169 @@ async def auto_title_session(
             pass
 
     return {"title": session.title}
+
+
+# ── Conversation Summarization (AIS-35) ─────────────────
+
+@router.get("/sessions/{session_id}/summary")
+async def get_session_summary(
+    session_id: str,
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Get the current summary for a chat session."""
+    sess_svc = ChatSessionService(db)
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    msg_svc = ChatMessageService(db)
+    all_messages = await msg_svc.get_by_session(session.id)
+    
+    return {
+        "has_summary": bool(session.summary),
+        "summary": session.summary,
+        "summary_up_to_message_id": session.summary_up_to_message_id,
+        "summary_created_at": session.summary_created_at,
+        "summary_token_count": session.summary_token_count,
+        "total_messages": len(all_messages),
+        "summarized_messages": len([m for m in all_messages if session.summary_created_at and m.created_at <= session.summary_created_at]) if session.summary_created_at else 0,
+    }
+
+
+@router.post("/sessions/{session_id}/summary")
+async def trigger_summarization(
+    session_id: str,
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Manually trigger summarization for a chat session."""
+    sess_svc = ChatSessionService(db)
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    msg_svc = ChatMessageService(db)
+    messages = await msg_svc.get_by_session(session.id)
+    messages.sort(key=lambda m: m.created_at if m.created_at else datetime.min)
+    
+    if len(messages) < 10:
+        raise HTTPException(status_code=400, detail="Not enough messages to summarize (minimum: 10)")
+    
+    # Create summary
+    summary_text = await create_summary(session, messages, db)
+    if not summary_text:
+        raise HTTPException(status_code=500, detail="Failed to create summary")
+    
+    # Reload session to get updated fields
+    session = await sess_svc.get_by_id(session_id)
+    
+    return {
+        "success": True,
+        "summary": summary_text,
+        "summary_token_count": session.summary_token_count,
+        "summarized_messages": len([m for m in messages if session.summary_created_at and m.created_at <= session.summary_created_at]),
+    }
+
+
+@router.get("/search")
+async def search_chats(
+    query: str = Query(..., description="Search query for chat content"),
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Search chat sessions by title, message content, or summary."""
+    sessions_collection = db["chat_sessions"]
+    messages_collection = db["chat_messages"]
+    
+    # Search in session titles and summaries
+    title_matches = await sessions_collection.find({
+        "user_id": str(user.id),
+        "$or": [
+            {"title": {"$regex": query, "$options": "i"}},
+            {"summary": {"$regex": query, "$options": "i"}},
+        ]
+    }).to_list(length=50)
+    
+    # Search in message content
+    message_matches = await messages_collection.find({
+        "content": {"$regex": query, "$options": "i"}
+    }).to_list(length=100)
+    
+    # Get unique session IDs from message matches
+    message_session_ids = {msg["session_id"] for msg in message_matches}
+    
+    # Fetch those sessions
+    message_sessions = await sessions_collection.find({
+        "_id": {"$in": list(message_session_ids)},
+        "user_id": str(user.id),
+    }).to_list(length=50)
+    
+    # Combine and deduplicate
+    session_map = {}
+    for sess_doc in title_matches + message_sessions:
+        session = MongoChatSession.from_mongo(sess_doc)
+        if session.id not in session_map:
+            session_map[session.id] = {
+                "id": session.id,
+                "title": session.title,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+                "chat_type": session.chat_type,
+                "project_slug": session.project_slug,
+                "task_id": session.task_id,
+                "has_summary": bool(session.summary),
+                "summary_preview": session.summary[:200] if session.summary else None,
+            }
+    
+    results = list(session_map.values())
+    results.sort(key=lambda x: x["updated_at"] or x["created_at"], reverse=True)
+    
+    return {
+        "query": query,
+        "results": results,
+        "count": len(results),
+    }
+
+
+@router.get("/sessions/by-project/{project_slug}")
+async def get_project_chats(
+    project_slug: str,
+    task_id: Optional[str] = None,
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Get all chat sessions related to a project or specific task."""
+    sessions_collection = db["chat_sessions"]
+    
+    query = {
+        "user_id": str(user.id),
+        "project_slug": project_slug,
+    }
+    if task_id:
+        query["task_id"] = task_id
+    
+    session_docs = await sessions_collection.find(query).sort("updated_at", -1).to_list(length=100)
+    
+    sessions = []
+    for doc in session_docs:
+        session = MongoChatSession.from_mongo(doc)
+        # Get message count
+        msg_svc = ChatMessageService(db)
+        messages = await msg_svc.get_by_session(session.id)
+        
+        sessions.append({
+            "id": session.id,
+            "title": session.title,
+            "summary": session.summary[:200] if session.summary else None,
+            "message_count": len(messages),
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        })
+    
+    return {
+        "project_slug": project_slug,
+        "task_id": task_id,
+        "sessions": sessions,
+        "count": len(sessions),
+    }
