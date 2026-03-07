@@ -105,6 +105,10 @@
         </v-tab>
         <v-tab value="skills">Skills</v-tab>
         <v-tab value="memory">Memory</v-tab>
+        <v-tab value="messengers">
+          Messengers
+          <v-badge v-if="activeMessengerCount > 0" :content="activeMessengerCount" color="success" inline />
+        </v-tab>
       </v-tabs>
       <v-card-text>
         <!-- Info Tab -->
@@ -974,8 +978,240 @@
             </template>
           </v-data-table>
         </div>
+
+        <!-- Messengers Tab -->
+        <div v-if="tab === 'messengers'">
+          <div class="d-flex align-center mb-4">
+            <h3 class="text-h6">Messenger Accounts</h3>
+            <v-spacer />
+            <v-btn color="primary" size="small" prepend-icon="mdi-plus" @click="openAddMessenger">
+              Add Account
+            </v-btn>
+          </div>
+
+          <v-alert v-if="!messengerAccounts.length" type="info" variant="tonal" class="mb-4">
+            No messenger accounts configured. Click "Add Account" to connect Telegram or other platforms.
+          </v-alert>
+
+          <v-card v-for="acc in messengerAccounts" :key="acc.id" variant="outlined" class="mb-3">
+            <v-card-text>
+              <div class="d-flex align-center">
+                <v-icon :color="acc.platform === 'telegram' ? 'blue' : 'grey'" size="32" class="mr-3">
+                  {{ acc.platform === 'telegram' ? 'mdi-send' : acc.platform === 'discord' ? 'mdi-discord' : 'mdi-message-text' }}
+                </v-icon>
+                <div class="flex-grow-1">
+                  <div class="text-subtitle-1 font-weight-bold">
+                    {{ acc.name || acc.platform }}
+                    <v-chip :color="acc.is_active ? 'success' : acc.is_authenticated ? 'warning' : 'grey'" size="x-small" class="ml-2">
+                      {{ acc.is_active ? 'Active' : acc.is_authenticated ? 'Stopped' : 'Not authenticated' }}
+                    </v-chip>
+                  </div>
+                  <div class="text-caption text-grey">
+                    {{ acc.platform.charAt(0).toUpperCase() + acc.platform.slice(1) }}
+                    <span v-if="acc.phone_masked"> &middot; {{ acc.phone_masked }}</span>
+                    <span v-if="acc.stats"> &middot; Messages today: {{ acc.stats.messages_today || 0 }}/{{ acc.config?.max_daily_messages || 100 }}</span>
+                  </div>
+                </div>
+                <div class="d-flex ga-1">
+                  <v-btn v-if="!acc.is_authenticated" size="small" color="primary" variant="tonal" @click="startAuth(acc)" :loading="messengerAuthLoading === acc.id">
+                    Authenticate
+                  </v-btn>
+                  <v-btn v-if="acc.is_authenticated && !acc.is_active" size="small" color="success" variant="tonal" @click="startListener(acc)" :loading="messengerActionLoading === acc.id">
+                    Start
+                  </v-btn>
+                  <v-btn v-if="acc.is_active" size="small" color="warning" variant="tonal" @click="stopListener(acc)" :loading="messengerActionLoading === acc.id">
+                    Stop
+                  </v-btn>
+                  <v-btn size="small" variant="text" icon="mdi-cog" @click="openEditMessenger(acc)" />
+                  <v-btn size="small" variant="text" icon="mdi-message-text-outline" @click="openMessengerMessages(acc)" />
+                  <v-btn size="small" variant="text" icon="mdi-delete" color="error" @click="confirmDeleteMessenger(acc)" />
+                </div>
+              </div>
+
+              <!-- Trusted Users -->
+              <div v-if="acc.trusted_users && acc.trusted_users.length" class="mt-2">
+                <span class="text-caption text-grey">Trusted: </span>
+                <v-chip v-for="u in acc.trusted_users" :key="u" size="x-small" variant="tonal" color="primary" class="mr-1">{{ u }}</v-chip>
+              </div>
+
+              <!-- Public Permissions -->
+              <div v-if="acc.public_permissions && acc.public_permissions.length" class="mt-1">
+                <span class="text-caption text-grey">Public permissions: </span>
+                <v-chip v-for="p in acc.public_permissions" :key="p" size="x-small" variant="tonal" class="mr-1">{{ p }}</v-chip>
+              </div>
+            </v-card-text>
+          </v-card>
+        </div>
       </v-card-text>
     </v-card>
+
+    <!-- Add/Edit Messenger Dialog -->
+    <v-dialog v-model="messengerDialog" max-width="600">
+      <v-card>
+        <v-card-title>{{ messengerEditId ? 'Edit' : 'Add' }} Messenger Account</v-card-title>
+        <v-card-text>
+          <v-select
+            v-model="messengerForm.platform"
+            :items="['telegram', 'discord', 'whatsapp', 'vk', 'slack']"
+            label="Platform"
+            density="compact"
+            variant="outlined"
+            class="mb-3"
+            :disabled="!!messengerEditId"
+          />
+          <v-text-field v-model="messengerForm.name" label="Display Name" density="compact" variant="outlined" class="mb-3" />
+
+          <v-divider class="mb-3" />
+          <div class="text-subtitle-2 mb-2">Credentials (Telegram)</div>
+          <v-text-field v-model="messengerForm.api_id" label="API ID" density="compact" variant="outlined" class="mb-2" hint="Get from my.telegram.org" />
+          <v-text-field v-model="messengerForm.api_hash" label="API Hash" density="compact" variant="outlined" class="mb-2" type="password" />
+          <v-text-field v-model="messengerForm.phone" label="Phone Number" density="compact" variant="outlined" class="mb-3" placeholder="+79001234567" />
+
+          <v-divider class="mb-3" />
+          <div class="text-subtitle-2 mb-2">Trusted Users (whitelist)</div>
+          <v-combobox
+            v-model="messengerForm.trusted_users"
+            label="Usernames or user IDs"
+            density="compact"
+            variant="outlined"
+            chips
+            multiple
+            closable-chips
+            class="mb-3"
+            hint="e.g. @boss, @admin, user_id:123456"
+          />
+
+          <v-divider class="mb-3" />
+          <div class="text-subtitle-2 mb-2">Public Permissions (for regular users)</div>
+          <v-combobox
+            v-model="messengerForm.public_permissions"
+            :items="['answer_questions', 'web_search', 'generate_image', 'text_summarize', 'casual_chat']"
+            label="Permissions"
+            density="compact"
+            variant="outlined"
+            chips
+            multiple
+            closable-chips
+            class="mb-3"
+          />
+
+          <v-divider class="mb-3" />
+          <div class="text-subtitle-2 mb-2">Behaviour</div>
+          <div class="d-flex ga-3 mb-2">
+            <v-text-field v-model.number="messengerForm.response_delay_min" label="Min delay (sec)" type="number" density="compact" variant="outlined" style="max-width: 140px" />
+            <v-text-field v-model.number="messengerForm.response_delay_max" label="Max delay (sec)" type="number" density="compact" variant="outlined" style="max-width: 140px" />
+            <v-text-field v-model.number="messengerForm.max_daily_messages" label="Max daily msgs" type="number" density="compact" variant="outlined" style="max-width: 140px" />
+          </div>
+          <v-checkbox v-model="messengerForm.typing_indicator" label="Show typing indicator" density="compact" hide-details />
+          <v-checkbox v-model="messengerForm.humanize_responses" label="Humanize responses" density="compact" hide-details />
+          <v-checkbox v-model="messengerForm.casual_tone" label="Casual tone" density="compact" hide-details />
+          <v-checkbox v-model="messengerForm.respond_to_mentions" label="Respond to @mentions in groups" density="compact" hide-details />
+          <v-checkbox v-model="messengerForm.respond_in_groups" label="Respond to all messages in groups" density="compact" hide-details />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="messengerDialog = false">Cancel</v-btn>
+          <v-btn color="primary" @click="saveMessenger" :loading="messengerSaving">{{ messengerEditId ? 'Save' : 'Create' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Telegram Auth Dialog -->
+    <v-dialog v-model="authDialog" max-width="450" persistent>
+      <v-card>
+        <v-card-title>Telegram Authentication</v-card-title>
+        <v-card-text>
+          <div v-if="authStep === 'sending'" class="text-center py-4">
+            <v-progress-circular indeterminate color="primary" />
+            <div class="mt-2">Sending verification code...</div>
+          </div>
+          <div v-else-if="authStep === 'code'">
+            <v-alert type="info" variant="tonal" class="mb-3" density="compact">
+              Verification code sent to your Telegram app or SMS.
+            </v-alert>
+            <v-text-field
+              v-model="authCode"
+              label="Verification Code"
+              density="compact"
+              variant="outlined"
+              autofocus
+              @keyup.enter="submitAuthCode"
+            />
+          </div>
+          <div v-else-if="authStep === '2fa'">
+            <v-alert type="warning" variant="tonal" class="mb-3" density="compact">
+              This account has two-factor authentication enabled.
+            </v-alert>
+            <v-text-field
+              v-model="auth2faPassword"
+              label="2FA Password"
+              type="password"
+              density="compact"
+              variant="outlined"
+              autofocus
+              @keyup.enter="submit2fa"
+            />
+          </div>
+          <div v-else-if="authStep === 'done'">
+            <v-alert type="success" variant="tonal" density="compact">
+              Successfully authenticated as {{ authResult.username ? '@' + authResult.username : authResult.first_name }}
+            </v-alert>
+          </div>
+          <div v-else-if="authStep === 'error'">
+            <v-alert type="error" variant="tonal" density="compact">{{ authError }}</v-alert>
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn v-if="authStep === 'done' || authStep === 'error'" @click="authDialog = false; loadMessengers()">Close</v-btn>
+          <v-btn v-if="authStep === 'code'" @click="authDialog = false">Cancel</v-btn>
+          <v-btn v-if="authStep === 'code'" color="primary" @click="submitAuthCode" :loading="authSubmitting">Submit Code</v-btn>
+          <v-btn v-if="authStep === '2fa'" @click="authDialog = false">Cancel</v-btn>
+          <v-btn v-if="authStep === '2fa'" color="primary" @click="submit2fa" :loading="authSubmitting">Submit Password</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Messenger Messages Dialog -->
+    <v-dialog v-model="messengerMsgDialog" max-width="700">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2">mdi-message-text</v-icon>
+          Messages — {{ messengerMsgAccount?.name }}
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="messengerMsgDialog = false" />
+        </v-card-title>
+        <v-card-text style="max-height: 500px; overflow-y: auto;">
+          <v-alert v-if="!messengerMessages.length" type="info" variant="tonal" density="compact">No messages yet.</v-alert>
+          <div v-for="msg in messengerMessages" :key="msg.id" class="mb-2 pa-2 rounded" :class="msg.direction === 'outgoing' ? 'bg-blue-darken-4' : 'bg-grey-darken-3'">
+            <div class="d-flex align-center mb-1">
+              <v-icon size="14" class="mr-1">{{ msg.direction === 'outgoing' ? 'mdi-arrow-right' : 'mdi-arrow-left' }}</v-icon>
+              <span class="text-caption font-weight-bold">{{ msg.direction === 'outgoing' ? 'Agent' : (msg.display_name || msg.username || 'User') }}</span>
+              <v-chip v-if="msg.is_trusted_user" size="x-small" color="primary" class="ml-1">trusted</v-chip>
+              <v-chip v-if="msg.is_command" size="x-small" color="warning" class="ml-1">command</v-chip>
+              <v-spacer />
+              <span class="text-caption text-grey">{{ new Date(msg.created_at).toLocaleString() }}</span>
+            </div>
+            <div class="text-body-2">{{ msg.content }}</div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- Delete Messenger Confirm -->
+    <v-dialog v-model="deleteMessengerDialog" max-width="400">
+      <v-card>
+        <v-card-title>Delete Messenger Account</v-card-title>
+        <v-card-text>
+          Are you sure you want to delete <strong>{{ deleteMessengerAccount?.name }}</strong>? This will also delete all logged messages. This action cannot be undone.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="deleteMessengerDialog = false">Cancel</v-btn>
+          <v-btn color="error" @click="doDeleteMessenger" :loading="messengerDeleting">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- New File Dialog -->
     <v-dialog v-model="newFileDialog" max-width="450">
@@ -1251,6 +1487,48 @@ const currentFilePath = ref(null)
 // Projects tab state
 const agentProjects = ref([])
 const agentProjectsLoading = ref(false)
+
+// Messengers tab state
+const messengerAccounts = ref([])
+const messengerDialog = ref(false)
+const messengerEditId = ref(null)
+const messengerSaving = ref(false)
+const messengerForm = ref({
+  platform: 'telegram',
+  name: '',
+  api_id: '',
+  api_hash: '',
+  phone: '',
+  trusted_users: [],
+  public_permissions: ['answer_questions', 'web_search'],
+  response_delay_min: 2,
+  response_delay_max: 8,
+  max_daily_messages: 100,
+  typing_indicator: true,
+  humanize_responses: true,
+  casual_tone: true,
+  respond_to_mentions: true,
+  respond_in_groups: false,
+})
+const messengerAuthLoading = ref(null)
+const messengerActionLoading = ref(null)
+const authDialog = ref(false)
+const authStep = ref('')  // sending, code, 2fa, done, error
+const authCode = ref('')
+const auth2faPassword = ref('')
+const authSubmitting = ref(false)
+const authError = ref('')
+const authResult = ref({})
+const authMessengerId = ref(null)
+const authPhoneCodeHash = ref('')
+const messengerMsgDialog = ref(false)
+const messengerMsgAccount = ref(null)
+const messengerMessages = ref([])
+const deleteMessengerDialog = ref(false)
+const deleteMessengerAccount = ref(null)
+const messengerDeleting = ref(false)
+
+const activeMessengerCount = computed(() => messengerAccounts.value.filter(a => a.is_active).length)
 const fileContent = ref('')
 const fileModified = ref(false)
 const fileSaving = ref(false)
@@ -2013,15 +2291,232 @@ const toggleEnabled = async (enabled) => {
   }
 }
 
+// ── Messengers ──────────────────────────────────────────────────────────
+
+async function loadMessengers() {
+  if (!agent.value) return
+  try {
+    const { data } = await api.get(`/agents/${agent.value.id}/messengers`)
+    messengerAccounts.value = data
+  } catch (e) {
+    console.error('Failed to load messengers', e)
+  }
+}
+
+function openAddMessenger() {
+  messengerEditId.value = null
+  messengerForm.value = {
+    platform: 'telegram', name: '', api_id: '', api_hash: '', phone: '',
+    trusted_users: [], public_permissions: ['answer_questions', 'web_search'],
+    response_delay_min: 2, response_delay_max: 8, max_daily_messages: 100,
+    typing_indicator: true, humanize_responses: true, casual_tone: true,
+    respond_to_mentions: true, respond_in_groups: false,
+  }
+  messengerDialog.value = true
+}
+
+function openEditMessenger(acc) {
+  messengerEditId.value = acc.id
+  messengerForm.value = {
+    platform: acc.platform,
+    name: acc.name,
+    api_id: '', api_hash: '', phone: '',  // credentials hidden
+    trusted_users: [...(acc.trusted_users || [])],
+    public_permissions: [...(acc.public_permissions || [])],
+    response_delay_min: acc.config?.response_delay_min ?? 2,
+    response_delay_max: acc.config?.response_delay_max ?? 8,
+    max_daily_messages: acc.config?.max_daily_messages ?? 100,
+    typing_indicator: acc.config?.typing_indicator ?? true,
+    humanize_responses: acc.config?.humanize_responses ?? true,
+    casual_tone: acc.config?.casual_tone ?? true,
+    respond_to_mentions: acc.config?.respond_to_mentions ?? true,
+    respond_in_groups: acc.config?.respond_in_groups ?? false,
+  }
+  messengerDialog.value = true
+}
+
+async function saveMessenger() {
+  messengerSaving.value = true
+  try {
+    const f = messengerForm.value
+    const payload = {
+      platform: f.platform,
+      name: f.name,
+      trusted_users: f.trusted_users,
+      public_permissions: f.public_permissions,
+      config: {
+        response_delay_min: f.response_delay_min,
+        response_delay_max: f.response_delay_max,
+        max_daily_messages: f.max_daily_messages,
+        typing_indicator: f.typing_indicator,
+        humanize_responses: f.humanize_responses,
+        casual_tone: f.casual_tone,
+        respond_to_mentions: f.respond_to_mentions,
+        respond_in_groups: f.respond_in_groups,
+        autonomous_mode: true,
+      },
+    }
+    if (f.api_id || f.api_hash || f.phone) {
+      payload.credentials = { api_id: f.api_id, api_hash: f.api_hash, phone: f.phone, session_name: '' }
+    }
+
+    if (messengerEditId.value) {
+      await api.patch(`/agents/${agent.value.id}/messengers/${messengerEditId.value}`, payload)
+    } else {
+      await api.post(`/agents/${agent.value.id}/messengers`, payload)
+    }
+    messengerDialog.value = false
+    await loadMessengers()
+  } catch (e) {
+    console.error('Save messenger error', e)
+  } finally {
+    messengerSaving.value = false
+  }
+}
+
+async function startAuth(acc) {
+  messengerAuthLoading.value = acc.id
+  authMessengerId.value = acc.id
+  authStep.value = 'sending'
+  authCode.value = ''
+  auth2faPassword.value = ''
+  authError.value = ''
+  authResult.value = {}
+  authDialog.value = true
+
+  try {
+    const { data } = await api.post(`/agents/${agent.value.id}/messengers/${acc.id}/auth/start`)
+    if (data.status === 'already_authenticated') {
+      authStep.value = 'done'
+      authResult.value = data
+    } else if (data.status === 'code_sent') {
+      authPhoneCodeHash.value = data.phone_code_hash || ''
+      authStep.value = 'code'
+    } else {
+      authStep.value = 'error'
+      authError.value = data.message || 'Unknown error'
+    }
+  } catch (e) {
+    authStep.value = 'error'
+    authError.value = e.response?.data?.detail || e.message
+  } finally {
+    messengerAuthLoading.value = null
+  }
+}
+
+async function submitAuthCode() {
+  authSubmitting.value = true
+  try {
+    const { data } = await api.post(`/agents/${agent.value.id}/messengers/${authMessengerId.value}/auth/code`, {
+      code: authCode.value,
+      phone_code_hash: authPhoneCodeHash.value,
+    })
+    if (data.status === 'authenticated') {
+      authStep.value = 'done'
+      authResult.value = data
+    } else if (data.status === '2fa_required') {
+      authStep.value = '2fa'
+    } else {
+      authStep.value = 'error'
+      authError.value = data.message || 'Authentication failed'
+    }
+  } catch (e) {
+    authStep.value = 'error'
+    authError.value = e.response?.data?.detail || e.message
+  } finally {
+    authSubmitting.value = false
+  }
+}
+
+async function submit2fa() {
+  authSubmitting.value = true
+  try {
+    const { data } = await api.post(`/agents/${agent.value.id}/messengers/${authMessengerId.value}/auth/2fa`, {
+      password: auth2faPassword.value,
+    })
+    if (data.status === 'authenticated') {
+      authStep.value = 'done'
+      authResult.value = data
+    } else {
+      authStep.value = 'error'
+      authError.value = data.message || 'Authentication failed'
+    }
+  } catch (e) {
+    authStep.value = 'error'
+    authError.value = e.response?.data?.detail || e.message
+  } finally {
+    authSubmitting.value = false
+  }
+}
+
+async function startListener(acc) {
+  messengerActionLoading.value = acc.id
+  try {
+    await api.post(`/agents/${agent.value.id}/messengers/${acc.id}/start`)
+    await loadMessengers()
+  } catch (e) {
+    console.error('Start listener error', e)
+  } finally {
+    messengerActionLoading.value = null
+  }
+}
+
+async function stopListener(acc) {
+  messengerActionLoading.value = acc.id
+  try {
+    await api.post(`/agents/${agent.value.id}/messengers/${acc.id}/stop`)
+    await loadMessengers()
+  } catch (e) {
+    console.error('Stop listener error', e)
+  } finally {
+    messengerActionLoading.value = null
+  }
+}
+
+async function openMessengerMessages(acc) {
+  messengerMsgAccount.value = acc
+  messengerMsgDialog.value = true
+  try {
+    const { data } = await api.get(`/agents/${agent.value.id}/messengers/${acc.id}/messages?limit=100`)
+    messengerMessages.value = data
+  } catch (e) {
+    console.error('Load messages error', e)
+    messengerMessages.value = []
+  }
+}
+
+function confirmDeleteMessenger(acc) {
+  deleteMessengerAccount.value = acc
+  deleteMessengerDialog.value = true
+}
+
+async function doDeleteMessenger() {
+  messengerDeleting.value = true
+  try {
+    await api.delete(`/agents/${agent.value.id}/messengers/${deleteMessengerAccount.value.id}`)
+    deleteMessengerDialog.value = false
+    await loadMessengers()
+  } catch (e) {
+    console.error('Delete messenger error', e)
+  } finally {
+    messengerDeleting.value = false
+  }
+}
+
+// ── Lifecycle ──────────────────────────────────────────────────────────
+
 onMounted(async () => {
   await loadData()
   await loadAutonomousStatus()
 })
 
-// Lazy-load projects when tab is selected
+// Lazy-load projects/messengers when tab is selected
 watch(tab, (val) => {
   if (val === 'projects' && !agentProjects.value.length && !agentProjectsLoading.value) {
     loadAgentProjects()
+  }
+  if (val === 'messengers' && !messengerAccounts.value.length) {
+    loadMessengers()
   }
 })
 

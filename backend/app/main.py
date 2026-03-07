@@ -39,6 +39,7 @@ from app.api.thinking_logs import agent_thinking_router, session_thinking_router
 from app.api.autonomous import router as autonomous_router
 from app.api.projects import router as projects_router
 from app.api.agent_errors import agent_error_router, all_errors_router
+from app.api.messengers import router as messengers_router
 
 from app.services.ollama_watchdog import start_watchdog, stop_watchdog
 
@@ -86,6 +87,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     await stop_watchdog()
+    from app.services.telegram_service import stop_all_clients
+    await stop_all_clients()
     await syslog_bg("info", "Server shutting down", source="system")
 
 
@@ -158,6 +161,7 @@ app.include_router(autonomous_router)
 app.include_router(projects_router)
 app.include_router(agent_error_router)
 app.include_router(all_errors_router)
+app.include_router(messengers_router)
 
 # Serve uploaded files (avatars, etc.) from data/agents/ directory
 _uploads_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "agents")

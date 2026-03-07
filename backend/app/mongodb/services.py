@@ -24,6 +24,7 @@ from app.mongodb.models import (
     MongoMemory,
     MongoMemoryLink,
 )
+from app.mongodb.models.messenger import MongoMessengerAccount, MongoMessengerMessage
 
 
 class UserService(BaseMongoService[MongoUser]):
@@ -198,6 +199,48 @@ class MemoryService(BaseMongoService[MongoMemory]):
     async def delete_by_agent(self, agent_id: str):
         result = await self.collection.delete_many({"agent_id": agent_id})
         return result.deleted_count
+
+
+class MessengerAccountService(BaseMongoService[MongoMessengerAccount]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "messenger_accounts", MongoMessengerAccount)
+
+    async def get_by_agent(self, agent_id: str, limit: int = 50, skip: int = 0):
+        return await self.get_all(filter={"agent_id": agent_id}, skip=skip, limit=limit)
+
+    async def get_active(self, platform: str = None):
+        filt = {"is_active": True, "is_authenticated": True}
+        if platform:
+            filt["platform"] = platform
+        return await self.get_all(filter=filt, limit=500)
+
+    async def delete_by_agent(self, agent_id: str):
+        result = await self.collection.delete_many({"agent_id": agent_id})
+        return result.deleted_count
+
+
+class MessengerMessageService(BaseMongoService[MongoMessengerMessage]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "messenger_messages", MongoMessengerMessage)
+
+    async def get_by_messenger(self, messenger_id: str, limit: int = 100, skip: int = 0):
+        cursor = self.collection.find({"messenger_id": messenger_id}).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def get_by_chat(self, messenger_id: str, chat_id: str, limit: int = 50):
+        cursor = self.collection.find({"messenger_id": messenger_id, "chat_id": chat_id}).sort("created_at", -1).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def count_today(self, messenger_id: str) -> int:
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        return await self.collection.count_documents({
+            "messenger_id": messenger_id,
+            "direction": "outgoing",
+            "created_at": {"$gte": today.isoformat()}
+        })
 
 
 class MemoryLinkService(BaseMongoService[MongoMemoryLink]):

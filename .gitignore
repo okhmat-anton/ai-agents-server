@@ -11,3 +11,5 @@ data/
 .env.agent
 *.log
 server.log
+*.session
+data/messengers/sessions/
