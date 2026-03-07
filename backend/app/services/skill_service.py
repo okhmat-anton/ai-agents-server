@@ -350,6 +350,241 @@ SYSTEM_SKILLS = [
             "required": ["project_slug", "file_path"],
         },
     },
+    {
+        "name": "project_context_build",
+        "display_name": "Project Context Build",
+        "description": "Build complete project context including metadata, tasks, files, and recent activity",
+        "description_for_agent": (
+            "Get comprehensive project context in a single call. Returns project info, task statistics, file tree, and recent activity logs. "
+            "Parameters: project_slug (string), include_logs (boolean, default: true), include_file_tree (boolean, default: true), max_recent_logs (integer, default: 50). "
+            "Use this when starting work on a project to understand its current state, goals, and recent activity."
+        ),
+        "category": "project",
+        "code": (
+            "from pathlib import Path\n"
+            "import os\n"
+            "import json\n\n"
+            "async def execute(project_slug, include_logs=True, include_file_tree=True, max_recent_logs=50):\n"
+            "    base = Path(os.environ.get('PROJECTS_DIR', './data/projects')).resolve()\n"
+            "    project_dir = (base / project_slug).resolve()\n"
+            "    if not str(project_dir).startswith(str(base)):\n"
+            "        return {'error': 'Invalid project slug'}\n"
+            "    if not project_dir.exists():\n"
+            "        return {'error': f'Project not found: {project_slug}'}\n"
+            "    project_json = project_dir / 'project.json'\n"
+            "    if not project_json.exists():\n"
+            "        return {'error': 'Project config not found'}\n"
+            "    try:\n"
+            "        project_data = json.loads(project_json.read_text(encoding='utf-8'))\n"
+            "    except Exception as e:\n"
+            "        return {'error': f'Failed to read project config: {str(e)}'}\n"
+            "    tasks_json = project_dir / 'tasks.json'\n"
+            "    tasks = []\n"
+            "    if tasks_json.exists():\n"
+            "        try:\n"
+            "            tasks = json.loads(tasks_json.read_text(encoding='utf-8'))\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "    task_stats = {\n"
+            "        'total': len(tasks),\n"
+            "        'backlog': sum(1 for t in tasks if t.get('status') == 'backlog'),\n"
+            "        'todo': sum(1 for t in tasks if t.get('status') == 'todo'),\n"
+            "        'in_progress': sum(1 for t in tasks if t.get('status') == 'in_progress'),\n"
+            "        'review': sum(1 for t in tasks if t.get('status') == 'review'),\n"
+            "        'done': sum(1 for t in tasks if t.get('status') == 'done'),\n"
+            "        'cancelled': sum(1 for t in tasks if t.get('status') == 'cancelled'),\n"
+            "    }\n"
+            "    task_summaries = []\n"
+            "    for task in tasks:\n"
+            "        task_summaries.append({\n"
+            "            'id': task.get('id'),\n"
+            "            'key': task.get('key'),\n"
+            "            'title': task.get('title'),\n"
+            "            'status': task.get('status'),\n"
+            "            'priority': task.get('priority'),\n"
+            "            'assignee': task.get('assignee'),\n"
+            "            'labels': task.get('labels', []),\n"
+            "            'story_points': task.get('story_points'),\n"
+            "            'comment_count': len(task.get('comments', [])),\n"
+            "            'created_at': task.get('created_at'),\n"
+            "            'updated_at': task.get('updated_at'),\n"
+            "        })\n"
+            "    result = {\n"
+            "        'project': {\n"
+            "            'id': project_data.get('id'),\n"
+            "            'slug': project_data.get('slug'),\n"
+            "            'name': project_data.get('name'),\n"
+            "            'description': project_data.get('description', ''),\n"
+            "            'goals': project_data.get('goals', ''),\n"
+            "            'success_criteria': project_data.get('success_criteria', ''),\n"
+            "            'tech_stack': project_data.get('tech_stack', []),\n"
+            "            'status': project_data.get('status'),\n"
+            "            'tags': project_data.get('tags', []),\n"
+            "            'lead_agent_id': project_data.get('lead_agent_id'),\n"
+            "            'created_at': project_data.get('created_at'),\n"
+            "            'updated_at': project_data.get('updated_at'),\n"
+            "        },\n"
+            "        'task_stats': task_stats,\n"
+            "        'tasks': task_summaries,\n"
+            "    }\n"
+            "    if include_file_tree:\n"
+            "        code_dir = project_dir / 'code'\n"
+            "        if code_dir.exists():\n"
+            "            files = []\n"
+            "            for file_path in sorted(code_dir.rglob('*')):\n"
+            "                if file_path.is_file():\n"
+            "                    files.append(str(file_path.relative_to(code_dir)))\n"
+            "            result['file_tree'] = {'total_files': len(files), 'files': files}\n"
+            "        else:\n"
+            "            result['file_tree'] = {'total_files': 0, 'files': []}\n"
+            "    if include_logs:\n"
+            "        logs_json = project_dir / 'logs.json'\n"
+            "        if logs_json.exists():\n"
+            "            try:\n"
+            "                logs = json.loads(logs_json.read_text(encoding='utf-8'))\n"
+            "                recent_logs = logs[-max_recent_logs:] if len(logs) > max_recent_logs else logs\n"
+            "                result['recent_activity'] = recent_logs\n"
+            "            except Exception:\n"
+            "                result['recent_activity'] = []\n"
+            "        else:\n"
+            "            result['recent_activity'] = []\n"
+            "    return result\n"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_slug": {"type": "string", "description": "Project slug (e.g. 'hello-world')"},
+                "include_logs": {"type": "boolean", "description": "Include recent activity logs (default: true)"},
+                "include_file_tree": {"type": "boolean", "description": "Include project file tree (default: true)"},
+                "max_recent_logs": {"type": "integer", "description": "Maximum number of recent log entries (default: 50)"},
+            },
+            "required": ["project_slug"],
+        },
+    },
+    {
+        "name": "task_context_build",
+        "display_name": "Task Context Build",
+        "description": "Build complete task context including details, comments, related files, and activity history",
+        "description_for_agent": (
+            "Get comprehensive task context in a single call. Returns task details, all comments, related files inferred from activity logs, and task-specific activity timeline. "
+            "Parameters: project_slug (string), task_id (string, task ID or key like 'T-1'), include_comments (boolean, default: true), include_related_files (boolean, default: true), include_activity (boolean, default: true). "
+            "Use this when starting work on a task to understand what has been done, what files are involved, and the full context."
+        ),
+        "category": "project",
+        "code": (
+            "from pathlib import Path\n"
+            "import os\n"
+            "import json\n"
+            "import re\n\n"
+            "async def execute(project_slug, task_id, include_comments=True, include_related_files=True, include_activity=True):\n"
+            "    base = Path(os.environ.get('PROJECTS_DIR', './data/projects')).resolve()\n"
+            "    project_dir = (base / project_slug).resolve()\n"
+            "    if not str(project_dir).startswith(str(base)):\n"
+            "        return {'error': 'Invalid project slug'}\n"
+            "    if not project_dir.exists():\n"
+            "        return {'error': f'Project not found: {project_slug}'}\n"
+            "    tasks_json = project_dir / 'tasks.json'\n"
+            "    if not tasks_json.exists():\n"
+            "        return {'error': 'Tasks file not found'}\n"
+            "    try:\n"
+            "        tasks = json.loads(tasks_json.read_text(encoding='utf-8'))\n"
+            "    except Exception as e:\n"
+            "        return {'error': f'Failed to read tasks: {str(e)}'}\n"
+            "    task = None\n"
+            "    for t in tasks:\n"
+            "        if t.get('id') == task_id or t.get('key') == task_id:\n"
+            "            task = t\n"
+            "            break\n"
+            "    if not task:\n"
+            "        return {'error': f'Task not found: {task_id}'}\n"
+            "    result = {\n"
+            "        'task': {\n"
+            "            'id': task.get('id'),\n"
+            "            'key': task.get('key'),\n"
+            "            'title': task.get('title'),\n"
+            "            'description': task.get('description', ''),\n"
+            "            'status': task.get('status'),\n"
+            "            'priority': task.get('priority'),\n"
+            "            'assignee': task.get('assignee', ''),\n"
+            "            'labels': task.get('labels', []),\n"
+            "            'story_points': task.get('story_points'),\n"
+            "            'created_at': task.get('created_at'),\n"
+            "            'updated_at': task.get('updated_at'),\n"
+            "        }\n"
+            "    }\n"
+            "    if include_comments:\n"
+            "        result['comments'] = task.get('comments', [])\n"
+            "    task_key = task.get('key', '')\n"
+            "    logs_json = project_dir / 'logs.json'\n"
+            "    logs = []\n"
+            "    if logs_json.exists():\n"
+            "        try:\n"
+            "            logs = json.loads(logs_json.read_text(encoding='utf-8'))\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "    task_logs = []\n"
+            "    if task_key:\n"
+            "        for log in logs:\n"
+            "            message = log.get('message', '')\n"
+            "            if task_key in message or task.get('id') in message:\n"
+            "                task_logs.append(log)\n"
+            "    if include_activity:\n"
+            "        result['activity'] = task_logs\n"
+            "    if include_related_files:\n"
+            "        related_files = set()\n"
+            "        file_patterns = [\n"
+            "            r'File created: ([^\\s]+)',\n"
+            "            r'File modified: ([^\\s]+)',\n"
+            "            r'File deleted: ([^\\s]+)',\n"
+            "            r'`python3?\\s+([^\\s`]+)',\n"
+            "            r'Execute:.*?([a-zA-Z0-9_\\-./]+\\.[a-zA-Z0-9]+)',\n"
+            "        ]\n"
+            "        for log in task_logs:\n"
+            "            message = log.get('message', '')\n"
+            "            for pattern in file_patterns:\n"
+            "                matches = re.findall(pattern, message)\n"
+            "                for match in matches:\n"
+            "                    file_path = match.strip('`').strip()\n"
+            "                    if file_path and not file_path.startswith('/'):\n"
+            "                        related_files.add(file_path)\n"
+            "        result['related_files'] = sorted(list(related_files))\n"
+            "    subtasks = []\n"
+            "    for t in tasks:\n"
+            "        if t.get('parent_task_id') == task.get('id'):\n"
+            "            subtasks.append({\n"
+            "                'id': t.get('id'),\n"
+            "                'key': t.get('key'),\n"
+            "                'title': t.get('title'),\n"
+            "                'status': t.get('status'),\n"
+            "            })\n"
+            "    result['subtasks'] = subtasks\n"
+            "    parent_task_id = task.get('parent_task_id')\n"
+            "    if parent_task_id:\n"
+            "        for t in tasks:\n"
+            "            if t.get('id') == parent_task_id:\n"
+            "                result['parent_task'] = {\n"
+            "                    'id': t.get('id'),\n"
+            "                    'key': t.get('key'),\n"
+            "                    'title': t.get('title'),\n"
+            "                    'status': t.get('status'),\n"
+            "                }\n"
+            "                break\n"
+            "    else:\n"
+            "        result['parent_task'] = None\n"
+            "    return result\n"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "project_slug": {"type": "string", "description": "Project slug (e.g. 'hello-world')"},
+                "task_id": {"type": "string", "description": "Task ID or key (e.g. '245dd6f23bde' or 'T-1')"},
+                "include_comments": {"type": "boolean", "description": "Include all task comments (default: true)"},
+                "include_related_files": {"type": "boolean", "description": "Include related files inferred from logs (default: true)"},
+                "include_activity": {"type": "boolean", "description": "Include task activity timeline (default: true)"},
+            },
+            "required": ["project_slug", "task_id"],
+        },
+    },
 ]
 
 

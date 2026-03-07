@@ -917,6 +917,95 @@ async def send_message(
                     duration_ms=tracker.elapsed_step_ms(),
                 )
 
+            # ── Step: Load project/task context (AIS-34) ──
+            project_context = None
+            task_context = None
+            if session.project_slug or session.task_id:
+                if tracker:
+                    tracker.start_step_timer()
+                
+                context_summary_parts = []
+                
+                # Load project context if available
+                if session.project_slug:
+                    try:
+                        # Execute project_context_build skill
+                        proj_ctx_skill = None
+                        for s in agent_skills:
+                            if s["name"] == "project_context_build":
+                                proj_ctx_skill = s
+                                break
+                        
+                        if proj_ctx_skill:
+                            proj_result = await _execute_skill(
+                                "project_context_build",
+                                {"project_slug": session.project_slug, "max_recent_logs": 30},
+                                agent_skills
+                            )
+                            if "result" in proj_result:
+                                project_context = proj_result["result"]
+                                proj_info = project_context.get("project", {})
+                                context_summary_parts.append(
+                                    f"📁 Project: {proj_info.get('name')} ({session.project_slug})\n"
+                                    f"   Goals: {proj_info.get('goals', 'N/A')[:200]}\n"
+                                    f"   Tech Stack: {', '.join(proj_info.get('tech_stack', []))}\n"
+                                    f"   Tasks: {project_context.get('task_stats', {}).get('total', 0)} total, "
+                                    f"{project_context.get('task_stats', {}).get('in_progress', 0)} in progress\n"
+                                    f"   Files: {project_context.get('file_tree', {}).get('total_files', 0)}"
+                                )
+                    except Exception as e:
+                        # Silent fail - context is optional
+                        pass
+                
+                # Load task context if available
+                if session.task_id and session.project_slug:
+                    try:
+                        # Execute task_context_build skill
+                        task_ctx_skill = None
+                        for s in agent_skills:
+                            if s["name"] == "task_context_build":
+                                task_ctx_skill = s
+                                break
+                        
+                        if task_ctx_skill:
+                            task_result = await _execute_skill(
+                                "task_context_build",
+                                {
+                                    "project_slug": session.project_slug,
+                                    "task_id": session.task_id
+                                },
+                                agent_skills
+                            )
+                            if "result" in task_result:
+                                task_context = task_result["result"]
+                                task_info = task_context.get("task", {})
+                                context_summary_parts.append(
+                                    f"\n📋 Current Task: {task_info.get('key')} - {task_info.get('title')}\n"
+                                    f"   Status: {task_info.get('status')} | Priority: {task_info.get('priority')}\n"
+                                    f"   Description: {task_info.get('description', 'N/A')[:300]}\n"
+                                    f"   Comments: {len(task_context.get('comments', []))}, "
+                                    f"Related Files: {len(task_context.get('related_files', []))}"
+                                )
+                    except Exception as e:
+                        # Silent fail - context is optional
+                        pass
+                
+                # Append context summary to base system prompt
+                if context_summary_parts:
+                    context_summary = "\n\n## Current Work Context\n\n" + "\n".join(context_summary_parts)
+                    base_system_prompt = base_system_prompt + context_summary
+                
+                if tracker:
+                    await tracker.step(
+                        "project_task_context", "Load project/task context",
+                        output_data={
+                            "has_project_context": bool(project_context),
+                            "has_task_context": bool(task_context),
+                            "context_summary_length": len(context_summary) if context_summary_parts else 0,
+                        },
+                        duration_ms=tracker.elapsed_step_ms(),
+                    )
+
             # Get current protocol state (todo list, delegation stack)
             protocol_state = session.protocol_state or {}
             current_todo = protocol_state.get("todo_list")
