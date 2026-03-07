@@ -12,7 +12,7 @@
           <v-textarea v-model="form.description" label="Description / Prompt" rows="4" />
           <v-row>
             <v-col cols="4">
-              <v-select v-model="form.type" :items="['one_time','recurring','cron']" label="Type" />
+              <v-select v-model="form.type" :items="['one_time','recurring','trigger']" label="Type" />
             </v-col>
             <v-col cols="4">
               <v-select v-model="form.priority" :items="['low','normal','high','critical']" label="Priority" />

@@ -14,7 +14,7 @@
           <v-textarea v-model="form.description" label="Description / Prompt" rows="3" density="compact" class="mb-2" />
           <v-row dense>
             <v-col cols="4">
-              <v-select v-model="form.type" :items="['one_time','recurring','cron']" label="Type" density="compact" />
+              <v-select v-model="form.type" :items="['one_time','recurring','trigger']" label="Type" density="compact" />
             </v-col>
             <v-col cols="4">
               <v-select v-model="form.priority" :items="['low','normal','high','critical']" label="Priority" density="compact" />
