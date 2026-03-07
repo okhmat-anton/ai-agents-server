@@ -278,6 +278,7 @@ async def delete_api_key(
 _DEFAULT_SETTINGS = {
     "filesystem_access_enabled": {"value": "false", "description": "Allow full filesystem access (read/write/delete files on host)"},
     "system_access_enabled": {"value": "false", "description": "Allow terminal commands, process management and full system control"},
+    "log_retention_days": {"value": "14", "description": "Number of days to retain logs (system, agent, thinking). Older logs are automatically deleted."},
 }
 
 

@@ -14,7 +14,7 @@ from app.database import init_db, init_redis, async_session
 from app.services.auth_service import create_default_admin
 from app.services.skill_service import create_system_skills
 from app.services.model_service import sync_ollama_models
-from app.services.log_service import syslog_bg
+from app.services.log_service import syslog_bg, cleanup_old_logs
 from app.services.protocol_service import create_default_protocols, deduplicate_protocols
 
 from app.api.auth import router as auth_router
@@ -61,6 +61,17 @@ async def lifespan(app: FastAPI):
         removed = await deduplicate_protocols(db)
         if removed:
             await syslog_bg("info", f"Removed {removed} duplicate protocol(s)", source="system")
+
+        # Clean up old logs based on retention setting
+        from app.api.settings import get_setting_value, _ensure_defaults
+        await _ensure_defaults(db)
+        retention_str = await get_setting_value(db, "log_retention_days")
+        retention_days = int(retention_str) if retention_str and retention_str.isdigit() else 14
+
+    # Cleanup old logs
+    log_counts = await cleanup_old_logs(retention_days)
+    if any(v > 0 for k, v in log_counts.items() if k != "error"):
+        await syslog_bg("info", f"Cleaned up old logs: {log_counts}", source="system")
 
     # Clean up orphaned autonomous runs (e.g. from server restart during active run)
     from app.services.autonomous_runner import cleanup_orphaned_runs

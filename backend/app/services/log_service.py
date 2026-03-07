@@ -107,3 +107,52 @@ async def agent_log_bg(
             await db.commit()
     except Exception:
         pass
+
+
+# ── Log cleanup ───────────────────────────────────────
+
+async def cleanup_old_logs(retention_days: int) -> dict[str, int]:
+    """
+    Delete logs older than retention_days.
+    Returns a dict with counts of deleted records per table.
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import delete
+    from app.models.log import AgentError
+    from app.models.thinking_log import ThinkingLog
+
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    counts = {}
+
+    try:
+        async with async_session() as db:
+            # SystemLog
+            result = await db.execute(
+                delete(SystemLog).where(SystemLog.created_at < cutoff_date)
+            )
+            counts["system_logs"] = result.rowcount
+
+            # AgentLog
+            result = await db.execute(
+                delete(AgentLog).where(AgentLog.created_at < cutoff_date)
+            )
+            counts["agent_logs"] = result.rowcount
+
+            # AgentError
+            result = await db.execute(
+                delete(AgentError).where(AgentError.created_at < cutoff_date)
+            )
+            counts["agent_errors"] = result.rowcount
+
+            # ThinkingLog (cascade will delete ThinkingStep children)
+            result = await db.execute(
+                delete(ThinkingLog).where(ThinkingLog.created_at < cutoff_date)
+            )
+            counts["thinking_logs"] = result.rowcount
+
+            await db.commit()
+    except Exception as e:
+        counts["error"] = str(e)
+
+    return counts
+
