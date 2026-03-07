@@ -152,20 +152,94 @@ async def test_telegram_connection(
         target = int(chat_id) if chat_id else "me"
         sent_msg = await client.send_message(target, test_message)
 
+        # Determine recipient display name
+        sent_to = "Saved Messages"
+        if chat_id:
+            try:
+                entity = await client.get_entity(int(chat_id))
+                name = getattr(entity, 'first_name', '') or getattr(entity, 'title', '') or str(chat_id)
+                username = getattr(entity, 'username', '') or ''
+                sent_to = f"{name} (@{username})" if username else name
+            except Exception:
+                sent_to = str(chat_id)
+
         result = {
             "status": "success",
             "username": me.username or "",
             "phone": me.phone or "",
             "first_name": me.first_name or "",
             "message_id": sent_msg.id,
-            "sent_to": str(chat_id) if chat_id else "Saved Messages",
+            "sent_to": sent_to,
             "test_message": test_message,
+            "user_info": {
+                "username": me.username or "",
+                "first_name": me.first_name or "",
+                "phone": me.phone or "",
+            },
         }
 
         return result
 
     except Exception as e:
         logger.error(f"Test connection failed for {messenger_id}: {e}")
+        raise
+    finally:
+        if own_client:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+
+async def get_telegram_dialogs(
+    messenger_id: str,
+    creds: dict,
+    limit: int = 50,
+) -> list:
+    """
+    Get list of recent Telegram dialogs (contacts / chats / groups).
+    Returns a list of dicts with id, name, username, type, unread_count.
+    """
+    api_id = int(creds["api_id"])
+    api_hash = creds["api_hash"]
+    session_file = _session_path(messenger_id)
+
+    existing = _active_clients.get(messenger_id)
+    client = existing["client"] if existing else TelegramClient(session_file, api_id, api_hash)
+    own_client = not existing
+
+    try:
+        if own_client:
+            await client.connect()
+
+        if not await client.is_user_authorized():
+            raise RuntimeError("Client not authenticated.")
+
+        result = []
+        async for dialog in client.iter_dialogs(limit=limit):
+            entity = dialog.entity
+            dtype = "user"
+            if dialog.is_group:
+                dtype = "group"
+            elif dialog.is_channel:
+                dtype = "channel"
+
+            result.append({
+                "id": str(dialog.id),
+                "name": dialog.name or "",
+                "username": getattr(entity, 'username', '') or "",
+                "type": dtype,
+                "unread_count": dialog.unread_count,
+                "is_user": dialog.is_user,
+                "is_group": dialog.is_group,
+                "is_channel": dialog.is_channel,
+                "last_message": dialog.message.text[:100] if dialog.message and dialog.message.text else "",
+            })
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Failed to get dialogs for {messenger_id}: {e}")
         raise
     finally:
         if own_client:
@@ -487,6 +561,11 @@ async def _handle_incoming_message(
     )
 
     if not response_text:
+        await _log_messenger_event(
+            messenger_id, agent_id, "warning",
+            "no_response", f"LLM returned no response for message from {sender.username or sender_id_str}",
+            {"chat_id": str(event.chat_id), "user_id": sender_id_str, "message_preview": message_text[:100]},
+        )
         return
 
     # Simulate human behaviour: typing delay

@@ -589,6 +589,45 @@ class TestMessageRequest(BaseModel):
     message: str = "Hello from AI Agent test! 🤖"
 
 
+@router.get("/{messenger_id}/contacts")
+async def list_messenger_contacts(
+    agent_id: str,
+    messenger_id: str,
+    limit: int = Query(50, le=200),
+    _user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Get Telegram dialogs (contacts, groups, channels) for a messenger account."""
+    svc = MessengerAccountService(db)
+    raw_doc = await svc.collection.find_one({"_id": messenger_id})
+    if not raw_doc or raw_doc.get("agent_id") != agent_id:
+        raise HTTPException(404, "Messenger account not found")
+
+    if not raw_doc.get("is_authenticated"):
+        raise HTTPException(400, "Account not authenticated")
+
+    encrypted = raw_doc.get("credentials_encrypted", "")
+    if not encrypted:
+        raise HTTPException(400, "No credentials stored")
+
+    try:
+        creds = decrypt_dict(encrypted)
+    except Exception:
+        raise HTTPException(400, "Failed to decrypt credentials")
+
+    from app.services.telegram_service import get_telegram_dialogs
+    try:
+        dialogs = await get_telegram_dialogs(
+            messenger_id=messenger_id,
+            creds=creds,
+            limit=limit,
+        )
+    except Exception as e:
+        raise HTTPException(500, detail=f"Failed to load contacts: {str(e)}")
+
+    return dialogs
+
+
 @router.post("/{messenger_id}/test")
 async def test_messenger(
     agent_id: str,

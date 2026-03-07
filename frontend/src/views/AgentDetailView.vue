@@ -1022,7 +1022,7 @@
                   <v-btn v-if="acc.is_active" size="small" color="warning" variant="tonal" @click="stopListener(acc)" :loading="messengerActionLoading === acc.id">
                     Stop
                   </v-btn>
-                  <v-btn v-if="acc.is_authenticated" size="small" color="info" variant="tonal" @click="testMessenger(acc)" :loading="messengerTestLoading === acc.id">
+                  <v-btn v-if="acc.is_authenticated" size="small" color="info" variant="tonal" @click="testMessenger(acc)">
                     Test
                   </v-btn>
                   <v-btn size="small" variant="text" icon="mdi-cog" @click="openEditMessenger(acc)" />
@@ -1203,32 +1203,118 @@
       </v-card>
     </v-dialog>
 
-    <!-- Test Messenger Result Dialog -->
-    <v-dialog v-model="messengerTestDialog" max-width="500">
+    <!-- Test Messenger Dialog -->
+    <v-dialog v-model="messengerTestDialog" max-width="650">
       <v-card>
         <v-card-title class="d-flex align-center">
           <v-icon class="mr-2">mdi-test-tube</v-icon>
-          Test Result — {{ messengerTestAccount?.name }}
+          Test — {{ messengerTestAccount?.name }}
           <v-spacer />
           <v-btn icon="mdi-close" variant="text" size="small" @click="messengerTestDialog = false" />
         </v-card-title>
         <v-card-text>
-          <v-alert v-if="messengerTestResult?.status === 'success'" type="success" variant="tonal" class="mb-3">
-            Test passed! Message sent and connection verified.
+          <!-- Test Result Alert -->
+          <v-alert v-if="messengerTestResult?.status === 'success'" type="success" variant="tonal" class="mb-3" closable @click:close="messengerTestResult = null">
+            Message sent to <strong>{{ messengerTestResult.sent_to }}</strong>
           </v-alert>
-          <v-alert v-else-if="messengerTestResult?.status === 'error'" type="error" variant="tonal" class="mb-3">
+          <v-alert v-else-if="messengerTestResult?.status === 'error'" type="error" variant="tonal" class="mb-3" closable @click:close="messengerTestResult = null">
             {{ messengerTestResult?.error || 'Test failed' }}
           </v-alert>
-          <div v-if="messengerTestResult" class="text-body-2">
-            <div v-if="messengerTestResult.user_info" class="mb-2">
-              <strong>Account:</strong> {{ messengerTestResult.user_info?.first_name }} (@{{ messengerTestResult.user_info?.username }})
+
+          <!-- Send Test Message -->
+          <div class="mb-4">
+            <div class="text-subtitle-2 mb-2">Send test message</div>
+            <v-text-field
+              v-model="testMessageText"
+              label="Message"
+              density="compact"
+              variant="outlined"
+              hide-details
+              class="mb-2"
+            />
+            <div class="d-flex ga-2">
+              <v-btn
+                size="small" color="primary" variant="tonal"
+                @click="sendTestToSelf"
+                :loading="messengerTestSending"
+                prepend-icon="mdi-account"
+              >
+                Send to Saved Messages
+              </v-btn>
+              <v-btn
+                v-if="selectedContact"
+                size="small" color="success" variant="tonal"
+                @click="sendTestToContact"
+                :loading="messengerTestSending"
+                prepend-icon="mdi-send"
+              >
+                Send to {{ selectedContact.name || selectedContact.username }}
+              </v-btn>
             </div>
-            <div v-if="messengerTestResult.message_sent" class="mb-1">
-              <strong>Message sent:</strong> {{ messengerTestResult.message_sent }}
-            </div>
-            <div v-if="messengerTestResult.sent_to" class="mb-1">
-              <strong>Sent to:</strong> {{ messengerTestResult.sent_to }}
-            </div>
+          </div>
+
+          <v-divider class="mb-3" />
+
+          <!-- Contacts List -->
+          <div class="d-flex align-center mb-2">
+            <div class="text-subtitle-2">Contacts & Chats</div>
+            <v-spacer />
+            <v-btn size="small" variant="text" icon="mdi-refresh" @click="loadContacts" :loading="contactsLoading" />
+          </div>
+
+          <v-text-field
+            v-if="messengerContacts.length > 5"
+            v-model="contactSearch"
+            label="Search contacts..."
+            density="compact"
+            variant="outlined"
+            hide-details
+            prepend-inner-icon="mdi-magnify"
+            clearable
+            class="mb-2"
+          />
+
+          <v-progress-linear v-if="contactsLoading" indeterminate color="primary" class="mb-2" />
+
+          <div style="max-height: 350px; overflow-y: auto;">
+            <v-alert v-if="!messengerContacts.length && !contactsLoading" type="info" variant="tonal" density="compact">
+              No contacts loaded. Click refresh to load.
+            </v-alert>
+            <v-list density="compact" v-if="filteredContacts.length">
+              <v-list-item
+                v-for="c in filteredContacts"
+                :key="c.id"
+                :active="selectedContact?.id === c.id"
+                @click="selectedContact = (selectedContact?.id === c.id ? null : c)"
+                class="rounded mb-1"
+              >
+                <template #prepend>
+                  <v-icon size="20" :color="c.type === 'user' ? 'blue' : c.type === 'group' ? 'green' : 'orange'">
+                    {{ c.type === 'user' ? 'mdi-account' : c.type === 'group' ? 'mdi-account-group' : 'mdi-bullhorn' }}
+                  </v-icon>
+                </template>
+                <v-list-item-title class="text-body-2">
+                  {{ c.name || 'Unknown' }}
+                  <span v-if="c.username" class="text-caption text-grey ml-1">@{{ c.username }}</span>
+                </v-list-item-title>
+                <v-list-item-subtitle class="text-caption">
+                  <v-chip size="x-small" variant="tonal" :color="c.type === 'user' ? 'blue' : c.type === 'group' ? 'green' : 'orange'" class="mr-1">
+                    {{ c.type }}
+                  </v-chip>
+                  <span v-if="c.unread_count" class="text-warning">{{ c.unread_count }} unread</span>
+                  <span v-if="c.last_message" class="text-grey ml-1">{{ c.last_message.substring(0, 50) }}{{ c.last_message.length > 50 ? '...' : '' }}</span>
+                </v-list-item-subtitle>
+                <template #append>
+                  <v-btn
+                    size="x-small" variant="text" icon="mdi-send"
+                    color="primary"
+                    @click.stop="sendTestToSpecific(c)"
+                    :loading="messengerTestSending"
+                    title="Send test message"
+                  />
+                </template>
+              </v-list-item>
+            </v-list>
           </div>
         </v-card-text>
       </v-card>
@@ -1640,6 +1726,12 @@ const messengerTestLoading = ref(null)
 const messengerTestDialog = ref(false)
 const messengerTestAccount = ref(null)
 const messengerTestResult = ref(null)
+const messengerTestSending = ref(false)
+const testMessageText = ref('Hello from AI Agent test! \u{1F916}')
+const messengerContacts = ref([])
+const contactsLoading = ref(false)
+const contactSearch = ref('')
+const selectedContact = ref(null)
 
 // Messenger logs state
 const messengerLogsDialog = ref(false)
@@ -1655,6 +1747,14 @@ const messengerErrors = ref([])
 const messengerErrorsLoading = ref(false)
 
 const activeMessengerCount = computed(() => messengerAccounts.value.filter(a => a.is_active).length)
+const filteredContacts = computed(() => {
+  if (!contactSearch.value) return messengerContacts.value
+  const q = contactSearch.value.toLowerCase()
+  return messengerContacts.value.filter(c =>
+    (c.name || '').toLowerCase().includes(q) ||
+    (c.username || '').toLowerCase().includes(q)
+  )
+})
 const fileContent = ref('')
 const fileModified = ref(false)
 const fileSaving = ref(false)
@@ -2630,20 +2730,57 @@ async function doDeleteMessenger() {
 }
 
 async function testMessenger(acc) {
-  messengerTestLoading.value = acc.id
   messengerTestAccount.value = acc
   messengerTestResult.value = null
+  messengerContacts.value = []
+  selectedContact.value = null
+  contactSearch.value = ''
+  testMessageText.value = 'Hello from AI Agent test! \u{1F916}'
+  messengerTestDialog.value = true
+  // Auto-load contacts
+  await loadContacts()
+}
+
+async function loadContacts() {
+  if (!messengerTestAccount.value) return
+  contactsLoading.value = true
   try {
-    const { data } = await api.post(`/agents/${agent.value.id}/messengers/${acc.id}/test`, {
-      message: 'Test message from AI Agents Server'
+    const { data } = await api.get(`/agents/${agent.value.id}/messengers/${messengerTestAccount.value.id}/contacts?limit=100`)
+    messengerContacts.value = data
+  } catch (e) {
+    console.error('Load contacts error', e)
+    messengerContacts.value = []
+  } finally {
+    contactsLoading.value = false
+  }
+}
+
+async function sendTestToSelf() {
+  await _sendTest(null)
+}
+
+async function sendTestToContact() {
+  if (!selectedContact.value) return
+  await _sendTest(selectedContact.value.id)
+}
+
+async function sendTestToSpecific(contact) {
+  await _sendTest(contact.id)
+}
+
+async function _sendTest(chatId) {
+  if (!messengerTestAccount.value) return
+  messengerTestSending.value = true
+  try {
+    const { data } = await api.post(`/agents/${agent.value.id}/messengers/${messengerTestAccount.value.id}/test`, {
+      message: testMessageText.value || 'Test message',
+      chat_id: chatId || undefined,
     })
     messengerTestResult.value = data
-    messengerTestDialog.value = true
   } catch (e) {
     messengerTestResult.value = { status: 'error', error: e.response?.data?.detail || e.message }
-    messengerTestDialog.value = true
   } finally {
-    messengerTestLoading.value = null
+    messengerTestSending.value = false
   }
 }
 
