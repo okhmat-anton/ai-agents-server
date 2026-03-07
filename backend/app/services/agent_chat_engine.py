@@ -39,6 +39,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -502,6 +503,85 @@ class AgentChatEngine:
 
         return context_parts
 
+    # ── General Projects Overview ─────────────────────────────────────
+
+    @staticmethod
+    def load_general_projects_overview() -> str:
+        """Load a brief overview of ALL projects for general context.
+
+        Called when no specific project_slug is set so the agent still
+        knows about existing projects and their active tasks.
+        """
+        settings = get_settings()
+        projects_dir = Path(settings.PROJECTS_DIR)
+        if not projects_dir.exists():
+            return ""
+
+        parts = []
+        for project_dir in sorted(projects_dir.iterdir()):
+            if not project_dir.is_dir():
+                continue
+            project_json = project_dir / "project.json"
+            if not project_json.exists():
+                continue
+            try:
+                proj = json.loads(project_json.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+
+            name = proj.get("name", project_dir.name)
+            slug = proj.get("slug", project_dir.name)
+            status = proj.get("status", "unknown")
+            description = (proj.get("description") or "")[:150]
+            goals = (proj.get("goals") or "")[:150]
+            tech_stack = ", ".join(proj.get("tech_stack", []))
+
+            # Load task stats
+            tasks_json = project_dir / "tasks.json"
+            task_counts = {}
+            active_tasks = []
+            if tasks_json.exists():
+                try:
+                    tasks = json.loads(tasks_json.read_text(encoding="utf-8"))
+                    for t in tasks:
+                        s = t.get("status", "backlog")
+                        task_counts[s] = task_counts.get(s, 0) + 1
+                        if s in ("todo", "in_progress"):
+                            active_tasks.append(f"[{s}] {t.get('key', '?')} - {t.get('title', '?')[:60]}")
+                except Exception:
+                    pass
+
+            total_tasks = sum(task_counts.values())
+            done_tasks = task_counts.get("done", 0)
+            in_progress = task_counts.get("in_progress", 0)
+            todo = task_counts.get("todo", 0)
+
+            entry = f"- **{name}** (slug: `{slug}`, status: {status})"
+            if description:
+                entry += f"\n  Description: {description}"
+            if goals:
+                entry += f"\n  Goals: {goals}"
+            if tech_stack:
+                entry += f"\n  Tech: {tech_stack}"
+            entry += f"\n  Tasks: {total_tasks} total, {done_tasks} done, {in_progress} in progress, {todo} todo"
+            if active_tasks:
+                entry += "\n  Active tasks:"
+                for at in active_tasks[:5]:
+                    entry += f"\n    {at}"
+            parts.append(entry)
+
+        if not parts:
+            return ""
+
+        return (
+            "\n\n## Your Projects\n\n"
+            "You have access to following projects:\n\n"
+            + "\n\n".join(parts)
+            + "\n\nYou can use project skills (project_list_files, project_file_read, project_file_write, "
+            "project_context_build, etc.) to work with these projects. "
+            "Always specify the `project_slug` parameter when using project skills.\n"
+        )
+
     # ── High-Level Generate ───────────────────────────────────────────
 
     async def generate_full(
@@ -611,6 +691,24 @@ class AgentChatEngine:
                         output_data={
                             "has_project_context": bool(context_parts),
                             "context_summary_length": sum(len(p) for p in context_parts),
+                        },
+                        duration_ms=tracker.elapsed_step_ms(),
+                    )
+            else:
+                # No specific project — load general overview of ALL projects
+                if tracker:
+                    tracker.start_step_timer()
+
+                projects_overview = self.load_general_projects_overview()
+                if projects_overview:
+                    ctx.base_system_prompt += projects_overview
+
+                if tracker:
+                    await tracker.step(
+                        "context_load", "Load general projects overview",
+                        output_data={
+                            "has_overview": bool(projects_overview),
+                            "overview_length": len(projects_overview) if projects_overview else 0,
                         },
                         duration_ms=tracker.elapsed_step_ms(),
                     )

@@ -824,6 +824,24 @@ async def send_message(
                         },
                         duration_ms=tracker.elapsed_step_ms(),
                     )
+            else:
+                # No specific project — load general overview of ALL projects
+                if tracker:
+                    tracker.start_step_timer()
+
+                projects_overview = engine.load_general_projects_overview()
+                if projects_overview:
+                    agent_ctx.base_system_prompt += projects_overview
+
+                if tracker:
+                    await tracker.step(
+                        "context_load", "Load general projects overview",
+                        output_data={
+                            "has_overview": bool(projects_overview),
+                            "overview_length": len(projects_overview) if projects_overview else 0,
+                        },
+                        duration_ms=tracker.elapsed_step_ms(),
+                    )
 
             # ── Step: Build system prompt via engine ──
             protocol_state = session.protocol_state or {}

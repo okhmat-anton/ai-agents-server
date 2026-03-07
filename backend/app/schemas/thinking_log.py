@@ -1,11 +1,10 @@
 """Pydantic schemas for thinking logs API responses."""
 from pydantic import BaseModel
-from uuid import UUID
 from datetime import datetime
 
 
 class ThinkingStepResponse(BaseModel):
-    id: UUID
+    id: str
     step_order: int
     step_type: str
     step_name: str
@@ -20,10 +19,10 @@ class ThinkingStepResponse(BaseModel):
 
 
 class ThinkingLogResponse(BaseModel):
-    id: UUID
-    agent_id: UUID
-    session_id: UUID
-    message_id: UUID | None = None
+    id: str
+    agent_id: str
+    session_id: str                     # str, not UUID — TG uses "tg:..." format
+    message_id: str | None = None
     user_input: str
     agent_output: str | None = None
     model_name: str | None = None
@@ -43,10 +42,10 @@ class ThinkingLogResponse(BaseModel):
 
 class ThinkingLogSummaryResponse(BaseModel):
     """Lighter version without steps, for list endpoints."""
-    id: UUID
-    agent_id: UUID
-    session_id: UUID
-    message_id: UUID | None = None
+    id: str
+    agent_id: str
+    session_id: str                     # str, not UUID — TG uses "tg:..." format
+    message_id: str | None = None
     user_input: str
     agent_output: str | None = None
     model_name: str | None = None
