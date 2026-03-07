@@ -22,6 +22,56 @@ _active_clients: Dict[str, Dict[str, Any]] = {}
 # Pending auth flows: messenger_id -> { client, phone_code_hash }
 _pending_auth: Dict[str, Dict[str, Any]] = {}
 
+
+# ── Helper: log to MongoDB ──────────────────────────────────────────────
+
+async def _log_messenger_event(
+    messenger_id: str, agent_id: str,
+    level: str, event: str, message: str,
+    context: dict = None,
+):
+    """Write a log entry to messenger_logs collection. Non-blocking on error."""
+    try:
+        from app.database import get_mongodb
+        from app.mongodb.models.messenger import MongoMessengerLog
+        from app.mongodb.services import MessengerLogService
+        db = get_mongodb()
+        log = MongoMessengerLog(
+            messenger_id=messenger_id,
+            agent_id=agent_id,
+            level=level,
+            event=event,
+            message=message,
+            context=context,
+        )
+        await MessengerLogService(db).create(log)
+    except Exception as e:
+        logger.warning(f"Failed to write messenger log: {e}")
+
+
+async def _log_messenger_error(
+    messenger_id: str, agent_id: str,
+    error_type: str, message: str,
+    context: dict = None,
+):
+    """Create both a messenger log and an AgentError (source=messenger)."""
+    try:
+        from app.database import get_mongodb
+        from app.mongodb.models.agent import MongoAgentError
+        from app.mongodb.services import AgentErrorService
+        db = get_mongodb()
+        await _log_messenger_event(messenger_id, agent_id, "error", "error", message, context)
+        err = MongoAgentError(
+            agent_id=agent_id,
+            error_type=error_type,
+            source="messenger",
+            message=message,
+            context={**(context or {}), "messenger_id": messenger_id},
+        )
+        await AgentErrorService(db).create(err)
+    except Exception as e:
+        logger.warning(f"Failed to write messenger error: {e}")
+
 # Session files directory
 _SESSION_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
@@ -66,6 +116,63 @@ async def start_auth_flow(messenger_id: str, api_id: int, api_hash: str, phone: 
         "phone_code_hash": result.phone_code_hash,
         "message": f"Verification code sent to {phone}",
     }
+
+
+# ── Test Connection ──────────────────────────────────────────────────────
+
+async def test_telegram_connection(
+    messenger_id: str,
+    creds: dict,
+    test_message: str = "Hello from AI Agent test! 🤖",
+    chat_id: str = None,
+) -> dict:
+    """
+    Test Telegram connectivity: connect, verify auth, send a test message
+    to Saved Messages (or specified chat), read it back.
+    """
+    api_id = int(creds["api_id"])
+    api_hash = creds["api_hash"]
+    session_file = _session_path(messenger_id)
+
+    # Check if we already have an active client
+    existing = _active_clients.get(messenger_id)
+    client = existing["client"] if existing else TelegramClient(session_file, api_id, api_hash)
+    own_client = not existing
+
+    try:
+        if own_client:
+            await client.connect()
+
+        if not await client.is_user_authorized():
+            raise RuntimeError("Client not authenticated. Complete auth flow first.")
+
+        me = await client.get_me()
+
+        # Send to specified chat or to Saved Messages (self)
+        target = int(chat_id) if chat_id else "me"
+        sent_msg = await client.send_message(target, test_message)
+
+        result = {
+            "status": "success",
+            "username": me.username or "",
+            "phone": me.phone or "",
+            "first_name": me.first_name or "",
+            "message_id": sent_msg.id,
+            "sent_to": str(chat_id) if chat_id else "Saved Messages",
+            "test_message": test_message,
+        }
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Test connection failed for {messenger_id}: {e}")
+        raise
+    finally:
+        if own_client:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
 
 
 async def submit_auth_code(messenger_id: str, code: str, phone_code_hash: str = None) -> dict:
@@ -146,6 +253,12 @@ async def start_telegram_listener(
     me = await client.get_me()
     logger.info(f"Telegram listener started for {messenger_id} as @{me.username}")
 
+    await _log_messenger_event(
+        messenger_id, agent_id, "info", "listener_started",
+        f"Telegram listener started as @{me.username or 'unknown'}",
+        {"username": me.username, "phone": me.phone, "user_id": me.id},
+    )
+
     # Config
     trusted_users = account_doc.get("trusted_users", [])
     public_permissions = account_doc.get("public_permissions", [])
@@ -195,6 +308,11 @@ async def start_telegram_listener(
             )
         except Exception as e:
             logger.error(f"Error handling Telegram message for {messenger_id}: {e}", exc_info=True)
+            await _log_messenger_error(
+                messenger_id, agent_id,
+                "messenger_handler_error", f"Error handling incoming message: {e}",
+                {"exception": str(type(e).__name__), "detail": str(e)},
+            )
 
     # Start receiving
     asyncio.create_task(_run_client(client, messenger_id))
@@ -202,13 +320,24 @@ async def start_telegram_listener(
 
 async def _run_client(client: TelegramClient, messenger_id: str):
     """Keep client running until disconnected."""
+    entry = _active_clients.get(messenger_id, {})
+    agent_id = entry.get("agent_id", "")
     try:
         await client.run_until_disconnected()
     except Exception as e:
         logger.error(f"Telegram client {messenger_id} disconnected: {e}")
+        await _log_messenger_error(
+            messenger_id, agent_id,
+            "messenger_disconnect", f"Telegram client disconnected with error: {e}",
+            {"exception": str(e)},
+        )
     finally:
         _active_clients.pop(messenger_id, None)
         logger.info(f"Telegram listener stopped for {messenger_id}")
+        await _log_messenger_event(
+            messenger_id, agent_id, "info", "listener_stopped",
+            "Telegram listener stopped",
+        )
 
 
 async def stop_telegram_client(messenger_id: str):
@@ -299,6 +428,11 @@ async def _handle_incoming_message(
             entry["last_count_reset"] = today
         if entry["daily_count"] >= max_daily:
             logger.warning(f"Daily message limit reached for {messenger_id}")
+            await _log_messenger_event(
+                messenger_id, agent_id, "warning",
+                "daily_limit_reached", f"Daily limit of {max_daily} messages reached",
+                {"limit": max_daily, "count": entry['daily_count']},
+            )
             return
 
     # Determine if trusted user
@@ -331,6 +465,12 @@ async def _handle_incoming_message(
         is_trusted_user=is_trusted,
     )
     await msg_svc.create(incoming_msg)
+
+    await _log_messenger_event(
+        messenger_id, agent_id, "debug",
+        "message_received", f"Incoming message from {sender.username or sender_id_str}",
+        {"chat_id": str(event.chat_id), "user_id": sender_id_str, "is_trusted": is_trusted, "length": len(message_text)},
+    )
 
     # Generate response via agent
     response_text = await _generate_agent_response(
@@ -367,6 +507,11 @@ async def _handle_incoming_message(
         await event.reply(response_text)
     except Exception as e:
         logger.error(f"Error sending Telegram message: {e}")
+        await _log_messenger_error(
+            messenger_id, agent_id,
+            "message_send_error", f"Failed to send reply: {e}",
+            {"chat_id": str(event.chat_id), "error": str(e)},
+        )
         return
 
     # Log outgoing message
@@ -384,6 +529,12 @@ async def _handle_incoming_message(
         response_id=incoming_msg.id,
     )
     await msg_svc.create(outgoing_msg)
+
+    await _log_messenger_event(
+        messenger_id, agent_id, "info",
+        "message_sent", f"Replied to {sender.username or sender_id_str}",
+        {"chat_id": str(event.chat_id), "response_length": len(response_text)},
+    )
 
     # Update daily count
     if entry:

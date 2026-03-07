@@ -24,7 +24,7 @@ from app.mongodb.models import (
     MongoMemory,
     MongoMemoryLink,
 )
-from app.mongodb.models.messenger import MongoMessengerAccount, MongoMessengerMessage
+from app.mongodb.models.messenger import MongoMessengerAccount, MongoMessengerMessage, MongoMessengerLog
 
 
 class UserService(BaseMongoService[MongoUser]):
@@ -241,6 +241,31 @@ class MessengerMessageService(BaseMongoService[MongoMessengerMessage]):
             "direction": "outgoing",
             "created_at": {"$gte": today.isoformat()}
         })
+
+
+class MessengerLogService(BaseMongoService[MongoMessengerLog]):
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "messenger_logs", MongoMessengerLog)
+
+    async def get_by_messenger(self, messenger_id: str, limit: int = 200, skip: int = 0, level: str = None):
+        filt = {"messenger_id": messenger_id}
+        if level:
+            filt["level"] = level
+        cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def get_by_agent(self, agent_id: str, limit: int = 200, skip: int = 0, level: str = None):
+        filt = {"agent_id": agent_id}
+        if level:
+            filt["level"] = level
+        cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def delete_by_messenger(self, messenger_id: str):
+        result = await self.collection.delete_many({"messenger_id": messenger_id})
+        return result.deleted_count
 
 
 class MemoryLinkService(BaseMongoService[MongoMemoryLink]):

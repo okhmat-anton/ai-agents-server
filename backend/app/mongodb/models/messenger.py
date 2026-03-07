@@ -71,6 +71,33 @@ class MongoMessengerAccount(BaseModel):
         return cls(**doc)
 
 
+class MongoMessengerLog(BaseModel):
+    """Operational log entry for messenger activity."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    messenger_id: str
+    agent_id: str
+    level: str = "info"  # debug, info, warning, error
+    event: str = ""  # listener_started, listener_stopped, message_received, message_sent, auth_started, auth_completed, test_sent, test_received, error, etc.
+    message: str = ""
+    context: Optional[Dict[str, Any]] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    def to_mongo(self) -> dict:
+        doc = self.model_dump()
+        doc["_id"] = doc.pop("id")
+        doc["created_at"] = doc["created_at"].isoformat()
+        return doc
+
+    @classmethod
+    def from_mongo(cls, doc: dict) -> "MongoMessengerLog":
+        if not doc:
+            return None
+        doc["id"] = doc.pop("_id")
+        if isinstance(doc.get("created_at"), str):
+            doc["created_at"] = datetime.fromisoformat(doc["created_at"])
+        return cls(**doc)
+
+
 class MongoMessengerMessage(BaseModel):
     """Individual message logged from a messenger."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

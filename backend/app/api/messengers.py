@@ -10,8 +10,9 @@ from pydantic import BaseModel, Field
 from app.database import get_mongodb
 from app.core.dependencies import get_current_user
 from app.core.encryption import encrypt_dict, decrypt_dict
-from app.mongodb.models.messenger import MongoMessengerAccount, MongoMessengerMessage
-from app.mongodb.services import MessengerAccountService, MessengerMessageService, AgentService
+from app.mongodb.models.messenger import MongoMessengerAccount, MongoMessengerMessage, MongoMessengerLog
+from app.mongodb.services import MessengerAccountService, MessengerMessageService, MessengerLogService, AgentService, AgentErrorService
+from app.mongodb.models.agent import MongoAgentError
 
 logger = logging.getLogger(__name__)
 
@@ -119,16 +120,30 @@ def _mask_phone(phone: str) -> str:
     return phone[:3] + "*" * (len(phone) - 5) + phone[-2:]
 
 
-def _build_response(acc: MongoMessengerAccount) -> dict:
+def _build_response(acc: MongoMessengerAccount, raw_doc: dict = None) -> dict:
     """Build safe response (no raw credentials)."""
-    creds = acc.credentials or {}
+    # Try to determine has_credentials from encrypted field in raw_doc
+    has_creds = False
+    phone_masked = "***"
+    if raw_doc and raw_doc.get("credentials_encrypted"):
+        try:
+            decrypted = decrypt_dict(raw_doc["credentials_encrypted"])
+            has_creds = bool(decrypted.get("api_id") and decrypted.get("api_hash"))
+            phone_masked = _mask_phone(decrypted.get("phone", ""))
+        except Exception:
+            has_creds = True  # encrypted data exists but can't decrypt
+    else:
+        creds = acc.credentials or {}
+        has_creds = bool(creds.get("api_id") and creds.get("api_hash"))
+        phone_masked = _mask_phone(creds.get("phone", ""))
+
     return MessengerResponse(
         id=acc.id,
         agent_id=acc.agent_id,
         platform=acc.platform,
         name=acc.name,
-        has_credentials=bool(creds.get("api_id") and creds.get("api_hash")),
-        phone_masked=_mask_phone(creds.get("phone", "")),
+        has_credentials=has_creds,
+        phone_masked=phone_masked,
         trusted_users=acc.trusted_users,
         public_permissions=acc.public_permissions,
         config=acc.config,
@@ -158,7 +173,11 @@ async def list_messenger_accounts(
 
     svc = MessengerAccountService(db)
     accounts = await svc.get_by_agent(agent_id)
-    return [_build_response(a) for a in accounts]
+    # Fetch raw docs for has_credentials resolution
+    raw_docs = {}
+    async for doc in svc.collection.find({"agent_id": agent_id}):
+        raw_docs[doc["_id"]] = doc
+    return [_build_response(a, raw_docs.get(a.id)) for a in accounts]
 
 
 @router.post("", status_code=201)
@@ -514,4 +533,217 @@ async def list_messenger_messages(
             created_at=m.created_at.isoformat(),
         ).model_dump()
         for m in messages
+    ]
+
+
+# ── Helper: create messenger log ────────────────────────────────────────
+
+async def _create_messenger_log(
+    db, messenger_id: str, agent_id: str,
+    level: str, event: str, message: str,
+    context: dict = None,
+):
+    """Create a messenger log entry in MongoDB."""
+    log = MongoMessengerLog(
+        messenger_id=messenger_id,
+        agent_id=agent_id,
+        level=level,
+        event=event,
+        message=message,
+        context=context,
+    )
+    log_svc = MessengerLogService(db)
+    await log_svc.create(log)
+    return log
+
+
+async def _create_messenger_error(
+    db, messenger_id: str, agent_id: str,
+    error_type: str, message: str,
+    context: dict = None,
+):
+    """Create both a messenger log (error level) and an AgentError with source=messenger."""
+    # Log entry
+    await _create_messenger_log(
+        db, messenger_id, agent_id,
+        level="error", event="error", message=message,
+        context=context,
+    )
+    # Agent-level error (shows in global errors)
+    err = MongoAgentError(
+        agent_id=agent_id,
+        error_type=error_type,
+        source="messenger",
+        message=message,
+        context={**(context or {}), "messenger_id": messenger_id},
+    )
+    err_svc = AgentErrorService(db)
+    await err_svc.create(err)
+    return err
+
+
+# ── Test ─────────────────────────────────────────────────────────────────
+
+class TestMessageRequest(BaseModel):
+    chat_id: Optional[str] = None  # If empty, send to Saved Messages (self)
+    message: str = "Hello from AI Agent test! 🤖"
+
+
+@router.post("/{messenger_id}/test")
+async def test_messenger(
+    agent_id: str,
+    messenger_id: str,
+    body: TestMessageRequest = None,
+    _user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Test messenger by sending a message and verifying connectivity."""
+    svc = MessengerAccountService(db)
+    raw_doc = await svc.collection.find_one({"_id": messenger_id})
+    if not raw_doc or raw_doc.get("agent_id") != agent_id:
+        raise HTTPException(404, "Messenger account not found")
+
+    if not raw_doc.get("is_authenticated"):
+        raise HTTPException(400, "Account not authenticated")
+
+    encrypted = raw_doc.get("credentials_encrypted", "")
+    if not encrypted:
+        raise HTTPException(400, "No credentials stored")
+
+    try:
+        creds = decrypt_dict(encrypted)
+    except Exception:
+        raise HTTPException(400, "Failed to decrypt credentials")
+
+    test_message = (body.message if body and body.message else "Hello from AI Agent test! 🤖")
+    chat_id = (body.chat_id if body and body.chat_id else None)
+
+    await _create_messenger_log(
+        db, messenger_id, agent_id,
+        level="info", event="test_started",
+        message=f"Test started — sending message to {'chat ' + chat_id if chat_id else 'Saved Messages'}",
+    )
+
+    from app.services.telegram_service import test_telegram_connection
+    try:
+        result = await test_telegram_connection(
+            messenger_id=messenger_id,
+            creds=creds,
+            test_message=test_message,
+            chat_id=chat_id,
+        )
+    except Exception as e:
+        await _create_messenger_error(
+            db, messenger_id, agent_id,
+            error_type="messenger_test_error",
+            message=f"Test failed: {str(e)}",
+            context={"chat_id": chat_id},
+        )
+        raise HTTPException(500, detail=f"Test failed: {str(e)}")
+
+    await _create_messenger_log(
+        db, messenger_id, agent_id,
+        level="info", event="test_completed",
+        message=f"Test completed — {result.get('status', 'unknown')}",
+        context=result,
+    )
+
+    return result
+
+
+# ── Logs ─────────────────────────────────────────────────────────────────
+
+@router.get("/{messenger_id}/logs")
+async def list_messenger_logs(
+    agent_id: str,
+    messenger_id: str,
+    level: Optional[str] = Query(None, description="Filter by level: debug, info, warning, error"),
+    limit: int = Query(100, le=500),
+    offset: int = Query(0, ge=0),
+    _user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """List operational logs for a messenger account."""
+    svc = MessengerAccountService(db)
+    acc = await svc.get_by_id(messenger_id)
+    if not acc or acc.agent_id != agent_id:
+        raise HTTPException(404, "Messenger account not found")
+
+    log_svc = MessengerLogService(db)
+    logs = await log_svc.get_by_messenger(messenger_id, limit=limit, skip=offset, level=level)
+    return [
+        {
+            "id": log.id,
+            "messenger_id": log.messenger_id,
+            "agent_id": log.agent_id,
+            "level": log.level,
+            "event": log.event,
+            "message": log.message,
+            "context": log.context,
+            "created_at": log.created_at.isoformat(),
+        }
+        for log in logs
+    ]
+
+
+@router.delete("/{messenger_id}/logs")
+async def clear_messenger_logs(
+    agent_id: str,
+    messenger_id: str,
+    _user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Clear all logs for a messenger account."""
+    svc = MessengerAccountService(db)
+    acc = await svc.get_by_id(messenger_id)
+    if not acc or acc.agent_id != agent_id:
+        raise HTTPException(404, "Messenger account not found")
+
+    log_svc = MessengerLogService(db)
+    deleted = await log_svc.delete_by_messenger(messenger_id)
+    return {"detail": f"Deleted {deleted} log entries"}
+
+
+# ── Errors (messenger-specific, also shown in global agent errors) ───────
+
+@router.get("/{messenger_id}/errors")
+async def list_messenger_errors(
+    agent_id: str,
+    messenger_id: str,
+    resolved: Optional[bool] = Query(None),
+    limit: int = Query(50, le=500),
+    offset: int = Query(0, ge=0),
+    _user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """List errors for a specific messenger account."""
+    svc = MessengerAccountService(db)
+    acc = await svc.get_by_id(messenger_id)
+    if not acc or acc.agent_id != agent_id:
+        raise HTTPException(404, "Messenger account not found")
+
+    err_svc = AgentErrorService(db)
+    filt = {
+        "agent_id": agent_id,
+        "source": "messenger",
+        "context.messenger_id": messenger_id,
+    }
+    if resolved is not None:
+        filt["resolved"] = resolved
+
+    errors = await err_svc.get_all(filter=filt, skip=offset, limit=limit)
+    errors.sort(key=lambda e: e.created_at, reverse=True)
+    return [
+        {
+            "id": e.id,
+            "agent_id": e.agent_id,
+            "error_type": e.error_type,
+            "source": e.source,
+            "message": e.message,
+            "context": e.context,
+            "resolved": e.resolved,
+            "resolution": e.resolution,
+            "created_at": e.created_at.isoformat(),
+        }
+        for e in errors
     ]

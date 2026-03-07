@@ -1022,8 +1022,13 @@
                   <v-btn v-if="acc.is_active" size="small" color="warning" variant="tonal" @click="stopListener(acc)" :loading="messengerActionLoading === acc.id">
                     Stop
                   </v-btn>
+                  <v-btn v-if="acc.is_authenticated" size="small" color="info" variant="tonal" @click="testMessenger(acc)" :loading="messengerTestLoading === acc.id">
+                    Test
+                  </v-btn>
                   <v-btn size="small" variant="text" icon="mdi-cog" @click="openEditMessenger(acc)" />
                   <v-btn size="small" variant="text" icon="mdi-message-text-outline" @click="openMessengerMessages(acc)" />
+                  <v-btn size="small" variant="text" icon="mdi-text-box-outline" @click="openMessengerLogs(acc)" title="Logs" />
+                  <v-btn size="small" variant="text" icon="mdi-alert-circle-outline" color="error" @click="openMessengerErrors(acc)" title="Errors" />
                   <v-btn size="small" variant="text" icon="mdi-delete" color="error" @click="confirmDeleteMessenger(acc)" />
                 </div>
               </div>
@@ -1193,6 +1198,108 @@
               <span class="text-caption text-grey">{{ new Date(msg.created_at).toLocaleString() }}</span>
             </div>
             <div class="text-body-2">{{ msg.content }}</div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- Test Messenger Result Dialog -->
+    <v-dialog v-model="messengerTestDialog" max-width="500">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2">mdi-test-tube</v-icon>
+          Test Result — {{ messengerTestAccount?.name }}
+          <v-spacer />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="messengerTestDialog = false" />
+        </v-card-title>
+        <v-card-text>
+          <v-alert v-if="messengerTestResult?.status === 'success'" type="success" variant="tonal" class="mb-3">
+            Test passed! Message sent and connection verified.
+          </v-alert>
+          <v-alert v-else-if="messengerTestResult?.status === 'error'" type="error" variant="tonal" class="mb-3">
+            {{ messengerTestResult?.error || 'Test failed' }}
+          </v-alert>
+          <div v-if="messengerTestResult" class="text-body-2">
+            <div v-if="messengerTestResult.user_info" class="mb-2">
+              <strong>Account:</strong> {{ messengerTestResult.user_info?.first_name }} (@{{ messengerTestResult.user_info?.username }})
+            </div>
+            <div v-if="messengerTestResult.message_sent" class="mb-1">
+              <strong>Message sent:</strong> {{ messengerTestResult.message_sent }}
+            </div>
+            <div v-if="messengerTestResult.sent_to" class="mb-1">
+              <strong>Sent to:</strong> {{ messengerTestResult.sent_to }}
+            </div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- Messenger Logs Dialog -->
+    <v-dialog v-model="messengerLogsDialog" max-width="800">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2">mdi-text-box-outline</v-icon>
+          Logs — {{ messengerLogsAccount?.name }}
+          <v-spacer />
+          <v-select
+            v-model="messengerLogsLevel"
+            :items="['all', 'debug', 'info', 'warning', 'error']"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="max-width: 130px"
+            class="mr-2"
+            @update:model-value="filterMessengerLogs"
+          />
+          <v-btn size="small" variant="text" icon="mdi-refresh" @click="refreshMessengerLogs" :loading="messengerLogsLoading" />
+          <v-btn size="small" variant="text" icon="mdi-delete-sweep" color="warning" @click="clearMessengerLogs" title="Clear logs" />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="messengerLogsDialog = false" />
+        </v-card-title>
+        <v-card-text style="max-height: 500px; overflow-y: auto;">
+          <v-alert v-if="!messengerLogs.length && !messengerLogsLoading" type="info" variant="tonal" density="compact">No logs yet.</v-alert>
+          <v-progress-linear v-if="messengerLogsLoading" indeterminate color="primary" class="mb-2" />
+          <div v-for="log in messengerLogs" :key="log.id" class="mb-1 pa-2 rounded" :class="logLevelClass(log.level)">
+            <div class="d-flex align-center">
+              <v-icon size="14" class="mr-1" :color="logLevelColor(log.level)">{{ logLevelIcon(log.level) }}</v-icon>
+              <v-chip size="x-small" :color="logLevelColor(log.level)" variant="tonal" class="mr-2">{{ log.level }}</v-chip>
+              <span class="text-caption font-weight-bold">{{ log.event }}</span>
+              <v-spacer />
+              <span class="text-caption text-grey">{{ new Date(log.created_at).toLocaleString() }}</span>
+            </div>
+            <div class="text-body-2 mt-1">{{ log.message }}</div>
+            <div v-if="log.context && Object.keys(log.context).length" class="text-caption text-grey mt-1" style="font-family: monospace;">
+              {{ JSON.stringify(log.context) }}
+            </div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- Messenger Errors Dialog -->
+    <v-dialog v-model="messengerErrorsDialog" max-width="800">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2" color="error">mdi-alert-circle</v-icon>
+          Errors — {{ messengerErrorsAccount?.name }}
+          <v-spacer />
+          <v-btn size="small" variant="text" icon="mdi-refresh" @click="refreshMessengerErrors" :loading="messengerErrorsLoading" />
+          <v-btn icon="mdi-close" variant="text" size="small" @click="messengerErrorsDialog = false" />
+        </v-card-title>
+        <v-card-text style="max-height: 500px; overflow-y: auto;">
+          <v-alert v-if="!messengerErrors.length && !messengerErrorsLoading" type="success" variant="tonal" density="compact">No errors recorded.</v-alert>
+          <v-progress-linear v-if="messengerErrorsLoading" indeterminate color="error" class="mb-2" />
+          <div v-for="err in messengerErrors" :key="err.id" class="mb-2 pa-2 rounded bg-red-darken-4">
+            <div class="d-flex align-center mb-1">
+              <v-icon size="14" class="mr-1" color="error">mdi-alert-circle</v-icon>
+              <span class="text-caption font-weight-bold">{{ err.error_type }}</span>
+              <v-chip v-if="err.resolved" size="x-small" color="success" class="ml-2">resolved</v-chip>
+              <v-spacer />
+              <span class="text-caption text-grey">{{ new Date(err.created_at).toLocaleString() }}</span>
+            </div>
+            <div class="text-body-2">{{ err.message }}</div>
+            <div v-if="err.context && Object.keys(err.context).length" class="text-caption text-grey mt-1" style="font-family: monospace;">
+              {{ JSON.stringify(err.context) }}
+            </div>
           </div>
         </v-card-text>
       </v-card>
@@ -1527,6 +1634,25 @@ const messengerMessages = ref([])
 const deleteMessengerDialog = ref(false)
 const deleteMessengerAccount = ref(null)
 const messengerDeleting = ref(false)
+
+// Messenger test state
+const messengerTestLoading = ref(null)
+const messengerTestDialog = ref(false)
+const messengerTestAccount = ref(null)
+const messengerTestResult = ref(null)
+
+// Messenger logs state
+const messengerLogsDialog = ref(false)
+const messengerLogsAccount = ref(null)
+const messengerLogs = ref([])
+const messengerLogsLoading = ref(false)
+const messengerLogsLevel = ref('all')
+
+// Messenger errors state
+const messengerErrorsDialog = ref(false)
+const messengerErrorsAccount = ref(null)
+const messengerErrors = ref([])
+const messengerErrorsLoading = ref(false)
 
 const activeMessengerCount = computed(() => messengerAccounts.value.filter(a => a.is_active).length)
 const fileContent = ref('')
@@ -2501,6 +2627,98 @@ async function doDeleteMessenger() {
   } finally {
     messengerDeleting.value = false
   }
+}
+
+async function testMessenger(acc) {
+  messengerTestLoading.value = acc.id
+  messengerTestAccount.value = acc
+  messengerTestResult.value = null
+  try {
+    const { data } = await api.post(`/agents/${agent.value.id}/messengers/${acc.id}/test`, {
+      message: 'Test message from AI Agents Server'
+    })
+    messengerTestResult.value = data
+    messengerTestDialog.value = true
+  } catch (e) {
+    messengerTestResult.value = { status: 'error', error: e.response?.data?.detail || e.message }
+    messengerTestDialog.value = true
+  } finally {
+    messengerTestLoading.value = null
+  }
+}
+
+async function openMessengerLogs(acc) {
+  messengerLogsAccount.value = acc
+  messengerLogsLevel.value = 'all'
+  messengerLogsDialog.value = true
+  await refreshMessengerLogs()
+}
+
+async function refreshMessengerLogs() {
+  if (!messengerLogsAccount.value) return
+  messengerLogsLoading.value = true
+  try {
+    const params = { limit: 200 }
+    if (messengerLogsLevel.value && messengerLogsLevel.value !== 'all') {
+      params.level = messengerLogsLevel.value
+    }
+    const { data } = await api.get(`/agents/${agent.value.id}/messengers/${messengerLogsAccount.value.id}/logs`, { params })
+    messengerLogs.value = data
+  } catch (e) {
+    console.error('Load messenger logs error', e)
+    messengerLogs.value = []
+  } finally {
+    messengerLogsLoading.value = false
+  }
+}
+
+function filterMessengerLogs() {
+  refreshMessengerLogs()
+}
+
+async function clearMessengerLogs() {
+  if (!messengerLogsAccount.value) return
+  try {
+    await api.delete(`/agents/${agent.value.id}/messengers/${messengerLogsAccount.value.id}/logs`)
+    messengerLogs.value = []
+  } catch (e) {
+    console.error('Clear messenger logs error', e)
+  }
+}
+
+async function openMessengerErrors(acc) {
+  messengerErrorsAccount.value = acc
+  messengerErrorsDialog.value = true
+  await refreshMessengerErrors()
+}
+
+async function refreshMessengerErrors() {
+  if (!messengerErrorsAccount.value) return
+  messengerErrorsLoading.value = true
+  try {
+    const { data } = await api.get(`/agents/${agent.value.id}/messengers/${messengerErrorsAccount.value.id}/errors`, { params: { limit: 100 } })
+    messengerErrors.value = data
+  } catch (e) {
+    console.error('Load messenger errors error', e)
+    messengerErrors.value = []
+  } finally {
+    messengerErrorsLoading.value = false
+  }
+}
+
+function logLevelColor(level) {
+  const colors = { debug: 'grey', info: 'blue', warning: 'orange', error: 'red' }
+  return colors[level] || 'grey'
+}
+
+function logLevelIcon(level) {
+  const icons = { debug: 'mdi-bug', info: 'mdi-information', warning: 'mdi-alert', error: 'mdi-alert-circle' }
+  return icons[level] || 'mdi-information'
+}
+
+function logLevelClass(level) {
+  const classes = { debug: 'bg-grey-darken-4', info: 'bg-blue-grey-darken-4', warning: 'bg-orange-darken-4', error: 'bg-red-darken-4' }
+  return classes[level] || 'bg-grey-darken-4'
 }
 
 // ── Lifecycle ──────────────────────────────────────────────────────────
