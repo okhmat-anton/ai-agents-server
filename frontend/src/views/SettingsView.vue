@@ -110,8 +110,20 @@
               placeholder="Enter your kie.ai API key"
               :append-inner-icon="showKieaiKey ? 'mdi-eye-off' : 'mdi-eye'"
               @click:append-inner="showKieaiKey = !showKieaiKey"
-              @blur="saveAudioSetting('kieai_api_key', audioSettings.kieai_api_key)"
             />
+          </v-col>
+        </v-row>
+        <v-row class="mt-2">
+          <v-col cols="12">
+            <v-btn
+              color="primary"
+              :disabled="!audioSettingsChanged"
+              :loading="savingAudio"
+              @click="saveAudioSettings"
+            >
+              <v-icon start>mdi-content-save</v-icon>
+              Save
+            </v-btn>
           </v-col>
         </v-row>
         <v-alert type="info" variant="tonal" density="compact" class="mt-4">
@@ -181,7 +193,7 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted } from 'vue'
+import { ref, inject, onMounted, computed } from 'vue'
 import { useSettingsStore } from '../stores/settings'
 
 const store = useSettingsStore()
@@ -202,7 +214,15 @@ const sysToggling = ref(false)
 const audioSettings = ref({
   kieai_api_key: '',
 })
+const originalAudioSettings = ref({
+  kieai_api_key: '',
+})
 const showKieaiKey = ref(false)
+const savingAudio = ref(false)
+
+const audioSettingsChanged = computed(() => {
+  return audioSettings.value.kieai_api_key !== originalAudioSettings.value.kieai_api_key
+})
 
 // Confirmation dialog
 const confirmDialog = ref(false)
@@ -237,6 +257,7 @@ onMounted(async () => {
     for (const key of audioKeys) {
       if (store.systemSettings[key]?.value) {
         audioSettings.value[key] = store.systemSettings[key].value
+        originalAudioSettings.value[key] = store.systemSettings[key].value
       }
     }
   } catch (e) {
@@ -244,12 +265,16 @@ onMounted(async () => {
   }
 })
 
-const saveAudioSetting = async (key, value) => {
+const saveAudioSettings = async () => {
+  savingAudio.value = true
   try {
-    await store.updateSystemSetting(key, value)
-    showSnackbar(`${key} saved`)
+    await store.updateSystemSetting('kieai_api_key', audioSettings.value.kieai_api_key)
+    originalAudioSettings.value.kieai_api_key = audioSettings.value.kieai_api_key
+    showSnackbar('Audio settings saved')
   } catch (e) {
-    showSnackbar(e.response?.data?.detail || 'Failed to save setting', 'error')
+    showSnackbar(e.response?.data?.detail || 'Failed to save audio settings', 'error')
+  } finally {
+    savingAudio.value = false
   }
 }
 
