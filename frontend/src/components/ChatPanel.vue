@@ -239,7 +239,7 @@
           <v-spacer />
           <!-- Edit button for user messages -->
           <v-btn
-            v-if="msg.role === 'user' && !chatStore.sending && editingMessageIndex !== msgIndex"
+            v-if="msg.role === 'user' && editingMessageIndex !== msgIndex"
             icon
             size="x-small"
             variant="text"

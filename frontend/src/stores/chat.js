@@ -293,19 +293,36 @@ export const useChatStore = defineStore('chat', {
       /**
        * Edit an already-sent user message and regenerate assistant response.
        * Like VSCode Copilot: click pencil → edit → submit → old response replaced.
+       * Works even during generation — cancels current request first.
        */
-      if (this.sending) return
-
       const msg = this.messages[msgIndex]
       if (!msg || msg.role !== 'user') return
 
-      // 1. Update user message content locally
+      // 1. Cancel current generation if active
+      if (this.sending) {
+        this.cancelGeneration()
+        // Wait for abort to settle
+        for (let i = 0; i < 100 && this.sending; i++) {
+          await new Promise(r => setTimeout(r, 50))
+        }
+      }
+
+      // 2. Update user message content locally
       msg.content = newContent
 
-      // 2. Remove all messages after this user message (assistant responses, errors, etc.)
+      // 3. Remove all messages after this user message (assistant responses, errors, temp, etc.)
       this.messages.splice(msgIndex + 1)
+      // Also clean trailing temp/error messages that might remain
+      while (this.messages.length > 0) {
+        const last = this.messages[this.messages.length - 1]
+        if (last.id?.startsWith?.('error-') || last.id?.startsWith?.('temp-')) {
+          this.messages.pop()
+        } else {
+          break
+        }
+      }
 
-      // 3. Re-send with replace_last flag so backend updates DB + regenerates
+      // 4. Re-send with replace_last flag so backend updates DB + regenerates
       return this.sendMessage(newContent, null, true)
     },
 
