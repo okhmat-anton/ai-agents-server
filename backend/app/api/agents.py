@@ -171,6 +171,8 @@ async def create_agent(
         filesystem_access=body.filesystem_access,
         system_access=body.system_access,
         max_messages_before_response=body.max_messages_before_response,
+        messenger_context_limit=body.messenger_context_limit,
+        voice=body.voice,
         self_thinking=body.self_thinking,
         thinking_protocol_id=body.thinking_protocol_id,
         enabled=body.enabled,
@@ -264,7 +266,7 @@ async def update_agent(
 
     # Build MongoDB update dict
     mongo_update = {}
-    for key in ("name", "filesystem_access", "system_access", "self_thinking", "enabled", "messenger_context_limit"):
+    for key in ("name", "filesystem_access", "system_access", "self_thinking", "enabled", "messenger_context_limit", "voice"):
         if key in update_data:
             mongo_update[key] = update_data[key]
     if "thinking_protocol_id" in update_data:

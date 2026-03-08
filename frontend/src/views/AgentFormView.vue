@@ -52,6 +52,18 @@
             <v-col cols="12">
               <v-textarea v-model="form.system_prompt" label="System Prompt" rows="4" />
             </v-col>
+            <v-col cols="12" md="4">
+              <v-select
+                v-model="form.voice"
+                :items="voiceOptions"
+                label="TTS Voice"
+                clearable
+                density="compact"
+                hint="Voice for text-to-speech"
+                persistent-hint
+                prepend-inner-icon="mdi-account-voice"
+              />
+            </v-col>
           </v-row>
 
           <!-- ─── Thinking Protocols ─────────────────── -->
@@ -318,11 +330,18 @@ const selectedProtocolPreview = computed(() =>
   protocolsList.value.find(p => p.id === form.value.thinking_protocol_id) || null
 )
 
+const voiceOptions = [
+  'Adam', 'Alice', 'Bill', 'Brian', 'Callum', 'Charlie', 'Chris',
+  'Daniel', 'Eric', 'George', 'Harry', 'Jessica', 'Laura', 'Liam',
+  'Lily', 'Matilda', 'River', 'Roger', 'Sarah', 'Will',
+]
+
 const form = ref({
   name: '',
   description: '',
   mission: '',
   system_prompt: '',
+  voice: null,
   temperature: 0.7,
   top_p: 0.9,
   top_k: 40,
@@ -368,7 +387,7 @@ onMounted(async () => {
     const agent = await agentsStore.fetchAgent(route.params.id)
     // Copy scalar fields
     const scalarKeys = [
-      'name', 'description', 'mission', 'system_prompt', 'temperature', 'top_p', 'top_k',
+      'name', 'description', 'mission', 'system_prompt', 'voice', 'temperature', 'top_p', 'top_k',
       'max_tokens', 'num_ctx', 'repeat_penalty', 'num_thread', 'num_gpu', 'avatar_url',
     ]
     scalarKeys.forEach((key) => {

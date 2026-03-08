@@ -155,6 +155,21 @@
               />
               <span class="ml-1 text-caption text-grey">messages in Telegram context (default for all accounts)</span>
             </v-list-item>
+            <v-list-item class="d-flex align-center">
+              <strong>TTS Voice:</strong>&nbsp;
+              <v-select
+                :model-value="agent.voice || null"
+                @update:model-value="v => updateAgentField('voice', v)"
+                :items="voiceOptions"
+                density="compact"
+                variant="outlined"
+                hide-details
+                clearable
+                placeholder="Default"
+                style="max-width: 180px; display: inline-flex"
+                class="ml-2"
+              />
+            </v-list-item>
             <v-list-item v-if="agent.description"><strong>Description:</strong>&nbsp;{{ agent.description }}</v-list-item>
             <!-- Protocols (multi-protocol) -->
             <v-list-item v-if="agent.protocols && agent.protocols.length">
@@ -1784,6 +1799,11 @@ const projectsStore = useProjectsStore()
 const agentErrorsStore = useAgentErrorsStore()
 const tab = ref('info')
 const agent = ref(null)
+const voiceOptions = [
+  'Adam', 'Alice', 'Bill', 'Brian', 'Callum', 'Charlie', 'Chris',
+  'Daniel', 'Eric', 'George', 'Harry', 'Jessica', 'Laura', 'Liam',
+  'Lily', 'Matilda', 'River', 'Roger', 'Sarah', 'Will',
+]
 const stats = ref({})
 const tasks = ref([])
 const agentTaskDialog = ref(false)

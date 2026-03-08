@@ -41,6 +41,9 @@ class MongoAgent(BaseModel):
     # Avatar
     avatar_url: Optional[str] = None
 
+    # TTS voice
+    voice: Optional[str] = None
+
     # Self-thinking mode
     self_thinking: bool = False
 
