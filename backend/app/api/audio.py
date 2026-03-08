@@ -118,7 +118,7 @@ async def generate_speech_for_message(
     db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Generate TTS audio for an existing chat message and attach it (via kie.ai)."""
-    from app.mongodb.services import ChatMessageService
+    from app.mongodb.services import ChatMessageService, ChatSessionService, AgentService
     msg_svc = ChatMessageService(db)
     msg = await msg_svc.get_by_id(message_id)
     if not msg:
@@ -126,6 +126,19 @@ async def generate_speech_for_message(
 
     if not msg.content.strip():
         raise HTTPException(status_code=400, detail="Message has no text content")
+
+    # Auto-resolve voice from agent settings if not explicitly provided
+    if not voice and msg.session_id:
+        try:
+            sess_svc = ChatSessionService(db)
+            session = await sess_svc.get_by_id(msg.session_id)
+            if session and session.agent_id:
+                agent_svc = AgentService(db)
+                agent = await agent_svc.get_by_id(session.agent_id)
+                if agent and agent.voice:
+                    voice = agent.voice
+        except Exception:
+            pass  # fallback to default voice
 
     try:
         result = await text_to_speech(db=db, text=msg.content, voice=voice)

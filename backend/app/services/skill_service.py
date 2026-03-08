@@ -618,8 +618,9 @@ SYSTEM_SKILLS = [
             "Parameters: audio_url (string, URL or local path to the audio file), "
             "language (string, optional, ISO-639-1 code like 'en', 'ru' for better accuracy), "
             "provider (string, optional: 'openai', uses system default if omitted). "
-            "Currently only OpenAI Whisper is supported for STT. "
-            "Use this to transcribe audio messages or files the user provides."
+            "Use this ONLY when user provides a direct URL to an audio file that needs transcription. "
+            "Do NOT use this for Telegram voice messages — they are already transcribed automatically. "
+            "If the user's message is plain text, it does not need speech recognition."
         ),
         "category": "general",
         "code": "# STT via audio_service — executed by pipeline handler",

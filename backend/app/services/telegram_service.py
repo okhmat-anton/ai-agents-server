@@ -894,10 +894,11 @@ async def _handle_incoming_message(
                 local_path = CHAT_MEDIA_DIR / local_filename
                 transcribed = await _transcribe_voice(db, local_path, ext)
                 if transcribed:
-                    # Prepend caption if any, then transcription
+                    # Use transcribed text directly as message content
+                    # The user spoke these words — treat as if they typed them
                     caption = message_text.strip()
                     if caption:
-                        message_text = f"{caption}\n\n[Голосовое сообщение: {transcribed}]"
+                        message_text = f"{caption}\n\n{transcribed}"
                     else:
                         message_text = transcribed
                     await _log_messenger_event(
@@ -906,7 +907,7 @@ async def _handle_incoming_message(
                         {"chat_id": str(event.chat_id), "text_preview": transcribed[:200]},
                     )
                 elif not message_text.strip():
-                    message_text = "[Голосовое сообщение — не удалось распознать]"
+                    message_text = "[Пользователь отправил голосовое сообщение, но распознать его не удалось. Попросите повторить текстом.]"
 
             # Photo → describe
             elif media_type == "photo":
