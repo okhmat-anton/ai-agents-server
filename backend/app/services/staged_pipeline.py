@@ -75,6 +75,18 @@ ACTION_SKILLS = frozenset({
     "project_run_code",
 })
 
+# "safe" action skills that can be auto-executed without user confirmation
+# These are reversible or low-risk (project files, comments, memory)
+SAFE_ACTION_SKILLS = frozenset({
+    "memory_store", "project_file_write", "project_update_task",
+    "project_task_comment", "code_execute",
+})
+
+# Dangerous skills require confirmation (never auto-execute)
+DANGEROUS_ACTION_SKILLS = frozenset({
+    "shell_exec", "file_write",
+})
+
 # ── Smart arg inference ──────────────────────────────────────────────
 
 
@@ -138,10 +150,40 @@ def _infer_args(skill_name: str, planned_args: dict, context: dict) -> dict:
             if detected_task:
                 args["task_id"] = detected_task
 
-    elif skill_name in ("project_file_read", "project_file_write"):
+    elif skill_name == "project_file_read":
         if "project_slug" not in args or not args["project_slug"]:
             if detected_project:
                 args["project_slug"] = detected_project
+
+    elif skill_name == "project_file_write":
+        if "project_slug" not in args or not args["project_slug"]:
+            if detected_project:
+                args["project_slug"] = detected_project
+        # Extract file path from user input
+        if "path" not in args or not args["path"]:
+            path_match = re.search(
+                r'(?:файл[а]?\s+|file\s+)["\']?([\w._/\\-]+\.[\w]+)["\']?',
+                user_input, re.I,
+            )
+            if path_match:
+                args["path"] = path_match.group(1)
+        # Extract content from user input (quoted or after keywords)
+        if "content" not in args or not args["content"]:
+            # Try 'содержимым "X"' or 'content "X"' patterns
+            content_match = re.search(
+                r"(?:содержим(?:ое|ым)\s+|content\s+)['\"](.+?)['\"]",
+                user_input, re.I,
+            )
+            if content_match:
+                args["content"] = content_match.group(1)
+            else:
+                # Try 'с текстом "X"' pattern
+                content_match2 = re.search(
+                    r"(?:с\s+текстом\s+|with\s+text\s+)['\"](.+?)['\"]",
+                    user_input, re.I,
+                )
+                if content_match2:
+                    args["content"] = content_match2.group(1)
 
     elif skill_name == "project_run_code":
         if "project_slug" not in args or not args["project_slug"]:
@@ -983,6 +1025,17 @@ JSON only:
                 }
                 continue
 
+            # Block dangerous action skills (require user confirmation)
+            if skill_name in DANGEROUS_ACTION_SKILLS:
+                logger.info(f"EXECUTE: blocking dangerous skill {skill_name} — needs confirmation")
+                step_results[step_id] = {
+                    "type": "blocked",
+                    "skill": skill_name,
+                    "reason": "Dangerous action — requires user confirmation",
+                    "args": raw_args,
+                }
+                continue
+
             # Smart arg inference
             args = _infer_args(skill_name, raw_args, context)
 
@@ -998,6 +1051,7 @@ JSON only:
                             "type": "skipped",
                             "skill": skill_name,
                             "reason": f"Missing required args: {missing}",
+                            "args": args,
                         }
                         skip_step = True
                     break
@@ -1136,17 +1190,57 @@ JSON only:
                 "Follow this plan structure. Present results clearly."
             )})
 
-        # Available actions note for complex tasks
-        if classification.complexity != "simple" and not classification.is_greeting:
-            action_skills = [s["name"] for s in self.ctx.skills if s["name"] in ACTION_SKILLS]
-            if action_skills:
-                messages.append({"role": "system", "content": (
-                    "## Available Actions\n"
-                    "These action skills were NOT auto-executed. "
-                    "If the user needs files written, code executed, etc., "
-                    "include the full content in your response.\n"
-                    f"Available: {', '.join(action_skills)}"
-                )})
+        # Action execution results note
+        executed_actions = []
+        blocked_actions = []
+        skipped_actions = []
+        for key, result in step_results.items():
+            if result.get("type") == "skill" and result.get("skill") in ACTION_SKILLS:
+                if result.get("success"):
+                    executed_actions.append(result)
+                else:
+                    skipped_actions.append(result)
+            elif result.get("type") == "blocked":
+                blocked_actions.append(result)
+            elif result.get("type") == "skipped" and result.get("skill") in ACTION_SKILLS:
+                skipped_actions.append(result)
+
+        if executed_actions:
+            action_lines = []
+            for ea in executed_actions:
+                skill = ea.get("skill", "?")
+                res = ea.get("result", {})
+                action_lines.append(f"- **{skill}**: executed successfully — {json.dumps(res, ensure_ascii=False, default=str)[:500]}")
+            messages.append({"role": "system", "content": (
+                "## Actions Completed\n"
+                "These actions were executed successfully:\n"
+                + "\n".join(action_lines) + "\n\n"
+                "Report the results to the user. Confirm what was done."
+            )})
+        if blocked_actions:
+            block_lines = []
+            for ba in blocked_actions:
+                skill = ba.get("skill", "?")
+                reason = ba.get("reason", "")
+                block_lines.append(f"- **{skill}**: {reason}")
+            messages.append({"role": "system", "content": (
+                "## Blocked Actions\n"
+                "These actions were NOT executed for safety:\n"
+                + "\n".join(block_lines) + "\n\n"
+                "Inform the user that these actions need explicit confirmation."
+            )})
+        if skipped_actions and not executed_actions:
+            skip_lines = []
+            for sa in skipped_actions:
+                skill = sa.get("skill", "?")
+                reason = sa.get("reason", "")
+                skip_lines.append(f"- **{skill}**: {reason}")
+            messages.append({"role": "system", "content": (
+                "## Actions Skipped\n"
+                "These actions could not be executed:\n"
+                + "\n".join(skip_lines) + "\n\n"
+                "Explain what happened and what the user can do."
+            )})
 
         messages.extend(history)
 
