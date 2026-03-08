@@ -74,11 +74,9 @@ Think of it as your personal AI workforce: create agents with unique personaliti
 - Deep memory processing — agents analyze and connect their own memories
 
 ### 🏗️ Infrastructure
-- Full **Docker Compose** setup — one command to run everything
-- **MongoDB** for JSON documents (tasks, logs)
+- **MongoDB** for all data storage (agents, tasks, logs, etc.)
 - **Redis** for caching, **ChromaDB** for vector embeddings
 - Ollama integration with auto-model sync, health monitoring, and watchdog
-- Alembic database migrations
 - Swagger/ReDoc API documentation
 
 ### 🖥️ Admin Dashboard
@@ -396,7 +394,6 @@ VITE_BACKEND_URL=http://localhost:4700 npm run dev -- --host 0.0.0.0 --port 4200
 | `make stop-dev` | Kill local dev processes (ports 4700, 4200) |
 | `make restart` | Restart Docker services |
 | `make update` | Pull latest code, install deps, rebuild |
-| `make migrate` | Run database migrations |
 | `make logs` | Follow backend logs |
 | `make test` | Run backend tests |
 | `make lint` | Run linter (ruff) |
@@ -415,7 +412,7 @@ VITE_BACKEND_URL=http://localhost:4700 npm run dev -- --host 0.0.0.0 --port 4200
                          │ REST API + WebSocket
 ┌────────────────────────▼────────────────────────────────────┐
 │                        Backend                              │
-│                  FastAPI + SQLAlchemy                        │
+│                  FastAPI + MongoDB                          │
 │                   http://localhost:4700                      │
 │                                                             │
 │  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │
@@ -440,12 +437,11 @@ VITE_BACKEND_URL=http://localhost:4700 npm run dev -- --host 0.0.0.0 --port 4200
 | Layer | Technology |
 |-------|-----------|
 | **Frontend** | Vue 3.5, Vuetify 3.7, Pinia 2.3, Vue Router 4, Vite 6, CodeMirror 6 |
-| **Backend** | Python 3.11, FastAPI 0.115, SQLAlchemy 2.0 (async), Pydantic 2.10, Motor 3.6 |
-| **Database** | PostgreSQL 16 (relational), MongoDB 7 (documents) |
+| **Backend** | Python 3.11, FastAPI 0.115, Pydantic 2.10, Motor 3.6 |
+| **Database** | MongoDB 7 |
 | **Cache** | Redis 7 |
 | **Vector DB** | ChromaDB |
 | **LLM** | Ollama (local) + any OpenAI-compatible API |
-| **Migrations** | Alembic |
 | **Container** | Docker Compose |
 
 ---
@@ -522,7 +518,6 @@ If default ports are in use, change them in `.env`:
 ```env
 BACKEND_PORT=4701
 FRONTEND_PORT=4201
-POSTGRES_PORT=4533
 ```
 
 ---
@@ -536,12 +531,11 @@ ai-agents-server/
 │   │   ├── api/               # Route handlers (one file per domain)
 │   │   ├── core/              # Auth dependencies, security
 │   │   ├── llm/               # LLM provider abstraction (Ollama, OpenAI)
-│   │   ├── models/            # SQLAlchemy ORM models
+│   │   ├── mongodb/           # MongoDB Pydantic models and services
 │   │   ├── schemas/           # Pydantic request/response schemas
 │   │   ├── services/          # Business logic layer
-│   │   ├── migrations/        # Alembic database migrations
 │   │   ├── config.py          # Settings (reads .env)
-│   │   ├── database.py        # DB engine, sessions, Redis
+│   │   ├── database.py        # MongoDB, Redis initialization
 │   │   └── main.py            # FastAPI app & lifespan
 │   ├── requirements.txt
 │   └── Dockerfile
@@ -587,5 +581,5 @@ This project is licensed under the **Apache License 2.0** — see the [LICENSE](
 ---
 
 <p align="center">
-  <sub>Built with ❤️ using FastAPI, Vue 3, Ollama, and PostgreSQL</sub>
+  <sub>Built with ❤️ using FastAPI, Vue 3, Ollama, and MongoDB</sub>
 </p>

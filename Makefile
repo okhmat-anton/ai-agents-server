@@ -1,4 +1,4 @@
-.PHONY: install run run-dev stop stop-dev restart update test lint logs migrate clean
+.PHONY: install run run-dev stop stop-dev restart update test lint logs clean
 
 install:
 	@echo "=== AI Agents Server — Installation ==="
@@ -140,8 +140,6 @@ update:
 	docker compose exec frontend npm install
 	@echo "Installing docker backend dependencies..."
 	docker compose exec backend pip install -r requirements.txt
-	@echo "Running migrations..."
-	docker compose exec backend alembic upgrade head
 
 test:
 	docker compose exec backend pytest -v
@@ -151,9 +149,6 @@ lint:
 
 logs:
 	docker compose logs -f backend
-
-migrate:
-	docker compose exec backend alembic upgrade head
 
 clean:
 	docker compose down -v

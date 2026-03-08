@@ -50,8 +50,8 @@ cd frontend && VITE_BACKEND_URL=http://localhost:4700 npm run dev -- --host 0.0.
 
 ### Backend (`backend/`)
 - **Python 3.11** (venv at `backend/.venv`). **Python 3.14 NOT compatible** — pydantic-core build fails.
-- FastAPI 0.115.6, SQLAlchemy 2.0.36 async, asyncpg, Pydantic 2.10, Motor 3.6.0 (MongoDB async driver)
-- Alembic for migrations, Redis for caching, ChromaDB for vector memory
+- FastAPI 0.115.6, Pydantic 2.10, Motor 3.6.0 (MongoDB async driver)
+- Redis for caching, ChromaDB for vector memory
 - `psutil` for system info, `httpx` for HTTP calls to Ollama/LLM
 
 ### Frontend (`frontend/`)
@@ -61,12 +61,10 @@ cd frontend && VITE_BACKEND_URL=http://localhost:4700 npm run dev -- --host 0.0.
 - Vite proxy: `/api` → `VITE_BACKEND_URL` (http://localhost:4700)
 
 ### Database
-- **PostgreSQL 16**: user `agents`, password `agents_secret_2026`, db `ai_agents`
-  - Used for relational data: users, agents, models, skills, chat sessions (foreign keys, joins)
-  - All models use UUID primary keys, auto timestamps (`created_at`, `updated_at`)
 - **MongoDB 7**: user `agents`, password `mongo_secret_2026`, db `ai_agents`
-  - Used for JSON documents: tasks (dynamic result/error fields), autonomous runs, thinking logs
+  - All data stored in MongoDB: agents, tasks, chat sessions, skills, models, settings, logs, etc.
   - Models defined as Pydantic with `to_mongo()` / `from_mongo()` methods for UUID/datetime conversion
+  - MongoDB access via `from app.database import get_mongodb` — returns Motor AsyncIOMotorDatabase
 
 ## Project Structure
 
@@ -75,12 +73,12 @@ backend/
   app/
     main.py              # FastAPI app, lifespan, router registration
     config.py            # Settings (pydantic-settings, reads .env)
-    database.py          # async engine, session, init_db, init_redis
+    database.py          # MongoDB, Redis initialization
     api/                 # Route handlers (one file per domain)
       auth.py            # Login, refresh, change password
       settings.py        # ModelConfig CRUD, ApiKey CRUD, SystemSettings CRUD
       agents.py          # Agent CRUD + execution
-      tasks.py           # Task CRUD + scheduling (cron)
+      tasks_mongo.py     # Task CRUD + scheduling (cron)
       skills.py          # Skill CRUD (Python/JS code)
       chat.py            # Chat sessions, messages, multi-model, auto-title
       ollama.py          # Ollama management (status, models, load/unload, chat)
@@ -91,12 +89,10 @@ backend/
       memory.py          # ChromaDB vector memory
       logs.py            # Agent log queries
       websocket.py       # WebSocket for real-time updates
-    models/              # SQLAlchemy ORM models
-      user.py, agent.py, task.py, skill.py, chat.py,
-      model_config.py, api_key.py, system_setting.py, log.py, memory.py
     mongodb/             # MongoDB Pydantic models and services
-      models.py          # MongoTask with to_mongo()/from_mongo() UUID conversion
-      task_service.py    # CRUD operations for tasks using Motor async driver
+      models.py          # Pydantic models with to_mongo()/from_mongo() UUID conversion
+      services.py        # CRUD operations using Motor async driver
+      service_base.py    # Base service class for MongoDB collections
     llm/                 # LLM provider abstraction
       base.py            # Message, GenerationParams, LLMResponse, LLMProvider protocol
       ollama.py          # OllamaProvider (chat timeout=300s)
@@ -129,15 +125,13 @@ frontend/
 
 ### Backend
 - All API routes prefixed with `/api/`
-- Database sessions via `Depends(get_db)` — async SQLAlchemy
 - Auth via `Depends(get_current_user)` — JWT from Authorization header
-- Feature flags: `filesystem_access_enabled`, `system_access_enabled` in SystemSetting table
-- Ollama models auto-synced to `model_configs` table on startup
+- Feature flags: `filesystem_access_enabled`, `system_access_enabled` in system_settings collection
+- Ollama models auto-synced to `model_configs` collection on startup
 - For Ollama models: always use `settings.OLLAMA_BASE_URL` at runtime (not stored DB `base_url`) — Docker vs local URLs differ
 
 **Database Strategy:**
-- **PostgreSQL** for relational data requiring foreign keys, joins, and referential integrity (users, agents, models, skills, chat sessions)
-- **MongoDB** for JSON-heavy documents with dynamic/flexible schemas (tasks with result/error fields, autonomous runs, thinking logs)
+- **MongoDB only** — all data stored in MongoDB via Motor async driver
 - MongoDB access via `from app.database import get_mongodb` — returns Motor AsyncIOMotorDatabase
 - MongoDB models use Pydantic with `to_mongo()` / `from_mongo()` for UUID string conversion and datetime ISO formatting
 
