@@ -101,7 +101,7 @@ async def _build_agent_response(
     for am in agent_models:
         mid = am.model_config_id
         if mid.startswith("role:"):
-            from app.models.model_role import MODEL_ROLE_LABELS
+            from app.mongodb.models.model_config import MODEL_ROLE_LABELS
             role_name = mid[5:]
             agent_models_out.append(AgentModelResponse(
                 id=am.id,
