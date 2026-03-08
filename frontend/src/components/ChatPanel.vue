@@ -77,7 +77,7 @@
             <v-icon size="14" class="mr-2 flex-shrink-0" :color="session.isDisabledAgent ? 'grey' : (session.agent_ids?.length > 1) ? 'success' : session.multi_model ? 'warning' : 'primary'">
               {{ (session.agent_ids?.length > 1) ? 'mdi-robot-outline' : session.multi_model ? 'mdi-brain' : 'mdi-chat-outline' }}
             </v-icon>
-            <div class="flex-grow-1 text-truncate">
+            <div class="flex-grow-1 text-truncate" style="min-width: 0">
               <input
                 v-if="editingSessionId === session.id"
                 v-model="editingSessionTitle"
@@ -88,16 +88,39 @@
                 @click.stop
                 autofocus
               />
-              <div v-else class="text-caption text-truncate d-flex align-center" @dblclick.stop="startRenameSession(session)">
-                <span class="text-truncate">{{ session.title }}</span>
-                <v-badge 
-                  v-if="session.unread_count > 0" 
-                  :content="session.unread_count" 
-                  color="error" 
-                  inline 
-                  class="ml-1"
-                />
-              </div>
+              <template v-else>
+                <!-- Agent / Project chats: name + last message preview -->
+                <div v-if="session.chat_type === 'agent' || session.chat_type === 'project_task'"
+                     @dblclick.stop="startRenameSession(session)">
+                  <div class="d-flex align-center">
+                    <span class="text-caption font-weight-bold text-truncate">{{ sessionContactName(session) }}</span>
+                    <v-badge
+                      v-if="session.unread_count > 0"
+                      :content="session.unread_count"
+                      color="error"
+                      inline
+                      class="ml-1"
+                    />
+                  </div>
+                  <div v-if="session.last_message" class="text-caption text-truncate text-medium-emphasis" style="font-size: 11px; line-height: 1.3; opacity: 0.7;">
+                    {{ session.last_message }}
+                  </div>
+                  <div v-else-if="session.isPseudo" class="text-caption text-truncate text-medium-emphasis" style="font-size: 11px; line-height: 1.3; opacity: 0.5;">
+                    No messages yet
+                  </div>
+                </div>
+                <!-- User chats: original single-line title -->
+                <div v-else class="text-caption text-truncate d-flex align-center" @dblclick.stop="startRenameSession(session)">
+                  <span class="text-truncate">{{ session.title }}</span>
+                  <v-badge 
+                    v-if="session.unread_count > 0" 
+                    :content="session.unread_count" 
+                    color="error" 
+                    inline 
+                    class="ml-1"
+                  />
+                </div>
+              </template>
             </div>
             <v-btn
               v-if="editingSessionId !== session.id && !session.isPseudo && session.chat_type !== 'agent' && session.chat_type !== 'project_task'"
@@ -451,6 +474,7 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, reactive } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useAgentsStore } from '../stores/agents'
+import { useSettingsStore } from '../stores/settings'
 import api from '../api'
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
@@ -460,6 +484,7 @@ import 'highlight.js/styles/github-dark.css'
 
 const chatStore = useChatStore()
 const agentsStore = useAgentsStore()
+const settingsStore = useSettingsStore()
 
 // State
 const selectedModels = ref([])
@@ -617,6 +642,34 @@ const filteredSessions = computed(() => {
   })
 })
 
+function sessionContactName(session) {
+  // For agent chats: show agent name(s)
+  if (session.chat_type === 'agent') {
+    if (session.agent_ids?.length) {
+      const names = session.agent_ids.map(id => {
+        const agent = agentsStore.agents.find(a => a.id === id)
+        return agent ? agent.name : 'Agent'
+      })
+      return names.join(', ')
+    }
+    // Fallback for pseudo-sessions
+    if (session.isPseudo) return session.title
+    return session.title
+  }
+  // For project/task chats: show project name
+  if (session.chat_type === 'project_task') {
+    if (session.project_slug) {
+      const project = allProjects.value.find(p => p.slug === session.project_slug)
+      const projectName = project ? (project.name || project.slug) : session.project_slug
+      if (session.task_id) return `${projectName} / Task`
+      return projectName
+    }
+    if (session.isPseudo) return session.title
+    return session.title
+  }
+  return session.title
+}
+
 const isCurrentAgentDisabled = computed(() => {
   const session = chatStore.currentSession
   if (!session || session.chat_type !== 'agent') return false
@@ -689,7 +742,13 @@ async function generateTTS(msg) {
   if (!msg.id || ttsLoading[msg.id]) return
   ttsLoading[msg.id] = true
   try {
-    const { data } = await api.post(`/audio/tts-message/${msg.id}`, {}, { timeout: 60000 })
+    // Ensure settings are loaded for timeout value
+    if (!settingsStore.systemSettings?.tts_timeout) {
+      await settingsStore.fetchSystemSettings()
+    }
+    // Timeout = tts_timeout setting (seconds) + 30s buffer for network, converted to ms
+    const ttsTimeoutSec = Number(settingsStore.systemSettings?.tts_timeout?.value) || 120
+    const { data } = await api.post(`/audio/tts-message/${msg.id}`, {}, { timeout: (ttsTimeoutSec + 30) * 1000 })
     // Update the message in local state with audio_url
     msg.audio_url = data.audio_url
     // Auto-play the generated audio

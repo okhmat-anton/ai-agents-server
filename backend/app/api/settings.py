@@ -291,6 +291,7 @@ _DEFAULT_SETTINGS = {
     "log_retention_days": {"value": "14", "description": "Number of days to retain logs (system, agent, thinking). Older logs are automatically deleted."},
     # Audio / TTS / STT via kie.ai
     "kieai_api_key": {"value": "", "description": "kie.ai API key for TTS/STT (ElevenLabs proxy)"},
+    "tts_timeout": {"value": "120", "description": "Maximum time (seconds) to wait for TTS audio generation. kie.ai processes async, so longer texts need more time."},
 }
 
 

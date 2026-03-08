@@ -31,7 +31,7 @@ KIEAI_TTS_MODEL = "elevenlabs/text-to-speech-turbo-2-5"
 KIEAI_STT_MODEL = "elevenlabs/speech-to-text"
 
 KIEAI_POLL_INTERVAL = 2.5   # seconds between status checks
-KIEAI_MAX_WAIT = 120         # max seconds to wait for result
+KIEAI_MAX_WAIT_DEFAULT = 120  # default max seconds to wait for result
 
 
 async def _get_setting(db: AsyncIOMotorDatabase, key: str) -> str | None:
@@ -80,7 +80,7 @@ async def _create_task(client: httpx.AsyncClient, api_key: str, model: str, inpu
     return task_id
 
 
-async def _poll_task(client: httpx.AsyncClient, api_key: str, task_id: str) -> dict:
+async def _poll_task(client: httpx.AsyncClient, api_key: str, task_id: str, max_wait: int = KIEAI_MAX_WAIT_DEFAULT) -> dict:
     """Poll kie.ai until task completes. Returns task data dict."""
     poll_url = f"{KIEAI_GET_TASK}/{task_id}"
     headers = _auth_headers(api_key)
@@ -88,8 +88,8 @@ async def _poll_task(client: httpx.AsyncClient, api_key: str, task_id: str) -> d
 
     while True:
         elapsed = time.time() - start
-        if elapsed > KIEAI_MAX_WAIT:
-            raise TimeoutError(f"kie.ai task {task_id} did not complete within {KIEAI_MAX_WAIT}s")
+        if elapsed > max_wait:
+            raise TimeoutError(f"kie.ai task {task_id} did not complete within {max_wait}s")
 
         await asyncio.sleep(KIEAI_POLL_INTERVAL)
 
@@ -155,6 +155,10 @@ async def _tts_kieai(db: AsyncIOMotorDatabase, text: str, voice: str | None) -> 
     if not api_key:
         raise ValueError("kie.ai API key not configured. Set 'kieai_api_key' in System Settings.")
 
+    # Read configurable timeout
+    timeout_str = await _get_setting(db, "tts_timeout")
+    max_wait = int(timeout_str) if timeout_str and timeout_str.isdigit() else KIEAI_MAX_WAIT_DEFAULT
+
     voice = voice or "Rachel"
     filename = f"{uuid.uuid4().hex}.mp3"
     filepath = AUDIO_DIR / filename
@@ -168,14 +172,14 @@ async def _tts_kieai(db: AsyncIOMotorDatabase, text: str, voice: str | None) -> 
         "speed": 1,
     }
 
-    await syslog("debug", f"TTS: submitting task, voice={voice}, text_length={len(text)}", source="audio")
+    await syslog("debug", f"TTS: submitting task, voice={voice}, text_length={len(text)}, max_wait={max_wait}s", source="audio")
 
     async with httpx.AsyncClient(timeout=30) as client:
         # Step 1: Create task
         task_id = await _create_task(client, api_key, KIEAI_TTS_MODEL, input_data)
 
         # Step 2: Poll until ready
-        task_data = await _poll_task(client, api_key, task_id)
+        task_data = await _poll_task(client, api_key, task_id, max_wait=max_wait)
 
         # Step 3: Extract audio URL from resultJson and download
         result_json_str = task_data.get("resultJson", "{}")

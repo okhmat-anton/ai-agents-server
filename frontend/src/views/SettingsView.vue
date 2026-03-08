@@ -95,7 +95,7 @@
     <!-- Audio & AI API Keys -->
     <v-card class="mb-6">
       <v-card-title>
-        <v-icon class="mr-2">mdi-volume-high</v-icon>Audio API Key
+        <v-icon class="mr-2">mdi-volume-high</v-icon>Audio Settings
       </v-card-title>
       <v-card-text>
         <v-row>
@@ -110,6 +110,21 @@
               placeholder="Enter your kie.ai API key"
               :append-inner-icon="showKieaiKey ? 'mdi-eye-off' : 'mdi-eye'"
               @click:append-inner="showKieaiKey = !showKieaiKey"
+            />
+          </v-col>
+        </v-row>
+        <v-row>
+          <v-col cols="4">
+            <v-text-field
+              v-model.number="audioSettings.tts_timeout"
+              label="TTS Timeout (seconds)"
+              type="number"
+              variant="outlined"
+              density="compact"
+              hide-details
+              :min="30"
+              :max="600"
+              hint="Max time to wait for audio generation (30-600s)"
             />
           </v-col>
         </v-row>
@@ -213,15 +228,18 @@ const sysToggling = ref(false)
 // Audio settings
 const audioSettings = ref({
   kieai_api_key: '',
+  tts_timeout: 120,
 })
 const originalAudioSettings = ref({
   kieai_api_key: '',
+  tts_timeout: 120,
 })
 const showKieaiKey = ref(false)
 const savingAudio = ref(false)
 
 const audioSettingsChanged = computed(() => {
   return audioSettings.value.kieai_api_key !== originalAudioSettings.value.kieai_api_key
+    || String(audioSettings.value.tts_timeout) !== String(originalAudioSettings.value.tts_timeout)
 })
 
 // Confirmation dialog
@@ -253,11 +271,12 @@ onMounted(async () => {
     fsAccessEnabled.value = store.systemSettings.filesystem_access_enabled?.value === 'true'
     sysAccessEnabled.value = store.systemSettings.system_access_enabled?.value === 'true'
     // Load audio settings
-    const audioKeys = ['kieai_api_key']
+    const audioKeys = ['kieai_api_key', 'tts_timeout']
     for (const key of audioKeys) {
       if (store.systemSettings[key]?.value) {
-        audioSettings.value[key] = store.systemSettings[key].value
-        originalAudioSettings.value[key] = store.systemSettings[key].value
+        const val = key === 'tts_timeout' ? Number(store.systemSettings[key].value) : store.systemSettings[key].value
+        audioSettings.value[key] = val
+        originalAudioSettings.value[key] = val
       }
     }
   } catch (e) {
@@ -269,7 +288,9 @@ const saveAudioSettings = async () => {
   savingAudio.value = true
   try {
     await store.updateSystemSetting('kieai_api_key', audioSettings.value.kieai_api_key)
+    await store.updateSystemSetting('tts_timeout', String(audioSettings.value.tts_timeout))
     originalAudioSettings.value.kieai_api_key = audioSettings.value.kieai_api_key
+    originalAudioSettings.value.tts_timeout = audioSettings.value.tts_timeout
     showSnackbar('Audio settings saved')
   } catch (e) {
     showSnackbar(e.response?.data?.detail || 'Failed to save audio settings', 'error')
