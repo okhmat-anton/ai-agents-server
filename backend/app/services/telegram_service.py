@@ -481,6 +481,18 @@ async def start_telegram_listener(
     # Start receiving
     asyncio.create_task(_run_client(client, messenger_id))
 
+    # Process unread messages that arrived while offline (in background)
+    asyncio.create_task(_process_unread_messages(
+        client=client,
+        messenger_id=messenger_id,
+        agent_id=agent_id,
+        me=me,
+        trusted_users=trusted_users,
+        public_permissions=public_permissions,
+        config=config,
+        context_messages_limit=context_messages_limit,
+    ))
+
 
 async def _run_client(client: TelegramClient, messenger_id: str):
     """Keep client running with auto-reconnect on disconnect."""
@@ -633,6 +645,18 @@ async def _run_client(client: TelegramClient, messenger_id: str):
                 f"Successfully reconnected as @{me.username} after {attempt} attempt(s)",
                 {"username": me.username, "attempt": attempt},
             )
+
+            # Process unread messages that arrived while offline
+            asyncio.create_task(_process_unread_messages(
+                client=new_client,
+                messenger_id=messenger_id,
+                agent_id=agent_id,
+                me=me,
+                trusted_users=trusted_users,
+                public_permissions=public_permissions,
+                config=config,
+                context_messages_limit=context_messages_limit,
+            ))
 
         except Exception as e:
             logger.error(f"Telegram {messenger_id}: reconnect attempt {attempt} failed: {e}")
@@ -798,6 +822,153 @@ async def _transcribe_voice(db, audio_path: Path, audio_format: str = "ogg") -> 
     except Exception as e:
         logger.error(f"STT transcription failed: {type(e).__name__}: {e}")
         return ""
+
+
+# ── Process Unread Messages (on connect / reconnect) ────────────────────
+
+class _MessageAsEvent:
+    """
+    Thin wrapper around a Telethon Message so it can be passed to
+    _handle_incoming_message and media helpers that expect event.message,
+    event.chat_id, event.raw_text, etc.
+    """
+    def __init__(self, msg):
+        self._msg = msg
+
+    # The helpers access event.message to get the Message object
+    @property
+    def message(self):
+        return self._msg
+
+    # Forward everything else to the underlying Message
+    def __getattr__(self, name):
+        return getattr(self._msg, name)
+
+
+async def _process_unread_messages(
+    client: TelegramClient,
+    messenger_id: str,
+    agent_id: str,
+    me,
+    trusted_users: list,
+    public_permissions: list,
+    config: dict,
+    context_messages_limit: int | None = None,
+):
+    """
+    After connecting (or reconnecting), iterate through dialogs with unread
+    messages and process each one sequentially — so the agent replies to
+    messages that arrived while it was offline.
+    """
+    delay_min = config.get("response_delay_min", 2)
+    delay_max = config.get("response_delay_max", 8)
+    typing_indicator = config.get("typing_indicator", True)
+    humanize = config.get("humanize_responses", True)
+    casual = config.get("casual_tone", True)
+    respond_mentions = config.get("respond_to_mentions", True)
+    respond_groups = config.get("respond_in_groups", False)
+    max_daily = config.get("max_daily_messages", 100)
+
+    total_processed = 0
+    MAX_UNREAD_DIALOGS = 20   # limit how many chats to process
+    MAX_UNREAD_PER_CHAT = 10  # limit messages per chat to avoid huge backlogs
+
+    try:
+        dialog_count = 0
+        async for dialog in client.iter_dialogs():
+            if dialog.unread_count <= 0:
+                continue
+
+            # Check stop_requested between dialogs
+            entry = _active_clients.get(messenger_id, {})
+            if entry.get("stop_requested"):
+                break
+
+            dialog_count += 1
+            if dialog_count > MAX_UNREAD_DIALOGS:
+                logger.info(f"Unread catchup: hit max dialog limit ({MAX_UNREAD_DIALOGS})")
+                break
+
+            is_group = dialog.is_group or dialog.is_channel
+            is_private = not is_group
+
+            # Skip groups if not configured to respond
+            if is_group and not respond_groups:
+                continue
+
+            chat_id = dialog.id
+            unread_count = min(dialog.unread_count, MAX_UNREAD_PER_CHAT)
+
+            logger.info(
+                f"Unread catchup: {messenger_id} — dialog {dialog.name or chat_id} "
+                f"has {dialog.unread_count} unread (processing up to {unread_count})"
+            )
+
+            # Fetch the unread messages (oldest first)
+            try:
+                messages = await client.get_messages(chat_id, limit=unread_count)
+                messages.reverse()  # oldest first
+            except Exception as e:
+                logger.warning(f"Unread catchup: failed to get messages from {chat_id}: {e}")
+                continue
+
+            for msg in messages:
+                # Skip our own messages
+                if msg.sender_id == me.id:
+                    continue
+                # Skip empty
+                if not msg.text and not msg.media:
+                    continue
+
+                try:
+                    # Wrap Message in _MessageAsEvent so event.message returns
+                    # the Message object (matching NewMessage event behaviour)
+                    wrapped = _MessageAsEvent(msg)
+                    await _handle_incoming_message(
+                        event=wrapped,
+                        messenger_id=messenger_id,
+                        agent_id=agent_id,
+                        client=client,
+                        me=me,
+                        trusted_users=trusted_users,
+                        public_permissions=public_permissions,
+                        delay_min=delay_min,
+                        delay_max=delay_max,
+                        typing_indicator=typing_indicator,
+                        humanize=humanize,
+                        casual=casual,
+                        respond_mentions=respond_mentions,
+                        respond_groups=respond_groups,
+                        max_daily=max_daily,
+                        context_messages_limit=context_messages_limit,
+                    )
+                    total_processed += 1
+                except Exception as e:
+                    logger.error(
+                        f"Unread catchup: error processing message {msg.id} "
+                        f"in chat {chat_id}: {e}", exc_info=True,
+                    )
+
+                # Small gap between messages to avoid flooding
+                await asyncio.sleep(1)
+
+        if total_processed > 0:
+            await _log_messenger_event(
+                messenger_id, agent_id, "info", "unread_catchup_done",
+                f"Processed {total_processed} unread message(s) after connect",
+                {"total_processed": total_processed, "dialogs_checked": dialog_count},
+            )
+            logger.info(f"Unread catchup: {messenger_id} processed {total_processed} messages from {dialog_count} dialogs")
+        else:
+            logger.info(f"Unread catchup: {messenger_id} — no unread messages to process")
+
+    except Exception as e:
+        logger.error(f"Unread catchup error for {messenger_id}: {e}", exc_info=True)
+        await _log_messenger_error(
+            messenger_id, agent_id,
+            "unread_catchup_error", f"Failed to process unread messages: {e}",
+            {"exception": type(e).__name__, "detail": str(e)},
+        )
 
 
 # ── Message Handler ──────────────────────────────────────────────────────
