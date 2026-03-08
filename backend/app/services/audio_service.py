@@ -3,8 +3,11 @@ Audio service: TTS (Text-to-Speech) and STT (Speech-to-Text) via kie.ai.
 
 kie.ai API is ASYNC — polling loop:
   1. POST https://api.kie.ai/api/v1/jobs/createTask → {taskId}
-  2. GET  https://api.kie.ai/api/v1/jobs/getTask/{taskId} in a loop until done
-  3. Download audio from resultUrls
+  2. GET  https://api.kie.ai/api/v1/jobs/recordInfo?taskId={taskId} in a loop until done
+  3. TTS: Download audio from resultJson.resultUrls[0]
+  4. STT: Extract text from resultJson.resultObject.text
+
+STT requires audio_url (public URL). Audio is uploaded to tmpfiles.org first.
 
 Settings:
   - kieai_api_key:  API key for kie.ai
@@ -30,6 +33,7 @@ KIEAI_CREATE_TASK = f"{KIEAI_API_BASE}/createTask"
 KIEAI_RECORD_INFO = f"{KIEAI_API_BASE}/recordInfo"  # + ?taskId=...
 
 KIEAI_TTS_MODEL = "elevenlabs/text-to-speech-turbo-2-5"
+KIEAI_STT_MODEL = "elevenlabs/speech-to-text"
 
 KIEAI_MAX_WAIT_DEFAULT = 120  # default max seconds to poll
 KIEAI_POLL_INTERVAL = 2  # seconds between poll requests
@@ -48,6 +52,50 @@ def _auth_headers(api_key: str) -> dict:
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+
+
+MIME_MAP = {
+    "ogg": "audio/ogg",
+    "mp3": "audio/mpeg",
+    "wav": "audio/wav",
+    "webm": "audio/webm",
+    "m4a": "audio/mp4",
+    "flac": "audio/flac",
+}
+
+
+async def _upload_temp_audio(client: httpx.AsyncClient, audio_data: bytes, ext: str = "ogg") -> str:
+    """Upload audio to tmpfiles.org (temp hosting) to get a public URL for kie.ai STT."""
+    content_type = MIME_MAP.get(ext, "audio/ogg")
+    filename = f"audio_{uuid.uuid4().hex[:8]}.{ext}"
+
+    await syslog("debug", f"STT: uploading {len(audio_data)} bytes to tmpfiles.org as {filename}", source="audio")
+
+    resp = await client.post(
+        "https://tmpfiles.org/api/v1/upload",
+        files={"file": (filename, audio_data, content_type)},
+        timeout=60,
+    )
+
+    if resp.status_code != 200:
+        raise ValueError(f"tmpfiles.org upload failed: HTTP {resp.status_code}: {resp.text[:500]}")
+
+    data = resp.json()
+    if data.get("status") != "success":
+        raise ValueError(f"tmpfiles.org upload failed: {data}")
+
+    url = (data.get("data") or {}).get("url", "")
+    if not url:
+        raise ValueError(f"tmpfiles.org returned no URL: {data}")
+
+    # Convert view URL to direct download URL by inserting /dl/ after domain
+    # http://tmpfiles.org/12345/file.ogg -> https://tmpfiles.org/dl/12345/file.ogg
+    direct_url = url.replace("tmpfiles.org/", "tmpfiles.org/dl/", 1)
+    if direct_url.startswith("http://"):
+        direct_url = direct_url.replace("http://", "https://", 1)
+
+    await syslog("info", f"STT: audio uploaded to {direct_url}", source="audio")
+    return direct_url
 
 
 # ── kie.ai task creation ─────────────────────────────────────────────
@@ -261,42 +309,57 @@ async def _stt_kieai(
     audio_format: str = "wav",
     language: str | None = None,
 ) -> dict:
-    """kie.ai STT via direct ElevenLabs-proxy endpoint."""
+    """kie.ai STT via async task API: upload audio → createTask → poll recordInfo → text."""
     api_key = await _get_setting(db, "kieai_api_key")
     if not api_key:
         raise ValueError("kie.ai API key not configured. Set 'kieai_api_key' in System Settings.")
 
-    ext = audio_format if audio_format in ("wav", "mp3", "webm", "m4a", "ogg", "flac") else "wav"
-    url = "https://kie.ai/elevenlabs-speech-to-text"
+    timeout_str = await _get_setting(db, "tts_timeout")
+    max_wait = int(timeout_str) if timeout_str and timeout_str.isdigit() else KIEAI_MAX_WAIT_DEFAULT
 
-    await syslog("debug", f"STT: direct request to {url}, audio_size={len(audio_data)}, format={ext}", source="audio")
+    ext = audio_format if audio_format in ("wav", "mp3", "webm", "m4a", "ogg", "flac") else "ogg"
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        files = {"audio": (f"audio.{ext}", audio_data, f"audio/{ext}")}
-        data = {}
+    await syslog("debug", f"STT: starting, audio_size={len(audio_data)}, format={ext}", source="audio")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Step 1: Upload audio to temp hosting to get a public URL
+        audio_url = await _upload_temp_audio(client, audio_data, ext)
+
+        # Step 2: Create STT task
+        input_data = {
+            "audio_url": audio_url,
+            "tag_audio_events": False,
+            "diarize": False,
+        }
         if language:
-            data["language"] = language
+            input_data["language_code"] = language
 
-        resp = await client.post(
-            url,
-            headers={"Authorization": f"Bearer {api_key}"},
-            files=files,
-            data=data,
-        )
+        task_id = await _create_task(client, api_key, KIEAI_STT_MODEL, input_data)
 
-        await syslog("debug", f"STT RESPONSE: status={resp.status_code}, ct={resp.headers.get('content-type', 'N/A')}", source="audio")
+        # Step 3: Poll for result
+        task_data = await _poll_task(client, api_key, task_id, max_wait)
 
-        if resp.status_code != 200:
-            error_text = resp.text[:1000]
-            raise ValueError(f"kie.ai STT error: HTTP {resp.status_code}: {error_text}")
-
+        # Step 4: Extract text from resultJson.resultObject.text
+        result_json_str = task_data.get("resultJson", "{}")
         try:
-            result = resp.json()
-            text = result.get("text", "")
-            await syslog("info", f"STT SUCCESS: {len(audio_data)} bytes -> {len(text)} chars", source="audio")
-            return {"text": text}
-        except Exception as e:
-            raise ValueError(f"kie.ai STT error: Invalid JSON response: {e}")
+            result_json = json.loads(result_json_str) if isinstance(result_json_str, str) else result_json_str
+        except (json.JSONDecodeError, TypeError):
+            raise ValueError(f"kie.ai STT returned invalid resultJson: {str(result_json_str)[:500]}")
+
+        result_obj = result_json.get("resultObject", {})
+        if isinstance(result_obj, str):
+            try:
+                result_obj = json.loads(result_obj)
+            except (json.JSONDecodeError, ValueError):
+                result_obj = {}
+
+        text = result_obj.get("text", "")
+        if not text:
+            raise ValueError(f"kie.ai STT returned no text. resultJson: {str(result_json)[:500]}")
+
+        detected_lang = result_obj.get("language_code", "")
+        await syslog("info", f"STT SUCCESS: {len(audio_data)} bytes -> {len(text)} chars, lang={detected_lang}", source="audio")
+        return {"text": text, "language": detected_lang}
 
 
 # ── Available voices ─────────────────────────────────────────────────
