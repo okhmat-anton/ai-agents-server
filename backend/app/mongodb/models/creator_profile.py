@@ -1,8 +1,31 @@
 """MongoDB CreatorProfile model — singleton document for creator/owner context."""
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field
+
+
+class GoalItem(BaseModel):
+    """A single goal with optional sub-goals."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str = ""
+    description: str = ""
+    target_date: Optional[str] = None          # желаемая дата (ISO или произвольный текст)
+    children: List["GoalItem"] = Field(default_factory=list)  # подцели
+
+
+class DreamItem(BaseModel):
+    """A single dream."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str = ""
+    description: str = ""
+
+
+class IdeaItem(BaseModel):
+    """A single idea."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str = ""
+    description: str = ""
 
 
 class MongoCreatorProfile(BaseModel):
@@ -10,15 +33,15 @@ class MongoCreatorProfile(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: Optional[str] = None
     who: Optional[str] = None            # кто он
-    goals: Optional[str] = None          # цели
-    dreams: Optional[str] = None         # мечты
+    goals: List[GoalItem] = Field(default_factory=list)          # цели
+    dreams: List[DreamItem] = Field(default_factory=list)        # мечты
     skills_and_abilities: Optional[str] = None  # умения и навыки
     current_situation: Optional[str] = None     # текущая ситуация
     principles: Optional[str] = None     # принципы
     successes: Optional[str] = None      # успехи
     failures: Optional[str] = None       # неудачи
     action_history: Optional[str] = None # история попыток действий
-    ideas: Optional[str] = None          # идеи
+    ideas: List[IdeaItem] = Field(default_factory=list)          # идеи
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -39,6 +62,10 @@ class MongoCreatorProfile(BaseModel):
             doc["created_at"] = datetime.fromisoformat(doc["created_at"])
         if isinstance(doc.get("updated_at"), str):
             doc["updated_at"] = datetime.fromisoformat(doc["updated_at"])
+        # Backward compat: old string fields → empty lists
+        for field in ("goals", "dreams", "ideas"):
+            if isinstance(doc.get(field), str):
+                doc[field] = []
         return cls(**doc)
 
     def to_context_string(self) -> str:
@@ -49,9 +76,25 @@ class MongoCreatorProfile(BaseModel):
         if self.who:
             sections.append(f"Who they are: {self.who}")
         if self.goals:
-            sections.append(f"Goals: {self.goals}")
+            lines = ["Goals:"]
+            for g in self.goals:
+                date_part = f" (target: {g.target_date})" if g.target_date else ""
+                lines.append(f"  - {g.title}{date_part}")
+                if g.description:
+                    lines.append(f"    {g.description}")
+                for sub in g.children:
+                    sd = f" (target: {sub.target_date})" if sub.target_date else ""
+                    lines.append(f"    - {sub.title}{sd}")
+                    if sub.description:
+                        lines.append(f"      {sub.description}")
+            sections.append("\n".join(lines))
         if self.dreams:
-            sections.append(f"Dreams: {self.dreams}")
+            lines = ["Dreams:"]
+            for d in self.dreams:
+                lines.append(f"  - {d.title}")
+                if d.description:
+                    lines.append(f"    {d.description}")
+            sections.append("\n".join(lines))
         if self.skills_and_abilities:
             sections.append(f"Skills and abilities: {self.skills_and_abilities}")
         if self.current_situation:
@@ -65,5 +108,10 @@ class MongoCreatorProfile(BaseModel):
         if self.action_history:
             sections.append(f"Action history: {self.action_history}")
         if self.ideas:
-            sections.append(f"Ideas: {self.ideas}")
+            lines = ["Ideas:"]
+            for i in self.ideas:
+                lines.append(f"  - {i.title}")
+                if i.description:
+                    lines.append(f"    {i.description}")
+            sections.append("\n".join(lines))
         return "\n".join(sections) if sections else ""

@@ -3,12 +3,13 @@ Creator Profile API — manage info about the bot owner/creator.
 """
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.database import get_mongodb
 from app.core.dependencies import get_current_user
 from app.mongodb.services import CreatorProfileService
+from app.mongodb.models.creator_profile import GoalItem, DreamItem, IdeaItem
 
 router = APIRouter(prefix="/api/creator", tags=["creator"])
 
@@ -16,30 +17,30 @@ router = APIRouter(prefix="/api/creator", tags=["creator"])
 class CreatorProfileRequest(BaseModel):
     name: Optional[str] = None
     who: Optional[str] = None
-    goals: Optional[str] = None
-    dreams: Optional[str] = None
+    goals: Optional[List[GoalItem]] = None
+    dreams: Optional[List[DreamItem]] = None
     skills_and_abilities: Optional[str] = None
     current_situation: Optional[str] = None
     principles: Optional[str] = None
     successes: Optional[str] = None
     failures: Optional[str] = None
     action_history: Optional[str] = None
-    ideas: Optional[str] = None
+    ideas: Optional[List[IdeaItem]] = None
 
 
 class CreatorProfileResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     who: Optional[str] = None
-    goals: Optional[str] = None
-    dreams: Optional[str] = None
+    goals: Optional[List[GoalItem]] = None
+    dreams: Optional[List[DreamItem]] = None
     skills_and_abilities: Optional[str] = None
     current_situation: Optional[str] = None
     principles: Optional[str] = None
     successes: Optional[str] = None
     failures: Optional[str] = None
     action_history: Optional[str] = None
-    ideas: Optional[str] = None
+    ideas: Optional[List[IdeaItem]] = None
 
 
 @router.get("", response_model=CreatorProfileResponse)

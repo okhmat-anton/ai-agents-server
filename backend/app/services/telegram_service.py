@@ -446,6 +446,7 @@ async def start_telegram_listener(
         "creds": creds,
         "account_doc": account_doc,
         "stop_requested": False,  # set True on intentional stop to prevent reconnect
+        "reconnecting": False,  # set True while _run_client is in reconnect loop
     }
 
     @client.on(events.NewMessage(incoming=True))
@@ -526,6 +527,7 @@ async def _run_client(client: TelegramClient, messenger_id: str):
             return
 
         # Not intentional — try to reconnect
+        entry["reconnecting"] = True
         attempt += 1
         if attempt > max_reconnect_attempts:
             logger.error(f"Telegram {messenger_id}: giving up after {max_reconnect_attempts} reconnect attempts")
@@ -554,6 +556,7 @@ async def _run_client(client: TelegramClient, messenger_id: str):
             _active_clients.pop(messenger_id, None)
             return
 
+        new_client = None
         # Attempt reconnect
         try:
             creds = entry.get("creds", {})
@@ -562,9 +565,26 @@ async def _run_client(client: TelegramClient, messenger_id: str):
             api_hash = creds["api_hash"]
             session_file = _session_path(messenger_id)
 
+            # Disconnect old client to release SQLite session lock
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+            # Small delay to ensure SQLite lock is fully released
+            await asyncio.sleep(0.5)
+
             # Create fresh client
             new_client = TelegramClient(session_file, api_id, api_hash)
-            await new_client.connect()
+            try:
+                await new_client.connect()
+            except Exception:
+                # If connect fails, make sure to clean up the partial client
+                try:
+                    await new_client.disconnect()
+                except Exception:
+                    pass
+                raise
 
             if not await new_client.is_user_authorized():
                 logger.error(f"Telegram {messenger_id}: session expired during reconnect")
@@ -639,6 +659,8 @@ async def _run_client(client: TelegramClient, messenger_id: str):
             client = new_client  # use new client for next iteration
             attempt = 0  # reset counter on successful reconnect
             reconnect_delay = 5
+            entry = _active_clients.get(messenger_id, {})
+            entry["reconnecting"] = False
 
             await _log_messenger_event(
                 messenger_id, agent_id, "info", "reconnected",
@@ -659,6 +681,13 @@ async def _run_client(client: TelegramClient, messenger_id: str):
             ))
 
         except Exception as e:
+            # Disconnect failed new_client to release SQLite session lock
+            if new_client:
+                try:
+                    await new_client.disconnect()
+                except Exception:
+                    pass
+                new_client = None
             logger.error(f"Telegram {messenger_id}: reconnect attempt {attempt} failed: {e}")
             await _log_messenger_error(
                 messenger_id, agent_id,
@@ -1517,6 +1546,9 @@ async def _check_telegram_health():
         # Case 2: Entry exists but client is disconnected
         client = entry.get("client")
         if client and not client.is_connected():
+            if entry.get("reconnecting"):
+                # _run_client reconnect loop is already handling this — don't interfere
+                continue
             logger.warning(f"Watchdog: {messenger_id} client exists but disconnected — will let _run_client handle it")
             # _run_client loop should handle reconnection
             # Only intervene if the entry has no running task (shouldn't happen normally)
