@@ -1,15 +1,14 @@
 """
 Audio service: TTS (Text-to-Speech) and STT (Speech-to-Text) via kie.ai.
 
-kie.ai API is ASYNC with CALLBACK:
+kie.ai API is ASYNC — polling loop:
   1. POST https://api.kie.ai/api/v1/jobs/createTask → {taskId}
-  2. kie.ai calls our callBackUrl when done (POST with result data)
-  3. We download audio from resultUrls
+  2. GET  https://api.kie.ai/api/v1/jobs/getTask/{taskId} in a loop until done
+  3. Download audio from resultUrls
 
 Settings:
-  - kieai_api_key:      API key for kie.ai
-  - callback_base_url:  Public URL of this server (e.g. https://xxx.ngrok.io)
-  - tts_timeout:        Max seconds to wait for callback (default 120)
+  - kieai_api_key:  API key for kie.ai
+  - tts_timeout:    Max seconds to wait for task to complete (default 120)
 """
 import json
 import os
@@ -28,37 +27,12 @@ AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 KIEAI_API_BASE = "https://api.kie.ai/api/v1/jobs"
 KIEAI_CREATE_TASK = f"{KIEAI_API_BASE}/createTask"
+KIEAI_GET_TASK = f"{KIEAI_API_BASE}/getTask"  # + /{taskId}
 
 KIEAI_TTS_MODEL = "elevenlabs/text-to-speech-turbo-2-5"
 
-KIEAI_MAX_WAIT_DEFAULT = 120  # default max seconds to wait for callback
-
-
-# ── Pending task registry (in-process, taskId → Event/result) ────────
-
-_pending_tasks: dict[str, asyncio.Event] = {}
-_task_results: dict[str, dict] = {}
-
-
-def register_pending_task(task_id: str) -> asyncio.Event:
-    """Register a task and return an Event to await."""
-    event = asyncio.Event()
-    _pending_tasks[task_id] = event
-    return event
-
-
-def resolve_task(task_id: str, data: dict):
-    """Called by the callback endpoint when kie.ai sends the result."""
-    _task_results[task_id] = data
-    event = _pending_tasks.get(task_id)
-    if event:
-        event.set()
-
-
-def get_task_result(task_id: str) -> dict | None:
-    """Get and clean up a completed task result."""
-    _pending_tasks.pop(task_id, None)
-    return _task_results.pop(task_id, None)
+KIEAI_MAX_WAIT_DEFAULT = 120  # default max seconds to poll
+KIEAI_POLL_INTERVAL = 2  # seconds between poll requests
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -83,17 +57,14 @@ async def _create_task(
     api_key: str,
     model: str,
     input_data: dict,
-    callback_url: str | None = None,
 ) -> str:
     """Submit a task to kie.ai -> returns taskId."""
     payload = {
         "model": model,
         "input": input_data,
     }
-    if callback_url:
-        payload["callBackUrl"] = callback_url
 
-    await syslog("debug", f"KIEAI createTask: model={model}, callback={callback_url}", source="audio")
+    await syslog("debug", f"KIEAI createTask: model={model}", source="audio")
 
     resp = await client.post(KIEAI_CREATE_TASK, headers=_auth_headers(api_key), json=payload)
     await syslog("debug", f"KIEAI createTask response: status={resp.status_code}, body={resp.text[:500]}", source="audio")
@@ -116,6 +87,58 @@ async def _create_task(
     return task_id
 
 
+# ── kie.ai task polling ──────────────────────────────────────────────
+
+async def _poll_task(
+    client: httpx.AsyncClient,
+    api_key: str,
+    task_id: str,
+    max_wait: int,
+) -> dict:
+    """Poll getTask/{taskId} until task completes or timeout."""
+    url = f"{KIEAI_GET_TASK}/{task_id}"
+    start = time.time()
+    attempt = 0
+
+    while True:
+        elapsed = time.time() - start
+        if elapsed >= max_wait:
+            raise TimeoutError(f"kie.ai task {task_id} did not complete within {max_wait}s")
+
+        attempt += 1
+        await syslog("debug", f"KIEAI poll #{attempt}: GET {url} (elapsed={elapsed:.1f}s)", source="audio")
+
+        try:
+            resp = await client.get(url, headers=_auth_headers(api_key))
+        except httpx.RequestError as e:
+            await syslog("warning", f"KIEAI poll #{attempt} request error: {e}", source="audio")
+            await asyncio.sleep(KIEAI_POLL_INTERVAL)
+            continue
+
+        await syslog("debug", f"KIEAI poll #{attempt} response: status={resp.status_code}, body={resp.text[:500]}", source="audio")
+
+        if resp.status_code != 200:
+            await syslog("warning", f"KIEAI poll #{attempt}: HTTP {resp.status_code}, retrying...", source="audio")
+            await asyncio.sleep(KIEAI_POLL_INTERVAL)
+            continue
+
+        body = resp.json()
+        data = body.get("data") or {}
+        state = data.get("state", "")
+
+        if state == "success":
+            await syslog("info", f"KIEAI task {task_id} completed successfully after {elapsed:.1f}s ({attempt} polls)", source="audio")
+            return data
+
+        if state in ("failed", "error"):
+            fail_msg = data.get("failMsg", "Unknown failure")
+            fail_code = data.get("failCode", "?")
+            raise ValueError(f"kie.ai task failed ({fail_code}): {fail_msg}")
+
+        # Task still processing — wait and retry
+        await asyncio.sleep(KIEAI_POLL_INTERVAL)
+
+
 # ── TTS ──────────────────────────────────────────────────────────────
 
 async def text_to_speech(
@@ -125,7 +148,7 @@ async def text_to_speech(
     provider: str | None = None,
 ) -> dict:
     """
-    Generate audio from text via kie.ai (async task with callback).
+    Generate audio from text via kie.ai (async task with polling).
     Returns: {"audio_url": "/api/uploads/audio/<file>", "provider": "kieai", "duration_ms": ...}
     """
     await syslog("info", f"TTS START: text_length={len(text)}, voice={voice}", source="audio")
@@ -145,21 +168,14 @@ async def text_to_speech(
 
 async def _tts_kieai(db: AsyncIOMotorDatabase, text: str, voice: str | None) -> dict:
     """
-    kie.ai TTS via async job API with callback:
-      1. POST createTask with callBackUrl pointing to our /api/audio/callback
-      2. Wait for kie.ai to POST result to our callback endpoint
+    kie.ai TTS via async job API with polling:
+      1. POST createTask → get taskId
+      2. GET getTask/{taskId} in a loop until state == 'success'
       3. Download audio from resultUrls
     """
     api_key = await _get_setting(db, "kieai_api_key")
     if not api_key:
         raise ValueError("kie.ai API key not configured. Set 'kieai_api_key' in System Settings.")
-
-    callback_base = await _get_setting(db, "callback_base_url")
-    if not callback_base:
-        raise ValueError(
-            "Callback Base URL not configured. kie.ai requires a public URL to send results. "
-            "Set 'callback_base_url' in Settings (e.g. your public domain or ngrok URL)."
-        )
 
     timeout_str = await _get_setting(db, "tts_timeout")
     max_wait = int(timeout_str) if timeout_str and timeout_str.isdigit() else KIEAI_MAX_WAIT_DEFAULT
@@ -178,39 +194,13 @@ async def _tts_kieai(db: AsyncIOMotorDatabase, text: str, voice: str | None) -> 
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
-        callback_url = f"{callback_base.rstrip('/')}/api/audio/callback"
-
         # Step 1: Create task
-        task_id = await _create_task(client, api_key, KIEAI_TTS_MODEL, input_data, callback_url)
+        task_id = await _create_task(client, api_key, KIEAI_TTS_MODEL, input_data)
 
-        # Register BEFORE callback could arrive
-        event = register_pending_task(task_id)
+        # Step 2: Poll until complete
+        task_data = await _poll_task(client, api_key, task_id, max_wait)
 
-        await syslog("debug", f"TTS: waiting for callback, task={task_id}, max_wait={max_wait}s", source="audio")
-
-        # Step 2: Wait for callback
-        try:
-            await asyncio.wait_for(event.wait(), timeout=max_wait)
-        except asyncio.TimeoutError:
-            _pending_tasks.pop(task_id, None)
-            _task_results.pop(task_id, None)
-            raise TimeoutError(
-                f"kie.ai task {task_id} did not complete within {max_wait}s. "
-                f"Check that callback_base_url ({callback_base}) is reachable from the internet."
-            )
-
-        # Step 3: Process result
-        task_data = get_task_result(task_id)
-        if not task_data:
-            raise ValueError(f"Task {task_id} event fired but no result data")
-
-        state = task_data.get("state", "unknown")
-        if state != "success":
-            fail_msg = task_data.get("failMsg", "Unknown failure")
-            fail_code = task_data.get("failCode", "?")
-            raise ValueError(f"kie.ai task failed ({fail_code}): {fail_msg}")
-
-        # Parse resultJson -> resultUrls
+        # Step 3: Parse resultJson -> resultUrls
         result_json_str = task_data.get("resultJson", "{}")
         try:
             result_json = json.loads(result_json_str) if isinstance(result_json_str, str) else result_json_str
