@@ -585,6 +585,54 @@ SYSTEM_SKILLS = [
             "required": ["project_slug", "task_id"],
         },
     },
+    {
+        "name": "sound_generate",
+        "display_name": "Sound Generate (TTS)",
+        "description": "Generate speech audio from text using OpenAI or MiniMax TTS.",
+        "description_for_agent": (
+            "Generate speech audio from text. Returns an audio_url you can include in your response. "
+            "Parameters: text (string, required, max 10000 chars), voice (string, optional — provider-specific voice name), "
+            "provider (string, optional: 'openai' or 'minimax', uses system default if omitted). "
+            "OpenAI voices: alloy, echo, fable, onyx, nova, shimmer. "
+            "MiniMax voices: male-qn-qingse, female-shaonv, female-yujie, etc. "
+            "Use this skill when the user asks you to read something aloud, generate speech, or create audio."
+        ),
+        "category": "general",
+        "code": "# TTS via audio_service — executed by pipeline handler",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Text to convert to speech (max 10000 chars)"},
+                "voice": {"type": "string", "description": "Voice name (provider-specific, optional)"},
+                "provider": {"type": "string", "description": "TTS provider: openai or minimax (optional, uses system default)"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "speech_recognize",
+        "display_name": "Speech Recognize (STT)",
+        "description": "Transcribe audio to text using OpenAI Whisper.",
+        "description_for_agent": (
+            "Transcribe audio to text (Speech-to-Text). "
+            "Parameters: audio_url (string, URL or local path to the audio file), "
+            "language (string, optional, ISO-639-1 code like 'en', 'ru' for better accuracy), "
+            "provider (string, optional: 'openai', uses system default if omitted). "
+            "Currently only OpenAI Whisper is supported for STT. "
+            "Use this to transcribe audio messages or files the user provides."
+        ),
+        "category": "general",
+        "code": "# STT via audio_service — executed by pipeline handler",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "audio_url": {"type": "string", "description": "URL or path of the audio file to transcribe"},
+                "language": {"type": "string", "description": "Language code (e.g. 'en', 'ru') for better accuracy"},
+                "provider": {"type": "string", "description": "STT provider: openai (optional, uses system default)"},
+            },
+            "required": ["audio_url"],
+        },
+    },
 ]
 
 

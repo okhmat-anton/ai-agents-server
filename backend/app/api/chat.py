@@ -103,6 +103,7 @@ class ChatMessageResponse(BaseModel):
     model_responses: Optional[dict] = None
     total_tokens: int = 0
     duration_ms: int = 0
+    audio_url: Optional[str] = None
     created_at: str
 
 
@@ -210,6 +211,7 @@ def _message_to_response(msg: MongoChatMessage) -> dict:
         "total_tokens": msg.total_tokens,
         "duration_ms": msg.duration_ms,
         "metadata": msg.metadata,
+        "audio_url": msg.audio_url,
         "created_at": _ts(msg.created_at),
     }
 

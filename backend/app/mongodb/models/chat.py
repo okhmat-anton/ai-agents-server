@@ -63,6 +63,7 @@ class MongoChatMessage(BaseModel):
     total_tokens: int = 0
     duration_ms: int = 0
     metadata: Optional[Dict[str, Any]] = None
+    audio_url: Optional[str] = None  # URL to audio file (TTS output or STT input)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     def to_mongo(self) -> dict:

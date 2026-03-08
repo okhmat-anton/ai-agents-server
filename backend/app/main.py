@@ -40,6 +40,7 @@ from app.api.autonomous import router as autonomous_router
 from app.api.projects import router as projects_router
 from app.api.agent_errors import agent_error_router, all_errors_router
 from app.api.messengers import router as messengers_router
+from app.api.audio import router as audio_router
 
 from app.services.ollama_watchdog import start_watchdog, stop_watchdog
 
@@ -162,11 +163,17 @@ app.include_router(projects_router)
 app.include_router(agent_error_router)
 app.include_router(all_errors_router)
 app.include_router(messengers_router)
+app.include_router(audio_router)
 
 # Serve uploaded files (avatars, etc.) from data/agents/ directory
 _uploads_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "agents")
 os.makedirs(_uploads_dir, exist_ok=True)
 app.mount("/api/uploads/agents", StaticFiles(directory=_uploads_dir), name="uploads_agents")
+
+# Serve audio files from data/audio/ directory
+_audio_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "audio")
+os.makedirs(_audio_dir, exist_ok=True)
+app.mount("/api/uploads/audio", StaticFiles(directory=_audio_dir), name="uploads_audio")
 
 
 @app.get("/")

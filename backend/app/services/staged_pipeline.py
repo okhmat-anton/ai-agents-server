@@ -66,20 +66,20 @@ GATHER_SKILLS = frozenset({
     "memory_search", "web_fetch", "web_scrape", "file_read",
     "project_file_read", "project_list_files", "project_context_build",
     "task_context_build", "json_parse", "text_summarize",
-    "memory_deep_process",
+    "memory_deep_process", "speech_recognize",
 })
 
 ACTION_SKILLS = frozenset({
     "memory_store", "file_write", "project_file_write", "shell_exec",
     "code_execute", "project_update_task", "project_task_comment",
-    "project_run_code",
+    "project_run_code", "sound_generate",
 })
 
 # "safe" action skills that can be auto-executed without user confirmation
 # These are reversible or low-risk (project files, comments, memory)
 SAFE_ACTION_SKILLS = frozenset({
     "memory_store", "project_file_write", "project_update_task",
-    "project_task_comment", "code_execute",
+    "project_task_comment", "code_execute", "sound_generate",
 })
 
 # Dangerous skills require confirmation (never auto-execute)
@@ -208,6 +208,10 @@ def _infer_args(skill_name: str, planned_args: dict, context: dict) -> dict:
             cmd_match = re.search(r'[`"\'](.+?)[`"\']', user_input)
             if cmd_match:
                 args["command"] = cmd_match.group(1)
+
+    elif skill_name == "sound_generate":
+        if "text" not in args or not args["text"]:
+            args["text"] = user_input
 
     return args
 
@@ -374,6 +378,7 @@ class StagedPipeline:
     _SYSTEM_SKILL_HANDLERS = {
         "memory_search", "memory_store", "memory_deep_process",
         "text_summarize", "code_execute", "web_scrape", "web_fetch",
+        "sound_generate", "speech_recognize",
     }
 
     async def _exec_skill(self, name: str, args: dict) -> dict:
@@ -411,6 +416,10 @@ class StagedPipeline:
             return await self._sys_web_fetch(args)
         elif name == "memory_deep_process":
             return {"result": "memory_deep_process requires manual trigger"}
+        elif name == "sound_generate":
+            return await self._sys_sound_generate(db, args)
+        elif name == "speech_recognize":
+            return await self._sys_speech_recognize(db, args)
         return None
 
     async def _sys_memory_search(self, db, agent_id: str, args: dict) -> dict:
@@ -545,6 +554,66 @@ class StagedPipeline:
                 return {"result": {"url": url, "status": r.status_code, "text": text[:5000]}}
         except Exception as e:
             return {"error": f"Web scrape failed: {e}"}
+
+    async def _sys_sound_generate(self, db, args: dict) -> dict:
+        """Generate audio from text using TTS."""
+        from app.services.audio_service import text_to_speech
+        text = args.get("text", "")
+        if not text:
+            return {"error": "No text provided for TTS"}
+        try:
+            result = await text_to_speech(
+                db,
+                text=text[:10000],
+                voice=args.get("voice"),
+                provider=args.get("provider"),
+            )
+            return {"result": result}
+        except Exception as e:
+            logger.warning(f"sound_generate failed: {e}")
+            return {"error": f"TTS failed: {e}"}
+
+    async def _sys_speech_recognize(self, db, args: dict) -> dict:
+        """Transcribe audio to text using STT."""
+        from app.services.audio_service import speech_to_text
+        audio_url = args.get("audio_url", "")
+        if not audio_url:
+            return {"error": "No audio_url provided for STT"}
+        try:
+            # If it's a local path, read the file
+            import os
+            audio_data = None
+            audio_format = "wav"
+            if audio_url.startswith("/api/uploads/audio/"):
+                filename = audio_url.split("/")[-1]
+                from app.services.audio_service import AUDIO_DIR
+                fpath = AUDIO_DIR / filename
+                if fpath.exists():
+                    audio_data = fpath.read_bytes()
+                    audio_format = filename.rsplit(".", 1)[-1] if "." in filename else "wav"
+                else:
+                    return {"error": f"Audio file not found: {filename}"}
+            else:
+                # Fetch remote URL
+                import httpx
+                async with httpx.AsyncClient(timeout=30) as client:
+                    r = await client.get(audio_url)
+                    if r.status_code != 200:
+                        return {"error": f"Failed to fetch audio: HTTP {r.status_code}"}
+                    audio_data = r.content
+                    audio_format = audio_url.rsplit(".", 1)[-1] if "." in audio_url else "wav"
+
+            result = await speech_to_text(
+                db,
+                audio_data=audio_data,
+                audio_format=audio_format,
+                provider=args.get("provider"),
+                language=args.get("language"),
+            )
+            return {"result": result}
+        except Exception as e:
+            logger.warning(f"speech_recognize failed: {e}")
+            return {"error": f"STT failed: {e}"}
 
     def _build_context(self, classification: Classification, user_input: str) -> dict:
         """Build context dict for arg inference."""

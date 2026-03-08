@@ -221,6 +221,40 @@
 
         <div class="message-content text-body-2" v-html="renderMarkdown(msg.content)"></div>
 
+        <!-- Audio player (when message has audio_url) -->
+        <div v-if="msg.audio_url" class="mt-2 audio-player-wrapper">
+          <audio
+            :src="msg.audio_url"
+            controls
+            preload="metadata"
+            class="chat-audio-player"
+          />
+        </div>
+
+        <!-- TTS "Read aloud" button for assistant messages -->
+        <div v-if="msg.role === 'assistant' && msg.content && msg.id && !msg.id.startsWith('error-')" class="mt-1 d-flex align-center ga-1">
+          <v-btn
+            v-if="!msg.audio_url"
+            size="x-small"
+            variant="text"
+            :loading="ttsLoading[msg.id]"
+            :disabled="ttsLoading[msg.id]"
+            @click="generateTTS(msg)"
+          >
+            <v-icon size="14" start>mdi-volume-high</v-icon>
+            Read aloud
+          </v-btn>
+          <v-btn
+            v-else
+            size="x-small"
+            variant="text"
+            @click="playAudio(msg.audio_url)"
+          >
+            <v-icon size="14" start>mdi-play-circle</v-icon>
+            Play
+          </v-btn>
+        </div>
+
         <!-- Retry button for unanswered user messages -->
         <div v-if="msg.role === 'user' && isUnanswered(msgIndex)" class="mt-2">
           <v-btn 
@@ -439,6 +473,7 @@ const showSettings = ref(false)
 const sessionSearch = ref('')
 const sessionsExpanded = ref(true)
 const expandedResponses = reactive({})
+const ttsLoading = reactive({})
 // Restore active chat type from localStorage, default to 'user'
 const activeChatType = ref(localStorage.getItem('chat_active_tab') || 'user') // 'user', 'agent', 'project_task'
 const previousChatType = ref('user') // Remember which tab we came from
@@ -637,6 +672,30 @@ async function retryMessage(msgIndex) {
   
   await chatStore.sendMessage(msg.content)
   scrollToBottom()
+}
+
+// ── Audio TTS ─────────────────────────────────────────────────────
+async function generateTTS(msg) {
+  if (!msg.id || ttsLoading[msg.id]) return
+  ttsLoading[msg.id] = true
+  try {
+    const { data } = await api.post(`/audio/tts-message/${msg.id}`, {}, { timeout: 60000 })
+    // Update the message in local state with audio_url
+    msg.audio_url = data.audio_url
+    // Auto-play the generated audio
+    playAudio(data.audio_url)
+  } catch (e) {
+    console.error('TTS failed:', e)
+    const detail = e.response?.data?.detail || e.message
+    alert(`TTS error: ${detail}`)
+  } finally {
+    ttsLoading[msg.id] = false
+  }
+}
+
+function playAudio(url) {
+  const audio = new Audio(url)
+  audio.play().catch(e => console.error('Audio playback failed:', e))
 }
 
 // Todo list helpers
@@ -1114,6 +1173,14 @@ watch(() => chatStore.panelOpen, (open) => {
 .message-content :deep(ol) {
   padding-left: 20px;
   margin-bottom: 4px;
+}
+
+/* ── Audio Player ── */
+.chat-audio-player {
+  width: 100%;
+  max-width: 320px;
+  height: 36px;
+  border-radius: 8px;
 }
 
 /* ── Input Area ── */
