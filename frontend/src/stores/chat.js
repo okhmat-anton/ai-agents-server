@@ -92,9 +92,12 @@ export const useChatStore = defineStore('chat', {
     async loadSession(sessionId) {
       this.loading = true
       try {
+        console.log('[ChatStore] loadSession: fetching', sessionId)
         const { data } = await api.get(`/chat/sessions/${sessionId}`)
+        console.log('[ChatStore] loadSession: received', { id: data.id, title: data.title, messageCount: data.messages?.length, keys: Object.keys(data) })
         this.currentSession = data
         this.messages = data.messages || []
+        console.log('[ChatStore] loadSession: state updated. messages:', this.messages.length, 'currentSession:', this.currentSession?.id)
         this.showSessionList = false
         localStorage.setItem('chat_current_session_id', sessionId)
         // Mark session as read (reset unread count)

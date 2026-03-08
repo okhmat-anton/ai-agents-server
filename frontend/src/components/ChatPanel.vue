@@ -530,7 +530,17 @@ const filteredSessions = computed(() => {
 
     // Create pseudo-sessions for enabled agents only
     results = enabledAgents.map(agent => {
-      const existingSession = realSessions.find(s => s.agent_ids?.length === 1 && s.agent_ids[0] === agent.id)
+      // Find all sessions for this agent, prefer the one with messages (most recent)
+      const agentSessions = realSessions
+        .filter(s => s.agent_ids?.length === 1 && s.agent_ids[0] === agent.id)
+        .sort((a, b) => {
+          // Prefer sessions with messages
+          if ((a.message_count || 0) > 0 && (b.message_count || 0) === 0) return -1
+          if ((a.message_count || 0) === 0 && (b.message_count || 0) > 0) return 1
+          // Then by updated_at desc
+          return new Date(b.updated_at) - new Date(a.updated_at)
+        })
+      const existingSession = agentSessions[0]
       if (existingSession) {
         return existingSession
       }
@@ -996,6 +1006,7 @@ function stopModelPolling() {
 onMounted(async () => {
   // Fetch sessions first, then other data in parallel
   await chatStore.fetchSessions()
+  console.log('[ChatPanel] Sessions loaded:', chatStore.sessions.length, chatStore.sessions.map(s => ({ id: s.id, title: s.title, chat_type: s.chat_type })))
   
   await Promise.all([
     chatStore.fetchAvailableModels(),
@@ -1005,9 +1016,21 @@ onMounted(async () => {
 
   // Restore last active session from localStorage
   const savedSessionId = localStorage.getItem('chat_current_session_id')
-  if (savedSessionId && chatStore.sessions.find(s => s.id === savedSessionId)) {
+  console.log('[ChatPanel] Saved session ID from localStorage:', savedSessionId)
+  const foundSession = savedSessionId ? chatStore.sessions.find(s => s.id === savedSessionId) : null
+  console.log('[ChatPanel] Found session in list:', foundSession ? { id: foundSession.id, title: foundSession.title, chat_type: foundSession.chat_type } : null)
+  
+  if (savedSessionId && foundSession) {
+    // Switch to correct tab for this session type
+    if (foundSession.chat_type && foundSession.chat_type !== activeChatType.value) {
+      console.log('[ChatPanel] Switching tab from', activeChatType.value, 'to', foundSession.chat_type)
+      activeChatType.value = foundSession.chat_type
+    }
+    console.log('[ChatPanel] Restoring session...')
     await loadSession(savedSessionId)
+    console.log('[ChatPanel] Session restored. Messages:', chatStore.messages.length, 'sessionsExpanded:', sessionsExpanded.value)
   } else {
+    console.log('[ChatPanel] No saved session found, showing default view')
     // Pre-select first model if available
     if (chatStore.availableModels.length && !selectedModels.value.length) {
       selectedModels.value = multiModel.value ? [] : chatStore.availableModels[0].id
