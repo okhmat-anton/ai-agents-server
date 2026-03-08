@@ -3,7 +3,9 @@ import asyncio
 import logging
 import os
 import random
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 from telethon import TelegramClient, events
@@ -14,6 +16,10 @@ from telethon.tl.types import SendMessageTypingAction
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# ── Media storage directory ──────────────────────────────────────────────
+CHAT_MEDIA_DIR = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))).resolve() / "data" / "chat_media"
+CHAT_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Global client registry ───────────────────────────────────────────────
 # messenger_id -> { client, agent_id, config, trusted_users, ... }
@@ -677,6 +683,120 @@ def get_active_clients() -> Dict[str, Any]:
     }
 
 
+# ── Media helpers ────────────────────────────────────────────────────────
+
+def _detect_media_type(event) -> str | None:
+    """Detect what kind of media a Telegram message contains.
+    Returns: voice, audio, photo, video, video_note, document, sticker, or None.
+    """
+    msg = event.message
+    if not msg or not msg.media:
+        return None
+
+    from telethon.tl.types import (
+        MessageMediaPhoto, MessageMediaDocument,
+        DocumentAttributeAudio, DocumentAttributeVideo,
+        DocumentAttributeSticker, DocumentAttributeAnimated,
+    )
+
+    if isinstance(msg.media, MessageMediaPhoto):
+        return "photo"
+
+    if isinstance(msg.media, MessageMediaDocument):
+        doc = msg.media.document
+        if not doc:
+            return "document"
+        attrs = doc.attributes or []
+        for attr in attrs:
+            if isinstance(attr, DocumentAttributeAudio):
+                return "voice" if attr.voice else "audio"
+            if isinstance(attr, DocumentAttributeSticker):
+                return "sticker"
+            if isinstance(attr, DocumentAttributeAnimated):
+                return "sticker"
+            if isinstance(attr, DocumentAttributeVideo):
+                return "video_note" if attr.round_message else "video"
+        # Generic document (PDF, ZIP, etc.)
+        return "document"
+
+    return None
+
+
+def _get_media_ext(media_type: str, event) -> str:
+    """Get a reasonable file extension based on media type."""
+    if media_type == "voice":
+        return "ogg"
+    if media_type == "audio":
+        return "mp3"
+    if media_type == "photo":
+        return "jpg"
+    if media_type in ("video", "video_note"):
+        return "mp4"
+    if media_type == "sticker":
+        return "webp"
+    # For documents, try to get original filename extension
+    if media_type == "document" and event.message and event.message.media:
+        try:
+            from telethon.tl.types import DocumentAttributeFilename
+            doc = event.message.media.document
+            for attr in (doc.attributes or []):
+                if isinstance(attr, DocumentAttributeFilename):
+                    name = attr.file_name or ""
+                    if "." in name:
+                        return name.rsplit(".", 1)[-1].lower()
+        except Exception:
+            pass
+    return "bin"
+
+
+def _get_original_filename(event) -> str | None:
+    """Try to extract original filename from document attributes."""
+    try:
+        from telethon.tl.types import DocumentAttributeFilename
+        doc = event.message.media.document
+        for attr in (doc.attributes or []):
+            if isinstance(attr, DocumentAttributeFilename):
+                return attr.file_name
+    except Exception:
+        pass
+    return None
+
+
+def _get_media_mime(event) -> str | None:
+    """Try to get MIME type from document."""
+    try:
+        return event.message.media.document.mime_type
+    except Exception:
+        return None
+
+
+async def _download_telegram_media(client: TelegramClient, event, media_type: str) -> tuple[str, str, str | None]:
+    """Download media from a Telegram message to local storage.
+    Returns: (local_filename, media_url, original_filename)
+    """
+    ext = _get_media_ext(media_type, event)
+    local_filename = f"{uuid.uuid4().hex}.{ext}"
+    local_path = CHAT_MEDIA_DIR / local_filename
+    original_filename = _get_original_filename(event)
+
+    await client.download_media(event.message, file=str(local_path))
+
+    media_url = f"/api/uploads/chat_media/{local_filename}"
+    return local_filename, media_url, original_filename
+
+
+async def _transcribe_voice(db, audio_path: Path, audio_format: str = "ogg") -> str:
+    """Transcribe a voice/audio file via STT service."""
+    try:
+        from app.services.audio_service import speech_to_text
+        audio_data = audio_path.read_bytes()
+        result = await speech_to_text(db=db, audio_data=audio_data, audio_format=audio_format)
+        return result.get("text", "")
+    except Exception as e:
+        logger.error(f"STT transcription failed: {e}")
+        return ""
+
+
 # ── Message Handler ──────────────────────────────────────────────────────
 
 async def _handle_incoming_message(
@@ -747,6 +867,83 @@ async def _handle_incoming_message(
     )
 
     message_text = event.raw_text or ""
+    media_type = _detect_media_type(event)
+    media_url = None
+    media_filename = None
+    media_mime = None
+
+    # ── Handle media (voice, audio, photo, video, document, sticker, video_note) ──
+    if media_type:
+        try:
+            local_filename, media_url, original_filename = await _download_telegram_media(client, event, media_type)
+            media_filename = original_filename or local_filename
+            media_mime = _get_media_mime(event)
+
+            await _log_messenger_event(
+                messenger_id, agent_id, "debug",
+                "media_received", f"Downloaded {media_type}: {local_filename}",
+                {"chat_id": str(event.chat_id), "media_type": media_type, "filename": media_filename},
+            )
+
+            # Voice/audio → transcribe via STT, use as message text
+            if media_type in ("voice", "audio"):
+                ext = "ogg" if media_type == "voice" else "mp3"
+                local_path = CHAT_MEDIA_DIR / local_filename
+                transcribed = await _transcribe_voice(db, local_path, ext)
+                if transcribed:
+                    # Prepend caption if any, then transcription
+                    caption = message_text.strip()
+                    if caption:
+                        message_text = f"{caption}\n\n[Голосовое сообщение: {transcribed}]"
+                    else:
+                        message_text = transcribed
+                    await _log_messenger_event(
+                        messenger_id, agent_id, "info",
+                        "voice_transcribed", f"STT result: {len(transcribed)} chars",
+                        {"chat_id": str(event.chat_id), "text_preview": transcribed[:200]},
+                    )
+                elif not message_text.strip():
+                    message_text = "[Голосовое сообщение — не удалось распознать]"
+
+            # Photo → describe
+            elif media_type == "photo":
+                if not message_text.strip():
+                    message_text = "[Фотография]"
+                else:
+                    message_text = f"[Фотография] {message_text}"
+
+            # Video / video_note
+            elif media_type in ("video", "video_note"):
+                label = "Видео" if media_type == "video" else "Видеосообщение"
+                if not message_text.strip():
+                    message_text = f"[{label}]"
+                else:
+                    message_text = f"[{label}] {message_text}"
+
+            # Sticker
+            elif media_type == "sticker":
+                if not message_text.strip():
+                    message_text = "[Стикер]"
+
+            # Document
+            elif media_type == "document":
+                name_part = f": {media_filename}" if media_filename else ""
+                if not message_text.strip():
+                    message_text = f"[Документ{name_part}]"
+                else:
+                    message_text = f"[Документ{name_part}] {message_text}"
+
+        except Exception as e:
+            logger.error(f"Error downloading media for {messenger_id}: {e}")
+            await _log_messenger_event(
+                messenger_id, agent_id, "error",
+                "media_download_error", f"Failed to download {media_type}: {e}",
+                {"chat_id": str(event.chat_id), "error": str(e)},
+            )
+            if not message_text.strip():
+                message_text = f"[{media_type} — ошибка загрузки]"
+
+    # Skip completely empty messages (no text AND no media)
     if not message_text.strip():
         return
 
@@ -763,6 +960,10 @@ async def _handle_incoming_message(
         display_name=getattr(sender, 'first_name', '') or "",
         direction="incoming",
         content=message_text,
+        media_type=media_type,
+        media_url=media_url,
+        media_filename=media_filename,
+        media_mime=media_mime,
         is_command=is_trusted,
         is_trusted_user=is_trusted,
     )

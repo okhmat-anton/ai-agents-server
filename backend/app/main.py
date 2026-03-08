@@ -175,6 +175,11 @@ _audio_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file
 os.makedirs(_audio_dir, exist_ok=True)
 app.mount("/api/uploads/audio", StaticFiles(directory=_audio_dir), name="uploads_audio")
 
+# Serve chat media files (voice, photos, videos, documents from messengers)
+_chat_media_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "chat_media")
+os.makedirs(_chat_media_dir, exist_ok=True)
+app.mount("/api/uploads/chat_media", StaticFiles(directory=_chat_media_dir), name="uploads_chat_media")
+
 
 @app.get("/")
 async def root():

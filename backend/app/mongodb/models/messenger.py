@@ -113,6 +113,10 @@ class MongoMessengerMessage(BaseModel):
 
     direction: str = "incoming"  # incoming / outgoing
     content: str = ""
+    media_type: Optional[str] = None  # voice, audio, photo, video, document, sticker, video_note
+    media_url: Optional[str] = None  # local URL to downloaded file
+    media_filename: Optional[str] = None  # original or generated filename
+    media_mime: Optional[str] = None  # MIME type
     is_command: bool = False  # from trusted user as command?
     is_trusted_user: bool = False
 
