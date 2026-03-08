@@ -2,8 +2,8 @@
 Audio service: TTS (Text-to-Speech) and STT (Speech-to-Text) via kie.ai.
 
 Provider: kie.ai (ElevenLabs proxy)
- - TTS: https://api.kie.ai/v1/audio/text-to-speech
- - STT: https://api.kie.ai/v1/audio/speech-to-text
+ - TTS: https://kie.ai/elevenlabs/text-to-dialogue-v3
+ - STT: https://kie.ai/elevenlabs-speech-to-text
 
 API key stored in SystemSettings: kieai_api_key
 """
@@ -61,7 +61,7 @@ async def _tts_kieai(db: AsyncIOMotorDatabase, text: str, voice: str | None) -> 
     # kie.ai uses ElevenLabs-compatible API
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
-            "https://api.kie.ai/v1/audio/text-to-speech",
+            "https://kie.ai/elevenlabs/text-to-dialogue-v3",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
@@ -128,7 +128,7 @@ async def _stt_kieai(
             data["language"] = language
 
         resp = await client.post(
-            "https://api.kie.ai/v1/audio/speech-to-text",
+            "https://kie.ai/elevenlabs-speech-to-text",
             headers={"Authorization": f"Bearer {api_key}"},
             files=files,
             data=data,
