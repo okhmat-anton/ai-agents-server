@@ -90,7 +90,6 @@ From updated AIS-34 description:
 1. Context not cached (rebuilt on every message) - acceptable for MVP, can optimize later
 2. Related files inferred from logs via regex (not 100% accurate) - works well enough for MVP
 3. "Open files" tracking not implemented - requires frontend changes
-4. Task system still dual (PostgreSQL for agents, filesystem for projects) - unification deferred
 5. Context size can be large (100+ tasks) - user should monitor and adjust `max_recent_logs` parameter
 
 ## Success Criteria Met

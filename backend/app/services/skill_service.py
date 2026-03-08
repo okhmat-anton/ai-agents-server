@@ -633,6 +633,57 @@ SYSTEM_SKILLS = [
             "required": ["audio_url"],
         },
     },
+    {
+        "name": "study_material",
+        "display_name": "Study Material",
+        "description": "Study and memorize material from text, file, or topic. Creates structured knowledge in memory.",
+        "description_for_agent": (
+            "Study and deeply learn material. Reads the input, creates a summary, "
+            "extracts key topics, writes detailed notes with source references, "
+            "and links everything in the knowledge graph. "
+            "Parameters: topic (string, optional — subject to study), "
+            "file_path (string, optional — path to a file in agent's data/ folder), "
+            "text (string, optional — direct text to study), "
+            "depth (string, optional: 'quick', 'normal', 'deep', default 'normal'). "
+            "At least one of topic/file_path/text must be provided. "
+            "Use this when asked to study, learn, read, memorize material."
+        ),
+        "category": "general",
+        "code": "# Multi-step LLM study pipeline — executed by pipeline handler",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Topic/subject to study"},
+                "file_path": {"type": "string", "description": "Path to file in agent data/ folder"},
+                "text": {"type": "string", "description": "Direct text to study"},
+                "depth": {"type": "string", "description": "Study depth: quick, normal, deep (default: normal)"},
+            },
+        },
+    },
+    {
+        "name": "recall_knowledge",
+        "display_name": "Recall Knowledge",
+        "description": "Search and aggregate previously studied knowledge from memory.",
+        "description_for_agent": (
+            "Recall previously studied knowledge. Searches agent memory for knowledge entries, "
+            "aggregates findings, and provides a structured answer based on what was learned. "
+            "Parameters: query (string, required — what to recall/remember), "
+            "depth (string, optional: 'quick', 'detailed', default 'quick'), "
+            "tags (array of strings, optional — filter by specific tags). "
+            "Use this when asked to recall, remember, or answer based on previously studied material."
+        ),
+        "category": "general",
+        "code": "# Knowledge recall from memory — executed by pipeline handler",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to recall/remember"},
+                "depth": {"type": "string", "description": "Recall depth: quick or detailed (default: quick)"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags"},
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 

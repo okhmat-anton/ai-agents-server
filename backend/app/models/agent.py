@@ -39,6 +39,9 @@ class Agent(Base):
     # Default number of recent messages to pass as context in messenger conversations
     messenger_context_limit: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
 
+    # TTS voice
+    voice: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+
     # Avatar
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True, default=None)
 

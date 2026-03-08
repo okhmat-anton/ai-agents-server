@@ -169,6 +169,18 @@
                 style="max-width: 180px; display: inline-flex"
                 class="ml-2"
               />
+              <v-btn
+                icon
+                size="x-small"
+                variant="text"
+                :disabled="!agent.voice || voicePreviewing"
+                :loading="voicePreviewing"
+                @click="previewVoice(agent.voice)"
+                title="Preview voice"
+                class="ml-1"
+              >
+                <v-icon size="18">mdi-play-circle-outline</v-icon>
+              </v-btn>
             </v-list-item>
             <v-list-item v-if="agent.description"><strong>Description:</strong>&nbsp;{{ agent.description }}</v-list-item>
             <!-- Protocols (multi-protocol) -->
@@ -1800,10 +1812,46 @@ const agentErrorsStore = useAgentErrorsStore()
 const tab = ref('info')
 const agent = ref(null)
 const voiceOptions = [
-  'Adam', 'Alice', 'Bill', 'Brian', 'Callum', 'Charlie', 'Chris',
-  'Daniel', 'Eric', 'George', 'Harry', 'Jessica', 'Laura', 'Liam',
-  'Lily', 'Matilda', 'River', 'Roger', 'Sarah', 'Will',
+  'Alice', 'Bill', 'Brian', 'Callum', 'Charlie', 'Chris',
+  'Daniel', 'Eric', 'George', 'Jessica', 'Laura', 'Liam',
+  'Lily', 'Matilda', 'Rachel', 'River', 'Roger', 'Sarah', 'Will',
 ]
+const voicePreviewing = ref(false)
+let previewAudio = null
+const previewVoice = async (voice) => {
+  if (!voice || voicePreviewing.value) return
+
+  // Play from localStorage cache if available
+  const cacheKey = `voice-demo-${voice}`
+  const cached = localStorage.getItem(cacheKey)
+  if (cached) {
+    if (previewAudio) { previewAudio.pause() }
+    previewAudio = new Audio(cached)
+    previewAudio.play()
+    return
+  }
+
+  voicePreviewing.value = true
+  try {
+    if (previewAudio) { previewAudio.pause(); previewAudio = null }
+    const { data } = await api.post('/audio/tts', { text: 'Hello! This is a voice demo. Привет, это демонстрация голоса.', voice })
+    // Download and cache as data URL in localStorage
+    const resp = await fetch(data.audio_url)
+    const blob = await resp.blob()
+    const dataUrl = await new Promise(resolve => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.readAsDataURL(blob)
+    })
+    localStorage.setItem(cacheKey, dataUrl)
+    previewAudio = new Audio(dataUrl)
+    previewAudio.play()
+  } catch (e) {
+    console.error('Voice preview error:', e)
+  } finally {
+    voicePreviewing.value = false
+  }
+}
 const stats = ref({})
 const tasks = ref([])
 const agentTaskDialog = ref(false)

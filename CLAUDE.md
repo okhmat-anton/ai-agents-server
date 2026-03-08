@@ -21,7 +21,6 @@ make clean        # docker compose down -v (removes all data)
 |------------|------|
 | Frontend   | 4200 |
 | Backend    | 4700 |
-| PostgreSQL | 4532 |
 | MongoDB    | 4717 |
 | Redis      | 4379 |
 | ChromaDB   | 4800 |
@@ -31,7 +30,7 @@ make clean        # docker compose down -v (removes all data)
 
 ```bash
 # Infrastructure
-docker compose up -d postgres redis chromadb mongodb
+docker compose up -d redis chromadb mongodb chromadb
 
 # Backend (PYTHONPATH=. is required!)
 cd backend && PYTHONPATH=. OLLAMA_BASE_URL=http://localhost:11434 CHROMADB_URL=http://localhost:4800 \

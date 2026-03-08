@@ -75,7 +75,7 @@ Think of it as your personal AI workforce: create agents with unique personaliti
 
 ### 🏗️ Infrastructure
 - Full **Docker Compose** setup — one command to run everything
-- **PostgreSQL** for relational data, **MongoDB** for JSON documents (tasks, logs)
+- **MongoDB** for JSON documents (tasks, logs)
 - **Redis** for caching, **ChromaDB** for vector embeddings
 - Ollama integration with auto-model sync, health monitoring, and watchdog
 - Alembic database migrations
@@ -334,13 +334,9 @@ All configuration is managed via the `.env` file in the project root.
 |----------|---------|-------------|
 | `BACKEND_PORT` | `4700` | Backend API port |
 | `FRONTEND_PORT` | `4200` | Frontend UI port |
-| `POSTGRES_PORT` | `4532` | PostgreSQL port |
 | `REDIS_PORT` | `4379` | Redis port |
 | `CHROMADB_PORT` | `4800` | ChromaDB vector database port |
 | `MONGO_PORT` | `4717` | MongoDB port |
-| `POSTGRES_USER` | `agents` | Database username |
-| `POSTGRES_PASSWORD` | `agents_secret_2026` | Database password |
-| `POSTGRES_DB` | `ai_agents` | Database name |
 | `REDIS_PASSWORD` | `redis_secret_2026` | Redis password |
 | `MONGO_USER` | `agents` | MongoDB username |
 | `MONGO_PASSWORD` | `mongo_secret_2026` | MongoDB password |
@@ -350,7 +346,7 @@ All configuration is managed via the `.env` file in the project root.
 | `DEFAULT_ADMIN_PASSWORD` | `admin123` | **Change in production!** |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API URL |
 
-> ⚠️ **Production:** Always change `JWT_SECRET_KEY`, `DEFAULT_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, and `MONGO_PASSWORD` before deploying.
+> ⚠️ **Production:** Always change `JWT_SECRET_KEY`, `DEFAULT_ADMIN_PASSWORD`, `REDIS_PASSWORD`, and `MONGO_PASSWORD` before deploying.
 
 ---
 
@@ -365,7 +361,7 @@ make run-dev
 ```
 
 This starts:
-- **PostgreSQL, Redis, ChromaDB** — in Docker containers
+- **Redis, ChromaDB** — in Docker containers
 - **Backend** — locally with `uvicorn --reload` (Python 3.11)
 - **Frontend** — locally with `vite` hot module replacement
 
@@ -373,7 +369,7 @@ This starts:
 
 ```bash
 # Start infrastructure
-docker compose up -d postgres redis chromadb
+docker compose up -d redis chromadb
 
 # Backend (requires Python 3.11)
 cd backend
@@ -433,9 +429,9 @@ VITE_BACKEND_URL=http://localhost:4700 npm run dev -- --host 0.0.0.0 --port 4200
 └───┬──────────────┬──────────────┬───────────────┬───────────┘
     │              │              │               │
 ┌───▼───┐   ┌─────▼─────┐  ┌────▼────┐  ┌───▼────┐  ┌──────▼──────┐
-│Postgres│  │  MongoDB  │  │  Redis  │  │ChromaDB│  │   Ollama    │
-│ :4532  │  │   :4717   │  │  :4379  │  │ :4800  │  │  :11434     │
-│Relational│ │ Documents │  │  Cache  │  │Vectors │  │  Local LLM  │
+            │  MongoDB  │  │  Redis  │  │ChromaDB│  │   Ollama    │
+│        │  │   :4717   │  │  :4379  │  │ :4800  │  │  :11434     │
+            │ Documents │  │  Cache  │  │Vectors │  │  Local LLM  │
 └────────┘  └───────────┘  └─────────┘  └────────┘  └─────────────┘
 ```
 

@@ -15,6 +15,7 @@ Settings:
 """
 import json
 import os
+import re
 import uuid
 import time
 import asyncio
@@ -54,6 +55,55 @@ def _auth_headers(api_key: str) -> dict:
     }
 
 
+def _parse_kieai_result_json(raw: str | dict) -> dict:
+    """Parse kie.ai resultJson which may have unquoted keys like {resultObject: {...}}.
+    
+    The kie.ai API sometimes returns non-standard JSON in resultJson field:
+      {resultObject: {"language_code": "eng", "text": "..."}}
+    instead of:
+      {"resultObject": {"language_code": "eng", "text": "..."}}
+    """
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+
+    # Try standard JSON first
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Fix unquoted top-level keys: {key: -> {"key":
+    # This handles {resultObject: ...} and {resultUrls: ...}
+    fixed = re.sub(r'\{(\s*)(\w+)\s*:', r'{\1"\2":', raw)
+    try:
+        return json.loads(fixed)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Last resort: try to extract resultObject content directly via regex
+    # Match {resultObject: { ... }}  — find the inner JSON object
+    m = re.search(r'resultObject\s*:\s*(\{.*\})\s*\}?\s*$', raw, re.DOTALL)
+    if m:
+        try:
+            inner = json.loads(m.group(1))
+            return {"resultObject": inner}
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Try resultUrls for TTS format
+    m = re.search(r'resultUrls\s*:\s*(\[.*?\])', raw, re.DOTALL)
+    if m:
+        try:
+            urls = json.loads(m.group(1))
+            return {"resultUrls": urls}
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    raise ValueError(f"Cannot parse kie.ai resultJson: {raw[:500]}")
+
+
 MIME_MAP = {
     "ogg": "audio/ogg",
     "mp3": "audio/mpeg",
@@ -62,6 +112,47 @@ MIME_MAP = {
     "m4a": "audio/mp4",
     "flac": "audio/flac",
 }
+
+# Formats that need conversion to MP3 before sending to kie.ai STT
+# (kie.ai returns 500 errors for OGG OPUS and some other formats)
+FORMATS_NEED_CONVERSION = {"ogg", "webm", "flac", "m4a"}
+
+
+async def _convert_audio_to_mp3(audio_data: bytes, source_ext: str) -> tuple[bytes, str]:
+    """Convert audio to MP3 using ffmpeg. Returns (mp3_data, 'mp3')."""
+    import subprocess
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=f".{source_ext}", delete=False) as src_f:
+        src_f.write(audio_data)
+        src_path = src_f.name
+
+    dst_path = src_path.rsplit(".", 1)[0] + ".mp3"
+
+    try:
+        proc = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: subprocess.run(
+                ["ffmpeg", "-i", src_path, "-acodec", "libmp3lame", "-q:a", "4", "-y", dst_path],
+                capture_output=True, timeout=30,
+            ),
+        )
+
+        if proc.returncode != 0:
+            stderr = proc.stderr.decode(errors="replace")[:500]
+            await syslog("warning", f"ffmpeg conversion failed: {stderr}", source="audio")
+            # Return original if conversion fails
+            return audio_data, source_ext
+
+        mp3_data = Path(dst_path).read_bytes()
+        await syslog("debug", f"Audio converted: {source_ext} ({len(audio_data)} bytes) -> mp3 ({len(mp3_data)} bytes)", source="audio")
+        return mp3_data, "mp3"
+    finally:
+        for p in (src_path, dst_path):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
 
 async def _upload_temp_audio(client: httpx.AsyncClient, audio_data: bytes, ext: str = "ogg") -> str:
@@ -100,32 +191,64 @@ async def _upload_temp_audio(client: httpx.AsyncClient, audio_data: bytes, ext: 
 
 # ── kie.ai task creation ─────────────────────────────────────────────
 
+KIEAI_CREATE_RETRIES = 3
+KIEAI_CREATE_RETRY_DELAY = 3  # seconds between retries
+
+
 async def _create_task(
     client: httpx.AsyncClient,
     api_key: str,
     model: str,
     input_data: dict,
 ) -> str:
-    """Submit a task to kie.ai -> returns taskId."""
+    """Submit a task to kie.ai -> returns taskId. Retries on 500 errors."""
     payload = {
         "model": model,
         "input": input_data,
     }
 
-    await syslog("debug", f"KIEAI createTask: model={model}", source="audio")
+    last_error = None
+    for attempt in range(1, KIEAI_CREATE_RETRIES + 1):
+        await syslog("debug", f"KIEAI createTask attempt {attempt}/{KIEAI_CREATE_RETRIES}: model={model}", source="audio")
 
-    resp = await client.post(KIEAI_CREATE_TASK, headers=_auth_headers(api_key), json=payload)
-    await syslog("debug", f"KIEAI createTask response: status={resp.status_code}, body={resp.text[:500]}", source="audio")
+        try:
+            resp = await client.post(KIEAI_CREATE_TASK, headers=_auth_headers(api_key), json=payload)
+            await syslog("debug", f"KIEAI createTask response: status={resp.status_code}, body={resp.text[:500]}", source="audio")
+        except httpx.RequestError as e:
+            last_error = f"Request error: {e}"
+            await syslog("warning", f"KIEAI createTask attempt {attempt} request error: {e}", source="audio")
+            if attempt < KIEAI_CREATE_RETRIES:
+                await asyncio.sleep(KIEAI_CREATE_RETRY_DELAY)
+                continue
+            raise ValueError(f"kie.ai createTask failed after {KIEAI_CREATE_RETRIES} attempts: {last_error}")
 
-    if resp.status_code != 200:
-        error_text = resp.text[:1000]
-        raise ValueError(f"kie.ai createTask error: HTTP {resp.status_code}: {error_text}")
+        if resp.status_code >= 500:
+            last_error = f"HTTP {resp.status_code}: {resp.text[:500]}"
+            await syslog("warning", f"KIEAI createTask attempt {attempt}: server error {resp.status_code}, retrying...", source="audio")
+            if attempt < KIEAI_CREATE_RETRIES:
+                await asyncio.sleep(KIEAI_CREATE_RETRY_DELAY)
+                continue
+            raise ValueError(f"kie.ai createTask failed after {KIEAI_CREATE_RETRIES} attempts: {last_error}")
 
-    body = resp.json()
-    code = body.get("code")
-    if code != 200:
-        msg = body.get("msg", "Unknown error")
-        raise ValueError(f"kie.ai error ({code}): {msg}")
+        if resp.status_code != 200:
+            error_text = resp.text[:1000]
+            raise ValueError(f"kie.ai createTask error: HTTP {resp.status_code}: {error_text}")
+
+        body = resp.json()
+        code = body.get("code")
+        if code and code >= 500:
+            last_error = f"API code {code}: {body.get('msg', 'Unknown error')}"
+            await syslog("warning", f"KIEAI createTask attempt {attempt}: API error ({code}), retrying...", source="audio")
+            if attempt < KIEAI_CREATE_RETRIES:
+                await asyncio.sleep(KIEAI_CREATE_RETRY_DELAY)
+                continue
+            raise ValueError(f"kie.ai createTask failed after {KIEAI_CREATE_RETRIES} attempts: {last_error}")
+
+        if code and code != 200:
+            msg = body.get("msg", "Unknown error")
+            raise ValueError(f"kie.ai error ({code}): {msg}")
+
+        break  # Success
 
     task_id = (body.get("data") or {}).get("taskId")
     if not task_id:
@@ -250,10 +373,7 @@ async def _tts_kieai(db: AsyncIOMotorDatabase, text: str, voice: str | None) -> 
 
         # Step 3: Parse resultJson -> resultUrls
         result_json_str = task_data.get("resultJson", "{}")
-        try:
-            result_json = json.loads(result_json_str) if isinstance(result_json_str, str) else result_json_str
-        except (json.JSONDecodeError, TypeError):
-            raise ValueError(f"kie.ai returned invalid resultJson: {str(result_json_str)[:500]}")
+        result_json = _parse_kieai_result_json(result_json_str)
 
         result_urls = result_json.get("resultUrls", [])
         if not result_urls:
@@ -321,6 +441,11 @@ async def _stt_kieai(
 
     await syslog("debug", f"STT: starting, audio_size={len(audio_data)}, format={ext}", source="audio")
 
+    # Convert unsupported formats to MP3 (kie.ai returns 500 for OGG, WEBM, etc.)
+    if ext in FORMATS_NEED_CONVERSION:
+        await syslog("debug", f"STT: converting {ext} -> mp3 for kie.ai compatibility", source="audio")
+        audio_data, ext = await _convert_audio_to_mp3(audio_data, ext)
+
     async with httpx.AsyncClient(timeout=30) as client:
         # Step 1: Upload audio to temp hosting to get a public URL
         audio_url = await _upload_temp_audio(client, audio_data, ext)
@@ -341,10 +466,9 @@ async def _stt_kieai(
 
         # Step 4: Extract text from resultJson.resultObject.text
         result_json_str = task_data.get("resultJson", "{}")
-        try:
-            result_json = json.loads(result_json_str) if isinstance(result_json_str, str) else result_json_str
-        except (json.JSONDecodeError, TypeError):
-            raise ValueError(f"kie.ai STT returned invalid resultJson: {str(result_json_str)[:500]}")
+        await syslog("debug", f"STT resultJson raw ({len(str(result_json_str))} chars): {str(result_json_str)[:500]}", source="audio")
+
+        result_json = _parse_kieai_result_json(result_json_str)
 
         result_obj = result_json.get("resultObject", {})
         if isinstance(result_obj, str):
@@ -352,6 +476,8 @@ async def _stt_kieai(
                 result_obj = json.loads(result_obj)
             except (json.JSONDecodeError, ValueError):
                 result_obj = {}
+
+        await syslog("debug", f"STT resultObject keys: {list(result_obj.keys()) if isinstance(result_obj, dict) else type(result_obj)}", source="audio")
 
         text = result_obj.get("text", "")
         if not text:
@@ -365,7 +491,6 @@ async def _stt_kieai(
 # ── Available voices ─────────────────────────────────────────────────
 
 KIEAI_VOICES = [
-    "Adam",
     "Alice",
     "Bill",
     "Brian",
@@ -375,12 +500,12 @@ KIEAI_VOICES = [
     "Daniel",
     "Eric",
     "George",
-    "Harry",
     "Jessica",
     "Laura",
     "Liam",
     "Lily",
     "Matilda",
+    "Rachel",
     "River",
     "Roger",
     "Sarah",

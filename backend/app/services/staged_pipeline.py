@@ -50,6 +50,22 @@ GREETING_EN = re.compile(
     r'^\s*(hi|hello|hey|yo|sup|good\s+(morning|evening|afternoon)|howdy|greetings)\s*[!?.]*\s*$',
     re.IGNORECASE,
 )
+STUDY_KEYWORDS_RU = re.compile(
+    r'\b(изучи|выучи|прочитай|запомни|законспектируй|проанализируй\s+материал|изучить|выучить)\b',
+    re.IGNORECASE,
+)
+STUDY_KEYWORDS_EN = re.compile(
+    r'\b(study|learn|memorize|read\s+and\s+memorize|study\s+this|learn\s+from)\b',
+    re.IGNORECASE,
+)
+RECALL_KEYWORDS_RU = re.compile(
+    r'\b(вспомни|что\s+ты\s+знаешь|что\s+(?:ты\s+)?помнишь|напомни|расскажи\s+что\s+(?:выучил|изучил|запомнил))\b',
+    re.IGNORECASE,
+)
+RECALL_KEYWORDS_EN = re.compile(
+    r'\b(recall|what\s+do\s+you\s+(?:know|remember)|remember\s+about|what\s+did\s+you\s+(?:learn|study))\b',
+    re.IGNORECASE,
+)
 PROJECT_SLUG_PATTERN = re.compile(
     r'\b(?:проект[аеу]?\s+|project\s+)[\"\']?([a-z0-9_-]+)[\"\']?',
     re.IGNORECASE,
@@ -67,6 +83,7 @@ GATHER_SKILLS = frozenset({
     "project_file_read", "project_list_files", "project_context_build",
     "task_context_build", "json_parse", "text_summarize",
     "memory_deep_process", "speech_recognize",
+    "study_material", "recall_knowledge",
 })
 
 ACTION_SKILLS = frozenset({
@@ -212,6 +229,38 @@ def _infer_args(skill_name: str, planned_args: dict, context: dict) -> dict:
     elif skill_name == "sound_generate":
         if "text" not in args or not args["text"]:
             args["text"] = user_input
+
+    elif skill_name == "study_material":
+        if not args.get("text") and not args.get("file_path") and not args.get("topic"):
+            # Try to extract file path from user input
+            file_match = re.search(
+                r'(?:файл[а]?\s+|file\s+)["\']?([/\w._-]+\.\w+)["\']?',
+                user_input, re.I,
+            )
+            if file_match:
+                args["file_path"] = file_match.group(1)
+            else:
+                # Use the user input as topic
+                # Strip study keywords to get the actual topic
+                topic = re.sub(
+                    r'\b(изучи|выучи|прочитай|запомни|законспектируй|study|learn|memorize)\b',
+                    '', user_input, flags=re.I,
+                ).strip()
+                if topic:
+                    args["topic"] = topic
+        if "depth" not in args:
+            args["depth"] = "normal"
+
+    elif skill_name == "recall_knowledge":
+        if "query" not in args or not args["query"]:
+            # Strip recall keywords to get the actual query
+            query = re.sub(
+                r'\b(вспомни|что\s+ты\s+знаешь|напомни|recall|remember|what\s+do\s+you\s+know)\b',
+                '', user_input, flags=re.I,
+            ).strip()
+            args["query"] = query or user_input
+        if "depth" not in args:
+            args["depth"] = "quick"
 
     return args
 
@@ -379,6 +428,7 @@ class StagedPipeline:
         "memory_search", "memory_store", "memory_deep_process",
         "text_summarize", "code_execute", "web_scrape", "web_fetch",
         "sound_generate", "speech_recognize",
+        "study_material", "recall_knowledge",
     }
 
     async def _exec_skill(self, name: str, args: dict) -> dict:
@@ -420,6 +470,10 @@ class StagedPipeline:
             return await self._sys_sound_generate(db, args)
         elif name == "speech_recognize":
             return await self._sys_speech_recognize(db, args)
+        elif name == "study_material":
+            return await self._sys_study_material(db, agent_id, args)
+        elif name == "recall_knowledge":
+            return await self._sys_recall_knowledge(db, agent_id, args)
         return None
 
     async def _sys_memory_search(self, db, agent_id: str, args: dict) -> dict:
@@ -615,6 +669,301 @@ class StagedPipeline:
             logger.warning(f"speech_recognize failed: {e}")
             return {"error": f"STT failed: {e}"}
 
+    # ── Study & Recall skills ────────────────────────────────────────
+
+    async def _sys_study_material(self, db, agent_id: str, args: dict) -> dict:
+        """
+        Study material: read source → summarize → extract topics → detailed notes → links.
+        Multi-step LLM pipeline that stores knowledge in agent memory.
+        """
+        from app.mongodb.services import MemoryService, MemoryLinkService
+        from app.mongodb.models.memory import MongoMemory, MongoMemoryLink
+        from app.config import get_settings
+        import os
+        from pathlib import Path
+
+        svc = MemoryService(db)
+        link_svc = MemoryLinkService(db)
+
+        topic = args.get("topic", "")
+        file_path = args.get("file_path", "")
+        text = args.get("text", "")
+        depth = args.get("depth", "normal")
+
+        # ── Step 1: Resolve source text ──
+        source_name = topic or file_path or "direct text"
+        material = text
+
+        if file_path and not material:
+            # Read from agent's data directory
+            settings = get_settings()
+            agent_svc = None
+            try:
+                from app.mongodb.services import AgentService
+                agent_svc = AgentService(db)
+                agent = await agent_svc.get_by_id(agent_id)
+                if agent:
+                    agents_dir = Path(settings.AGENTS_DIR).resolve()
+                    data_dir = agents_dir / agent.name / "data"
+                    fpath = (data_dir / file_path).resolve()
+                    if str(fpath).startswith(str(agents_dir)) and fpath.exists():
+                        material = fpath.read_text(encoding="utf-8", errors="replace")
+                        source_name = f"file:{file_path}"
+                    else:
+                        return {"error": f"File not found or access denied: {file_path}"}
+            except Exception as e:
+                return {"error": f"Failed to read file: {e}"}
+
+        if not material and topic:
+            # Use topic as the material text itself (agent was given a topic to think about)
+            material = topic
+            source_name = f"topic:{topic}"
+
+        if not material:
+            return {"error": "No material provided. Provide text, file_path, or topic."}
+
+        # Truncate very long material
+        max_chars = {"quick": 3000, "normal": 8000, "deep": 15000}.get(depth, 8000)
+        material_truncated = material[:max_chars]
+        total_len = len(material)
+
+        # ── Step 2: General summary + tags ──
+        await self._ensure_model()
+        try:
+            summary_resp = await self._llm([
+                {"role": "system", "content": (
+                    "You are a study assistant. Analyze material and output JSON only.\n"
+                    "Output format: {\"summary\": \"2-4 sentence summary\", \"tags\": [\"tag1\", \"tag2\", ...], \"main_subject\": \"one phrase\"}"
+                )},
+                {"role": "user", "content": f"Study this material and create a summary:\n\n{material_truncated[:4000]}"},
+            ], temperature=0.2)
+            summary_data = self._extract_json(summary_resp.content or "") or {}
+        except Exception as e:
+            logger.warning(f"study_material summary LLM failed: {e}")
+            summary_data = {"summary": material_truncated[:300], "tags": [], "main_subject": source_name}
+
+        summary_text = summary_data.get("summary", material_truncated[:300])
+        tags = summary_data.get("tags", [])[:10]
+        main_subject = summary_data.get("main_subject", source_name)
+
+        # Save general summary
+        summary_mem = MongoMemory(
+            agent_id=agent_id,
+            type="summary",
+            title=f"📚 {main_subject}",
+            content=f"Source: {source_name} ({total_len} chars)\n\n{summary_text}",
+            source="study",
+            importance=0.8,
+            tags=tags,
+            category="knowledge",
+        )
+        summary_mem = await svc.create(summary_mem)
+        created_ids = [summary_mem.id]
+
+        # ── Step 3: Extract key topics ──
+        max_topics = {"quick": 3, "normal": 6, "deep": 12}.get(depth, 6)
+        try:
+            topics_resp = await self._llm([
+                {"role": "system", "content": (
+                    f"Extract up to {max_topics} key topics/concepts from the material. Output JSON only.\n"
+                    "Format: {\"topics\": [{\"title\": \"Topic Name\", \"importance\": 0.7, \"section\": \"where in material\", \"brief\": \"1-2 sentence description\"}]}"
+                )},
+                {"role": "user", "content": f"Extract key topics from:\n\n{material_truncated[:5000]}"},
+            ], temperature=0.2)
+            topics_data = self._extract_json(topics_resp.content or "") or {}
+        except Exception as e:
+            logger.warning(f"study_material topics LLM failed: {e}")
+            topics_data = {"topics": []}
+
+        topics = (topics_data.get("topics") or [])[:max_topics]
+
+        # Save each topic as a fact
+        topic_mems = []
+        for t in topics:
+            title = t.get("title", "Untitled topic")
+            importance = min(1.0, max(0.1, float(t.get("importance", 0.5))))
+            brief = t.get("brief", "")
+            section = t.get("section", "")
+            content = brief
+            if section:
+                content += f"\n📍 Location: {section} in {source_name}"
+
+            mem = MongoMemory(
+                agent_id=agent_id,
+                type="fact",
+                title=title,
+                content=content,
+                source="study",
+                importance=importance,
+                tags=tags,
+                category="knowledge",
+            )
+            mem = await svc.create(mem)
+            topic_mems.append(mem)
+            created_ids.append(mem.id)
+
+            # Link topic to summary (part_of)
+            link = MongoMemoryLink(
+                agent_id=agent_id,
+                source_id=mem.id,
+                target_id=summary_mem.id,
+                relation_type="part_of",
+                strength=0.8,
+                description=f"Topic from: {main_subject}",
+                created_by="system",
+            )
+            await link_svc.create(link)
+
+        # ── Step 4: Detailed notes for important topics (normal/deep only) ──
+        detailed_count = 0
+        if depth in ("normal", "deep"):
+            important_topics = [t for t in topics if float(t.get("importance", 0.5)) >= 0.6]
+            if depth == "deep":
+                important_topics = topics  # all topics get detailed notes
+
+            for i, t in enumerate(important_topics[:8]):
+                title = t.get("title", "")
+                try:
+                    detail_resp = await self._llm([
+                        {"role": "system", "content": (
+                            "Create a detailed study note about the given topic based on the material. "
+                            "Include specific facts, references to where in the material this is found, "
+                            "and any important details. Output plain text (not JSON)."
+                        )},
+                        {"role": "user", "content": (
+                            f"Topic: {title}\n\nMaterial:\n{material_truncated[:4000]}\n\n"
+                            f"Write a detailed note about '{title}' based on this material. "
+                            f"Reference specific sections/parts of the source: {source_name}"
+                        )},
+                    ], temperature=0.3)
+                    detail_text = (detail_resp.content or "").strip()
+                except Exception as e:
+                    logger.warning(f"study_material detail note LLM failed for '{title}': {e}")
+                    detail_text = t.get("brief", "")
+
+                if detail_text:
+                    note_mem = MongoMemory(
+                        agent_id=agent_id,
+                        type="summary",
+                        title=f"📝 {title} (detailed)",
+                        content=f"Source: {source_name}\n\n{detail_text}",
+                        source="study",
+                        importance=float(t.get("importance", 0.6)),
+                        tags=tags + [title.lower().replace(" ", "_")],
+                        category="knowledge",
+                    )
+                    note_mem = await svc.create(note_mem)
+                    created_ids.append(note_mem.id)
+                    detailed_count += 1
+
+                    # Link detailed note to its topic
+                    if i < len(topic_mems):
+                        link = MongoMemoryLink(
+                            agent_id=agent_id,
+                            source_id=note_mem.id,
+                            target_id=topic_mems[i].id,
+                            relation_type="related_to",
+                            strength=0.9,
+                            description=f"Detailed note for topic",
+                            created_by="system",
+                        )
+                        await link_svc.create(link)
+
+        # ── Step 5: Cross-links between related topics ──
+        if len(topic_mems) >= 2 and depth != "quick":
+            for i in range(len(topic_mems)):
+                for j in range(i + 1, min(i + 3, len(topic_mems))):
+                    link = MongoMemoryLink(
+                        agent_id=agent_id,
+                        source_id=topic_mems[i].id,
+                        target_id=topic_mems[j].id,
+                        relation_type="related_to",
+                        strength=0.5,
+                        description=f"Co-studied from {source_name}",
+                        created_by="system",
+                    )
+                    await link_svc.create(link)
+
+        return {
+            "result": {
+                "studied": True,
+                "source": source_name,
+                "depth": depth,
+                "summary": summary_text[:300],
+                "topics_count": len(topics),
+                "detailed_notes_count": detailed_count,
+                "memory_entries_created": len(created_ids),
+                "tags": tags,
+            }
+        }
+
+    async def _sys_recall_knowledge(self, db, agent_id: str, args: dict) -> dict:
+        """
+        Recall knowledge: search memory for knowledge entries, aggregate results.
+        """
+        from app.mongodb.services import MemoryService
+        svc = MemoryService(db)
+
+        query = str(args.get("query", "")).lower()
+        depth = args.get("depth", "quick")
+        filter_tags = args.get("tags") or []
+
+        if not query:
+            return {"error": "No query provided for recall"}
+
+        # Search all knowledge memories
+        all_memories = await svc.get_by_agent(agent_id, limit=500)
+        knowledge = [m for m in all_memories if m.category == "knowledge"]
+
+        if not knowledge:
+            return {"result": [], "message": "No studied knowledge found. Use study_material first."}
+
+        # Score by relevance
+        query_words = set(query.split())
+        scored = []
+        for m in knowledge:
+            text = f"{m.title} {m.content}".lower()
+            tags_text = " ".join(m.tags or []).lower()
+            word_hits = sum(1 for w in query_words if w in text or w in tags_text)
+            exact_hit = 1 if query in text else 0
+            tag_match = sum(1 for t in filter_tags if t.lower() in tags_text) if filter_tags else 0
+            score = word_hits * 2 + exact_hit * 5 + tag_match * 3 + m.importance
+            if word_hits > 0 or exact_hit > 0 or tag_match > 0:
+                scored.append((score, m))
+
+        if not scored:
+            # Fallback: return most important knowledge
+            knowledge.sort(key=lambda m: m.importance, reverse=True)
+            scored = [(m.importance, m) for m in knowledge[:5]]
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        limit = 10 if depth == "detailed" else 5
+        top_memories = [m for _, m in scored[:limit]]
+
+        # Update access_count
+        for m in top_memories:
+            try:
+                await svc.update(m.id, {
+                    "access_count": m.access_count + 1,
+                    "last_accessed": __import__("datetime").datetime.utcnow().isoformat(),
+                })
+            except Exception:
+                pass
+
+        results = [
+            {
+                "title": m.title,
+                "content": m.content[:800] if depth == "detailed" else m.content[:300],
+                "type": m.type,
+                "importance": m.importance,
+                "tags": m.tags,
+                "source": m.source,
+            }
+            for m in top_memories
+        ]
+
+        return {"result": results, "total_knowledge": len(knowledge), "matched": len(scored)}
+
     def _build_context(self, classification: Classification, user_input: str) -> dict:
         """Build context dict for arg inference."""
         return {
@@ -639,6 +988,8 @@ class StagedPipeline:
         is_greeting = bool(GREETING_RU.match(text) or GREETING_EN.match(text))
         urls = URL_PATTERN.findall(text)
         needs_search = bool(SEARCH_KEYWORDS_RU.search(text) or SEARCH_KEYWORDS_EN.search(text))
+        needs_study = bool(STUDY_KEYWORDS_RU.search(text) or STUDY_KEYWORDS_EN.search(text))
+        needs_recall = bool(RECALL_KEYWORDS_RU.search(text) or RECALL_KEYWORDS_EN.search(text))
         has_code = bool(CODE_BLOCK_PATTERN.search(text))
 
         project_match = PROJECT_SLUG_PATTERN.search(text)
@@ -649,6 +1000,10 @@ class StagedPipeline:
         # Intent
         if is_greeting:
             intent = "greeting"
+        elif needs_study:
+            intent = "study"
+        elif needs_recall:
+            intent = "recall"
         elif detected_project or detected_task:
             intent = "project_work"
         elif has_code:
@@ -670,7 +1025,7 @@ class StagedPipeline:
             complexity = "simple"
         elif word_count > 50 or (detected_project and detected_task):
             complexity = "complex"
-        elif intent in ("project_work", "code") or urls or needs_search:
+        elif intent in ("project_work", "code", "study") or urls or needs_search:
             complexity = "medium"
         elif word_count > 20:
             complexity = "medium"
@@ -779,6 +1134,12 @@ Rules:
             if classification.detected_task and classification.detected_project and "task_context_build" in available:
                 analysis["needs_skills"].append("task_context_build")
 
+            # Auto-add study/recall skills based on intent
+            if classification.intent == "study" and "study_material" in available:
+                analysis["needs_skills"].append("study_material")
+            if classification.intent == "recall" and "recall_knowledge" in available:
+                analysis["needs_skills"].append("recall_knowledge")
+
             logger.info("UNDERSTAND: used heuristic fallback")
 
         # Validate skill names
@@ -795,6 +1156,27 @@ Rules:
             and "memory_search" not in analysis.get("needs_skills", [])
         ):
             analysis["needs_skills"].insert(0, "memory_search")
+
+        # Auto-add study_material for study intent
+        if (
+            classification.intent == "study"
+            and "study_material" in available
+            and "study_material" not in analysis.get("needs_skills", [])
+        ):
+            analysis["needs_skills"].append("study_material")
+
+        # Auto-add recall_knowledge for recall intent
+        if (
+            classification.intent == "recall"
+            and "recall_knowledge" in available
+            and "recall_knowledge" not in analysis.get("needs_skills", [])
+        ):
+            # Use recall_knowledge instead of memory_search
+            skills = analysis.get("needs_skills", [])
+            if "memory_search" in skills:
+                skills.remove("memory_search")
+            skills.insert(0, "recall_knowledge")
+            analysis["needs_skills"] = skills
 
         duration_ms = int((time.monotonic() - start) * 1000)
 

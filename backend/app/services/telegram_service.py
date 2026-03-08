@@ -790,10 +790,13 @@ async def _transcribe_voice(db, audio_path: Path, audio_format: str = "ogg") -> 
     try:
         from app.services.audio_service import speech_to_text
         audio_data = audio_path.read_bytes()
+        logger.info(f"STT: transcribing {audio_path.name} ({len(audio_data)} bytes, format={audio_format})")
         result = await speech_to_text(db=db, audio_data=audio_data, audio_format=audio_format)
-        return result.get("text", "")
+        text = result.get("text", "")
+        logger.info(f"STT result: {len(text)} chars, text={text[:100]}")
+        return text
     except Exception as e:
-        logger.error(f"STT transcription failed: {e}")
+        logger.error(f"STT transcription failed: {type(e).__name__}: {e}")
         return ""
 
 
