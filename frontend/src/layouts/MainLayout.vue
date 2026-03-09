@@ -198,8 +198,12 @@ const navItems = [
     ],
   },
   { path: '/agents', icon: 'mdi-robot', title: 'Agents' },
-  { path: '/research-resources', icon: 'mdi-book-search', title: 'Research Resources' },
+  { path: '/research-resources', icon: 'mdi-book-search', title: 'Trusted Resources' },
   { path: '/tasks', icon: 'mdi-clipboard-list', title: 'Tasks' },
+  { path: '/video', icon: 'mdi-video-outline', title: 'Video' },
+  { path: '/analysis', icon: 'mdi-chart-timeline-variant-shimmer', title: 'Analysis' },
+  { path: '/facts', icon: 'mdi-check-decagram', title: 'Facts' },
+  { path: '/events', icon: 'mdi-calendar-clock', title: 'Events' },
   { path: '/projects', icon: 'mdi-folder-wrench', title: 'Projects' },
   { path: '/models', icon: 'mdi-brain', title: 'Models' },
 ]

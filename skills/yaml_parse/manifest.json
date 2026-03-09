@@ -1,0 +1,27 @@
+{
+  "name": "yaml_parse",
+  "display_name": "YAML Parse",
+  "description": "Parse, validate, and convert YAML data.",
+  "description_for_agent": "Parse YAML text or files. Convert between YAML and JSON. Parameters: text (string, optional — YAML text to parse), file_path (string, optional — path to YAML file), operation (string, optional — 'parse', 'validate', 'to_json'; default 'parse'). Returns parsed data as JSON.",
+  "category": "data",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "YAML text to parse"
+      },
+      "file_path": {
+        "type": "string",
+        "description": "Path to YAML file"
+      },
+      "operation": {
+        "type": "string",
+        "description": "Operation: parse, validate, to_json"
+      }
+    }
+  },
+  "output_schema": {}
+}

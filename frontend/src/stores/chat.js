@@ -14,6 +14,8 @@ export const useChatStore = defineStore('chat', {
     // Edit & regenerate support
     abortController: null,
     lastSentContent: '',
+    // Pending input from external sources (e.g. Video tab)
+    pendingInput: '',
   }),
 
   getters: {

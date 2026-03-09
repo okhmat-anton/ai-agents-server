@@ -1,0 +1,46 @@
+{
+  "name": "api_call",
+  "display_name": "API Call",
+  "description": "Make authenticated REST API calls with custom headers, body, and auth.",
+  "description_for_agent": "Make HTTP API calls with full control over headers, body, and authentication. Parameters: url (string, required), method (string, optional — 'GET', 'POST', 'PUT', 'PATCH', 'DELETE'; default 'GET'), headers (object, optional — custom headers), body (object or string, optional — request body), auth_type (string, optional — 'bearer', 'api_key', 'basic'), auth_value (string, optional — token/key value), timeout (integer, optional — timeout in seconds, default 30). Use this for authenticated API calls that web_fetch cannot handle.",
+  "category": "web",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "API endpoint URL"
+      },
+      "method": {
+        "type": "string",
+        "description": "HTTP method: GET, POST, PUT, PATCH, DELETE"
+      },
+      "headers": {
+        "type": "object",
+        "description": "Custom HTTP headers"
+      },
+      "body": {
+        "type": "object",
+        "description": "Request body (JSON)"
+      },
+      "auth_type": {
+        "type": "string",
+        "description": "Auth type: bearer, api_key, basic"
+      },
+      "auth_value": {
+        "type": "string",
+        "description": "Auth token/key value"
+      },
+      "timeout": {
+        "type": "integer",
+        "description": "Timeout in seconds (default: 30)"
+      }
+    },
+    "required": [
+      "url"
+    ]
+  },
+  "output_schema": {}
+}

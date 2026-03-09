@@ -1,0 +1,31 @@
+{
+  "name": "xml_parse",
+  "display_name": "XML Parse",
+  "description": "Parse XML data, query with XPath.",
+  "description_for_agent": "Parse XML text or files, optionally query with XPath. Parameters: text (string, optional — XML text), file_path (string, optional — path to XML file), xpath (string, optional — XPath query to extract specific elements), output_format (string, optional — 'json' or 'text'; default 'json'). Returns parsed XML data.",
+  "category": "data",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "XML text to parse"
+      },
+      "file_path": {
+        "type": "string",
+        "description": "Path to XML file"
+      },
+      "xpath": {
+        "type": "string",
+        "description": "XPath query expression"
+      },
+      "output_format": {
+        "type": "string",
+        "description": "Output format: json or text"
+      }
+    }
+  },
+  "output_schema": {}
+}

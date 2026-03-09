@@ -30,6 +30,7 @@ from app.mongodb.models.agent_fact import MongoAgentFact
 from app.mongodb.models.agent_event import MongoAgentEvent
 from app.mongodb.models.research_resource import MongoResearchResource
 from app.mongodb.models.watched_video import MongoWatchedVideo
+from app.mongodb.models.analysis_topic import MongoAnalysisTopic
 
 
 class UserService(BaseMongoService[MongoUser]):
@@ -334,6 +335,20 @@ class AgentFactService(BaseMongoService[MongoAgentFact]):
         docs = await cursor.to_list(length=limit)
         return [self.model_class.from_mongo(doc) for doc in docs]
 
+    async def get_all(self, fact_type: str = None, verified: bool = None,
+                      search: str = None, limit: int = 200, skip: int = 0):
+        """Get all facts across all agents (global view)."""
+        filt = {}
+        if fact_type:
+            filt["type"] = fact_type
+        if verified is not None:
+            filt["verified"] = verified
+        if search:
+            filt["content"] = {"$regex": search, "$options": "i"}
+        cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
     async def delete_by_agent(self, agent_id: str):
         result = await self.collection.delete_many({"agent_id": agent_id})
         return result.deleted_count
@@ -366,6 +381,23 @@ class AgentEventService(BaseMongoService[MongoAgentEvent]):
             ],
         }
         cursor = self.collection.find(filt).sort("event_date", -1).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def get_all(self, event_type: str = None, importance: str = None,
+                      search: str = None, limit: int = 200, skip: int = 0):
+        """Get all events across all agents (global view)."""
+        filt = {}
+        if event_type:
+            filt["event_type"] = event_type
+        if importance:
+            filt["importance"] = importance
+        if search:
+            filt["$or"] = [
+                {"title": {"$regex": search, "$options": "i"}},
+                {"description": {"$regex": search, "$options": "i"}},
+            ]
+        cursor = self.collection.find(filt).sort("event_date", -1).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [self.model_class.from_mongo(doc) for doc in docs]
 
@@ -453,4 +485,57 @@ class WatchedVideoService(BaseMongoService[MongoWatchedVideo]):
         cursor = self.collection.find(filt).sort("created_at", -1).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [self.model_class.from_mongo(doc) for doc in docs]
+
+
+class AnalysisTopicService(BaseMongoService[MongoAnalysisTopic]):
+    """CRUD service for analysis topics."""
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "analysis_topics", MongoAnalysisTopic)
+
+    async def get_by_agent(self, agent_id: str, status: str = None,
+                           limit: int = 200, skip: int = 0):
+        """Get analysis topics for a specific agent."""
+        filt = {"agent_id": agent_id}
+        if status:
+            filt["status"] = status
+        cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def get_global(self, status: str = None, limit: int = 200, skip: int = 0):
+        """Get all analysis topics (global view)."""
+        filt = {}
+        if status:
+            filt["status"] = status
+        cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def search_by_text(self, query: str, agent_id: str = None, limit: int = 50):
+        """Search topics by title or description."""
+        filt = {
+            "$or": [
+                {"title": {"$regex": query, "$options": "i"}},
+                {"description": {"$regex": query, "$options": "i"}},
+            ],
+        }
+        if agent_id:
+            filt["agent_id"] = agent_id
+        cursor = self.collection.find(filt).sort("created_at", -1).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def add_fact(self, topic_id: str, fact_id: str):
+        """Connect a fact to a topic."""
+        await self.collection.update_one(
+            {"_id": topic_id},
+            {"$addToSet": {"fact_ids": fact_id}}
+        )
+
+    async def remove_fact(self, topic_id: str, fact_id: str):
+        """Disconnect a fact from a topic."""
+        await self.collection.update_one(
+            {"_id": topic_id},
+            {"$pull": {"fact_ids": fact_id}}
+        )
 

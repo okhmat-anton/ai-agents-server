@@ -1,0 +1,45 @@
+{
+  "name": "git_operations",
+  "display_name": "Git Operations",
+  "description": "Perform git operations: clone, status, diff, commit, push, pull, log, branch.",
+  "description_for_agent": "Perform git version control operations on a project directory. Parameters: operation (string, required — 'clone', 'status', 'diff', 'commit', 'push', 'pull', 'log', 'branch', 'checkout'), project_slug (string, optional — project slug for project-based repos), repo_url (string, optional — repository URL for clone), branch (string, optional — branch name for branch/checkout), message (string, optional — commit message), files (array, optional — files to add/commit, default: all). Use this to manage version control for project code.",
+  "category": "code",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "operation": {
+        "type": "string",
+        "description": "Git operation: clone, status, diff, commit, push, pull, log, branch, checkout"
+      },
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug (for project-based repos)"
+      },
+      "repo_url": {
+        "type": "string",
+        "description": "Repository URL (for clone)"
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branch name"
+      },
+      "message": {
+        "type": "string",
+        "description": "Commit message"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Files to stage (default: all)"
+      }
+    },
+    "required": [
+      "operation"
+    ]
+  },
+  "output_schema": {}
+}

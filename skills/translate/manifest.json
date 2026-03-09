@@ -1,0 +1,31 @@
+{
+  "name": "translate",
+  "display_name": "Translate Text",
+  "description": "Translate text between languages using LLM.",
+  "description_for_agent": "Translate text from one language to another using LLM. Parameters: text (string, required — text to translate), to_language (string, required — target language name like 'English', 'Russian', 'Spanish'), from_language (string, optional — source language, auto-detected if omitted). Use this when you need to translate text between languages.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Text to translate"
+      },
+      "to_language": {
+        "type": "string",
+        "description": "Target language (e.g. 'English', 'Russian')"
+      },
+      "from_language": {
+        "type": "string",
+        "description": "Source language (auto-detect if omitted)"
+      }
+    },
+    "required": [
+      "text",
+      "to_language"
+    ]
+  },
+  "output_schema": {}
+}

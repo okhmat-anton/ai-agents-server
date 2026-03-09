@@ -1822,6 +1822,17 @@ watch(() => chatStore.panelOpen, (open) => {
     stopModelPolling()
   }
 })
+
+// Watch for pending input from external sources (Video tab, etc.)
+watch(() => chatStore.pendingInput, (val) => {
+  if (val) {
+    messageInput.value = val
+    chatStore.pendingInput = ''
+    nextTick(() => {
+      if (inputRef.value) inputRef.value.focus()
+    })
+  }
+})
 </script>
 
 <style scoped>

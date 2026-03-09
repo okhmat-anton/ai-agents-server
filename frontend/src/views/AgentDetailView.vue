@@ -101,6 +101,10 @@
           Events
           <v-badge v-if="eventsCount > 0" :content="eventsCount" color="deep-purple" inline />
         </v-tab>
+        <v-tab value="analysis">
+          Analysis
+          <v-badge v-if="analysisTopicsCount > 0" :content="analysisTopicsCount" color="blue" inline />
+        </v-tab>
         <v-tab value="projects">Projects</v-tab>
         <v-tab value="files">Files</v-tab>
         <v-tab value="tasks">Tasks</v-tab>
@@ -744,6 +748,65 @@
             <v-icon size="48" class="mb-2">mdi-calendar-clock</v-icon>
             <div>No events yet</div>
             <div class="text-caption mt-1">Add events manually or let the agent record them automatically</div>
+          </div>
+        </div>
+
+        <!-- Analysis Tab -->
+        <div v-if="tab === 'analysis'">
+          <!-- Filters row -->
+          <div class="d-flex align-center mb-4 flex-wrap ga-2">
+            <v-chip-group v-model="analysisStatusFilter" selected-class="text-primary" @update:model-value="loadAnalysisTopics">
+              <v-chip value="" variant="tonal" size="small">All</v-chip>
+              <v-chip value="active" color="blue" variant="tonal" size="small">Active</v-chip>
+              <v-chip value="draft" color="grey" variant="tonal" size="small">Draft</v-chip>
+              <v-chip value="completed" color="success" variant="tonal" size="small">Completed</v-chip>
+              <v-chip value="archived" color="brown" variant="tonal" size="small">Archived</v-chip>
+            </v-chip-group>
+            <v-spacer />
+            <v-text-field
+              v-model="analysisSearch"
+              density="compact"
+              variant="outlined"
+              placeholder="Search topics..."
+              prepend-inner-icon="mdi-magnify"
+              hide-details
+              clearable
+              style="max-width: 300px;"
+              @update:model-value="debouncedLoadAnalysis"
+            />
+            <v-btn color="blue" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openAnalysisDialog()">Add</v-btn>
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-refresh" @click="loadAnalysisTopics" :loading="analysisLoading">Refresh</v-btn>
+          </div>
+
+          <!-- Analysis topics list -->
+          <div v-if="analysisLoading && !analysisTopics.length" class="text-center pa-8">
+            <v-progress-circular indeterminate color="blue" />
+          </div>
+          <div v-else-if="analysisTopics.length">
+            <v-card v-for="t in analysisTopics" :key="t.id" variant="outlined" class="mb-2 pa-3">
+              <div class="d-flex align-start">
+                <v-icon color="blue" size="20" class="mr-2 mt-1">mdi-chart-timeline-variant-shimmer</v-icon>
+                <div class="flex-grow-1">
+                  <div class="text-body-1 font-weight-medium">{{ t.title }}</div>
+                  <div v-if="t.description" class="text-body-2 text-medium-emphasis mt-1">{{ t.description }}</div>
+                  <div class="d-flex align-center mt-1 flex-wrap ga-1">
+                    <v-chip :color="analysisStatusColor(t.status)" size="x-small" variant="flat">{{ t.status }}</v-chip>
+                    <v-chip size="x-small" variant="tonal" color="teal">{{ t.fact_ids?.length || 0 }} facts</v-chip>
+                    <v-chip v-for="tag in t.tags" :key="tag" size="x-small" variant="tonal" color="blue-grey">{{ tag }}</v-chip>
+                    <v-chip size="x-small" variant="tonal" class="ml-auto">{{ t.created_by }}</v-chip>
+                  </div>
+                </div>
+                <div class="d-flex ml-2">
+                  <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editAnalysis(t)" />
+                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteAnalysis(t.id)" />
+                </div>
+              </div>
+            </v-card>
+          </div>
+          <div v-else class="text-center text-grey pa-8">
+            <v-icon size="48" class="mb-2">mdi-chart-timeline-variant-shimmer</v-icon>
+            <div>No analysis topics yet</div>
+            <div class="text-caption mt-1">Add topics to structure your research and connect facts</div>
           </div>
         </div>
 
@@ -2015,6 +2078,30 @@
       </v-card>
     </v-dialog>
 
+    <!-- Analysis Topic Dialog -->
+    <v-dialog v-model="analysisDialog" max-width="600">
+      <v-card>
+        <v-card-title>{{ analysisEditId ? 'Edit' : 'Add' }} Analysis Topic</v-card-title>
+        <v-card-text>
+          <v-text-field v-model="analysisFormTitle" label="Title" autofocus density="compact" class="mb-2" />
+          <v-textarea v-model="analysisFormDescription" label="Description" rows="4" density="compact" class="mb-2" />
+          <v-select
+            v-model="analysisFormStatus"
+            :items="['draft', 'active', 'completed', 'archived']"
+            label="Status"
+            density="compact"
+            class="mb-2"
+          />
+          <v-combobox v-model="analysisFormTags" label="Tags" density="compact" multiple chips closable-chips small-chips hide-details />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="analysisDialog = false">Cancel</v-btn>
+          <v-btn color="blue" @click="saveAnalysis" :loading="analysisSaving">{{ analysisEditId ? 'Save' : 'Add' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- New Personal Skill Dialog -->
     <v-dialog v-model="newSkillDialog" max-width="600">
       <v-card>
@@ -2404,6 +2491,24 @@ const deleteEventDialog = ref(false)
 const deleteEventItem = ref(null)
 
 const eventsCount = computed(() => events.value.length)
+
+// Analysis topics state
+const analysisTopics = ref([])
+const analysisLoading = ref(false)
+const analysisStatusFilter = ref('')
+const analysisSearch = ref('')
+const analysisDialog = ref(false)
+const analysisEditId = ref(null)
+const analysisFormTitle = ref('')
+const analysisFormDescription = ref('')
+const analysisFormStatus = ref('active')
+const analysisFormTags = ref([])
+const analysisSaving = ref(false)
+const analysisTopicsCount = computed(() => analysisTopics.value.length)
+
+const analysisStatusColor = (s) => ({
+  draft: 'grey', active: 'blue', completed: 'success', archived: 'brown',
+}[s] || 'grey')
 
 const eventTypeColor = (t) => ({
   conversation: 'blue', observation: 'teal', discovery: 'amber',
@@ -3157,6 +3262,72 @@ const doDeleteEvent = async () => {
   } catch (e) { alert(e.response?.data?.detail || 'Failed to delete event') }
 }
 
+// ===== Analysis Topics =====
+let _analysisDebounce = null
+const debouncedLoadAnalysis = () => {
+  clearTimeout(_analysisDebounce)
+  _analysisDebounce = setTimeout(() => loadAnalysisTopics(), 400)
+}
+
+const loadAnalysisTopics = async () => {
+  analysisLoading.value = true
+  try {
+    const params = { limit: 200 }
+    if (analysisStatusFilter.value) params.status = analysisStatusFilter.value
+    if (analysisSearch.value) params.search = analysisSearch.value
+    const { data } = await api.get(`/agents/${id.value}/analysis-topics`, { params })
+    analysisTopics.value = data.items || []
+  } catch { analysisTopics.value = [] }
+  finally { analysisLoading.value = false }
+}
+
+const openAnalysisDialog = (existing = null) => {
+  if (existing) {
+    analysisEditId.value = existing.id
+    analysisFormTitle.value = existing.title
+    analysisFormDescription.value = existing.description || ''
+    analysisFormStatus.value = existing.status
+    analysisFormTags.value = existing.tags || []
+  } else {
+    analysisEditId.value = null
+    analysisFormTitle.value = ''
+    analysisFormDescription.value = ''
+    analysisFormStatus.value = 'active'
+    analysisFormTags.value = []
+  }
+  analysisDialog.value = true
+}
+
+const editAnalysis = (t) => openAnalysisDialog(t)
+
+const saveAnalysis = async () => {
+  if (!analysisFormTitle.value.trim()) return
+  analysisSaving.value = true
+  try {
+    const payload = {
+      title: analysisFormTitle.value.trim(),
+      description: analysisFormDescription.value.trim(),
+      status: analysisFormStatus.value,
+      tags: analysisFormTags.value,
+    }
+    if (analysisEditId.value) {
+      await api.patch(`/analysis-topics/${analysisEditId.value}`, payload)
+    } else {
+      await api.post(`/agents/${id.value}/analysis-topics`, payload)
+    }
+    analysisDialog.value = false
+    await loadAnalysisTopics()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to save topic') }
+  finally { analysisSaving.value = false }
+}
+
+const deleteAnalysis = async (topicId) => {
+  try {
+    await api.delete(`/analysis-topics/${topicId}`)
+    await loadAnalysisTopics()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to delete topic') }
+}
+
 const doDeleteFile = async () => {
   try {
     await api.delete(`/agents/${id.value}/files/delete`, { params: { path: deleteFilePath.value } })
@@ -3720,13 +3891,16 @@ onMounted(async () => {
   await loadAutonomousStatus()
 })
 
-// Lazy-load projects/messengers when tab is selected
+// Lazy-load projects/messengers/analysis when tab is selected
 watch(tab, (val) => {
   if (val === 'projects' && !agentProjects.value.length && !agentProjectsLoading.value) {
     loadAgentProjects()
   }
   if (val === 'messengers' && !messengerAccounts.value.length) {
     loadMessengers()
+  }
+  if (val === 'analysis' && !analysisTopics.value.length && !analysisLoading.value) {
+    loadAnalysisTopics()
   }
 })
 

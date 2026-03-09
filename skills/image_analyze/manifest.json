@@ -1,0 +1,26 @@
+{
+  "name": "image_analyze",
+  "display_name": "Image Analyze",
+  "description": "Analyze an image using a vision-capable LLM (describe, OCR, answer questions).",
+  "description_for_agent": "Analyze an image using a vision-capable LLM. Can describe content, extract text (OCR), or answer questions about the image. Parameters: image_url (string, required — URL or local path to the image), question (string, optional — specific question about the image; default: 'Describe this image in detail'). Use this when you receive an image and need to understand its content.",
+  "category": "ai",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "image_url": {
+        "type": "string",
+        "description": "URL or path to the image"
+      },
+      "question": {
+        "type": "string",
+        "description": "Question about the image (default: describe)"
+      }
+    },
+    "required": [
+      "image_url"
+    ]
+  },
+  "output_schema": {}
+}

@@ -1,0 +1,33 @@
+{
+  "name": "math_calculate",
+  "display_name": "Math Calculate",
+  "description": "Evaluate mathematical expressions, statistics, and unit conversions.",
+  "description_for_agent": "Evaluate mathematical expressions safely. Parameters: expression (string, required — math expression like '2**10', 'sqrt(144)', 'sin(pi/4)'), operation (string, optional — 'eval', 'statistics', 'convert'; default 'eval'), data (array, optional — list of numbers for statistics operations). Supports: basic arithmetic, powers, roots, trig, log, constants (pi, e). For statistics: mean, median, stdev, min, max, sum, count.",
+  "category": "data",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "expression": {
+        "type": "string",
+        "description": "Math expression to evaluate"
+      },
+      "operation": {
+        "type": "string",
+        "description": "Operation: eval, statistics, convert"
+      },
+      "data": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        },
+        "description": "Numbers for statistics"
+      }
+    },
+    "required": [
+      "expression"
+    ]
+  },
+  "output_schema": {}
+}

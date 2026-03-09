@@ -1,0 +1,39 @@
+{
+  "name": "regex_extract",
+  "display_name": "Regex Extract",
+  "description": "Extract data from text using regex patterns.",
+  "description_for_agent": "Extract data from text using regular expressions. Parameters: text (string, required — text to search in), pattern (string, required — regex pattern, supports named groups), operation (string, optional — 'extract', 'match', 'replace', 'split'; default 'extract'), replacement (string, optional — replacement string for 'replace' operation), flags (string, optional — regex flags like 'i' for case-insensitive, 'm' for multiline). Use this for structured data extraction from unstructured text.",
+  "category": "data",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Text to search in"
+      },
+      "pattern": {
+        "type": "string",
+        "description": "Regex pattern"
+      },
+      "operation": {
+        "type": "string",
+        "description": "Operation: extract, match, replace, split"
+      },
+      "replacement": {
+        "type": "string",
+        "description": "Replacement string (for replace operation)"
+      },
+      "flags": {
+        "type": "string",
+        "description": "Regex flags: i (case-insensitive), m (multiline), s (dotall)"
+      }
+    },
+    "required": [
+      "text",
+      "pattern"
+    ]
+  },
+  "output_schema": {}
+}

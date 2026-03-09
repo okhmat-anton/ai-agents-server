@@ -317,6 +317,10 @@ GATHER_SKILLS = frozenset({
     "fact_read",
     "event_read",
     "video_watch",
+    # New gather skills
+    "web_search", "project_search_code", "csv_parse", "pdf_read",
+    "yaml_parse", "xml_parse", "regex_extract", "math_calculate",
+    "rss_read", "translate", "image_analyze",
 })
 
 ACTION_SKILLS = frozenset({
@@ -325,6 +329,10 @@ ACTION_SKILLS = frozenset({
     "project_run_code", "sound_generate",
     "fact_save", "fact_extract",
     "event_save",
+    # New action skills
+    "telegram_send", "notification_send", "image_generate",
+    "email_send", "schedule_reminder", "git_operations",
+    "code_review", "docker_manage", "api_call",
 })
 
 # "safe" action skills that can be auto-executed without user confirmation
@@ -334,11 +342,17 @@ SAFE_ACTION_SKILLS = frozenset({
     "project_task_comment", "code_execute", "sound_generate",
     "fact_save", "fact_extract",
     "event_save",
+    # New safe action skills
+    "notification_send", "image_generate", "code_review",
+    "schedule_reminder",
 })
 
 # Dangerous skills require confirmation (never auto-execute)
 DANGEROUS_ACTION_SKILLS = frozenset({
     "shell_exec", "file_write",
+    # New dangerous skills
+    "telegram_send", "email_send", "git_operations",
+    "docker_manage", "api_call",
 })
 
 # ── Smart arg inference ──────────────────────────────────────────────
@@ -696,6 +710,13 @@ class StagedPipeline:
         "fact_save", "fact_read", "fact_extract",
         "event_save", "event_read",
         "video_watch",
+        # New system skill handlers
+        "web_search", "telegram_send", "notification_send",
+        "image_analyze", "git_operations", "project_search_code",
+        "image_generate", "translate", "csv_parse", "pdf_read",
+        "email_send", "schedule_reminder", "yaml_parse", "xml_parse",
+        "regex_extract", "api_call", "math_calculate", "code_review",
+        "docker_manage", "rss_read",
     }
 
     async def _exec_skill(self, name: str, args: dict) -> dict:
@@ -755,6 +776,47 @@ class StagedPipeline:
             return await self._sys_event_save(db, agent_id, args)
         elif name == "event_read":
             return await self._sys_event_read(db, agent_id, args)
+        # New skill handlers
+        elif name == "web_search":
+            return await self._sys_web_search(args)
+        elif name == "telegram_send":
+            return await self._sys_telegram_send(db, args)
+        elif name == "notification_send":
+            return await self._sys_notification_send(db, agent_id, args)
+        elif name == "image_analyze":
+            return await self._sys_image_analyze(args)
+        elif name == "git_operations":
+            return await self._sys_git_operations(args)
+        elif name == "project_search_code":
+            return await self._sys_project_search_code(args)
+        elif name == "image_generate":
+            return await self._sys_image_generate(db, args)
+        elif name == "translate":
+            return await self._sys_translate(args)
+        elif name == "csv_parse":
+            return await self._sys_csv_parse(args)
+        elif name == "pdf_read":
+            return await self._sys_pdf_read(args)
+        elif name == "email_send":
+            return await self._sys_email_send(db, args)
+        elif name == "schedule_reminder":
+            return await self._sys_schedule_reminder(db, agent_id, args)
+        elif name == "yaml_parse":
+            return await self._sys_yaml_parse(args)
+        elif name == "xml_parse":
+            return await self._sys_xml_parse(args)
+        elif name == "regex_extract":
+            return await self._sys_regex_extract(args)
+        elif name == "api_call":
+            return await self._sys_api_call(args)
+        elif name == "math_calculate":
+            return await self._sys_math_calculate(args)
+        elif name == "code_review":
+            return await self._sys_code_review(args)
+        elif name == "docker_manage":
+            return await self._sys_docker_manage(args)
+        elif name == "rss_read":
+            return await self._sys_rss_read(args)
         return None
 
     async def _sys_memory_search(self, db, agent_id: str, args: dict) -> dict:
@@ -1554,6 +1616,797 @@ class StagedPipeline:
                 "cached": False,
             },
         }
+
+    # ── New skill handlers ───────────────────────────────────────────
+
+    async def _sys_web_search(self, args: dict) -> dict:
+        """Search the web using DuckDuckGo HTML search."""
+        import httpx
+        import re as _re
+        query = str(args.get("query", "")).strip()
+        limit = int(args.get("limit", 10))
+        region = args.get("region", "")
+        if not query:
+            return {"error": "No search query provided"}
+        try:
+            params = {"q": query, "kl": region} if region else {"q": query}
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                r = await client.get(
+                    "https://html.duckduckgo.com/html/",
+                    params=params,
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; AI-Agent/1.0)"},
+                )
+                html = r.text
+            results = []
+            # Parse DuckDuckGo HTML results
+            blocks = _re.findall(r'<a rel="nofollow" class="result__a" href="(.*?)">(.*?)</a>.*?<a class="result__snippet".*?>(.*?)</a>', html, _re.DOTALL)
+            for href, title, snippet in blocks[:limit]:
+                title = _re.sub(r'<[^>]+>', '', title).strip()
+                snippet = _re.sub(r'<[^>]+>', '', snippet).strip()
+                # Fix DDG redirect URLs
+                if "uddg=" in href:
+                    import urllib.parse
+                    parsed = urllib.parse.parse_qs(urllib.parse.urlparse(href).query)
+                    href = parsed.get("uddg", [href])[0]
+                results.append({"title": title, "url": href, "snippet": snippet})
+            if not results:
+                return {"result": [], "message": f"No results found for '{query}'"}
+            return {"result": results}
+        except Exception as e:
+            return {"error": f"Web search failed: {e}"}
+
+    async def _sys_telegram_send(self, db, args: dict) -> dict:
+        """Send a message to Telegram via configured messenger."""
+        messenger_id = args.get("messenger_id", "")
+        chat_id = args.get("chat_id", "")
+        text = args.get("text", "")
+        if not messenger_id or not chat_id or not text:
+            return {"error": "messenger_id, chat_id, and text are required"}
+        try:
+            from app.services.telegram_service import _running_clients
+            client_data = _running_clients.get(messenger_id)
+            if not client_data or not client_data.get("client"):
+                return {"error": f"Messenger {messenger_id} is not running. Start it first."}
+            client = client_data["client"]
+            entity = int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id
+            await client.send_message(entity, text, parse_mode="md")
+            return {"result": {"sent": True, "chat_id": chat_id}}
+        except Exception as e:
+            return {"error": f"Telegram send failed: {e}"}
+
+    async def _sys_notification_send(self, db, agent_id: str, args: dict) -> dict:
+        """Send a notification to the owner via first available messenger."""
+        title = args.get("title", "")
+        message = args.get("message", "")
+        priority = args.get("priority", "normal")
+        if not title or not message:
+            return {"error": "title and message are required"}
+        priority_emoji = {"low": "ℹ️", "normal": "📌", "high": "⚠️", "urgent": "🚨"}.get(priority, "📌")
+        text = f"{priority_emoji} **{title}**\n\n{message}"
+        try:
+            from app.services.telegram_service import _running_clients
+            if _running_clients:
+                # Send via first running messenger
+                for mid, client_data in _running_clients.items():
+                    client = client_data.get("client")
+                    config = client_data.get("config", {})
+                    trusted = config.get("trusted_users", [])
+                    if client and trusted:
+                        for user in trusted[:1]:
+                            await client.send_message(user, text, parse_mode="md")
+                        return {"result": {"sent": True, "channel": "telegram", "messenger_id": mid}}
+            # Fallback: log it
+            logger.info(f"Notification (no messenger): {title} — {message}")
+            return {"result": {"sent": False, "message": "No active messenger. Notification logged.", "title": title}}
+        except Exception as e:
+            return {"error": f"Notification failed: {e}"}
+
+    async def _sys_image_analyze(self, args: dict) -> dict:
+        """Analyze an image using vision-capable LLM."""
+        image_url = args.get("image_url", "")
+        question = args.get("question", "Describe this image in detail.")
+        if not image_url:
+            return {"error": "No image_url provided"}
+        try:
+            messages = [
+                {"role": "user", "content": [
+                    {"type": "text", "text": question},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ]},
+            ]
+            resp = await self._llm_call(
+                messages, system="You are a vision assistant. Analyze the image and respond in detail.",
+                temperature=0.3,
+            )
+            return {"result": resp.content if resp else "Could not analyze the image"}
+        except Exception as e:
+            return {"error": f"Image analysis failed: {e}"}
+
+    async def _sys_git_operations(self, args: dict) -> dict:
+        """Execute git operations on project directories."""
+        import asyncio as _asyncio
+        from pathlib import Path
+        import os
+
+        operation = args.get("operation", "").lower()
+        project_slug = args.get("project_slug", "")
+        repo_url = args.get("repo_url", "")
+        branch = args.get("branch", "")
+        message = args.get("message", "Auto-commit by AI agent")
+        files = args.get("files", [])
+
+        if not operation:
+            return {"error": "No operation specified"}
+
+        base = Path(os.environ.get("PROJECTS_DIR", "./data/projects")).resolve()
+        cwd = str(base / project_slug / "code") if project_slug else str(base)
+
+        commands = {
+            "clone": f"git clone {repo_url} {cwd}" if repo_url else None,
+            "status": "git status --porcelain",
+            "diff": "git diff",
+            "log": "git log --oneline -20",
+            "branch": f"git checkout -b {branch}" if branch else "git branch -a",
+            "checkout": f"git checkout {branch}" if branch else None,
+            "pull": "git pull",
+            "push": "git push",
+            "commit": None,  # handled specially
+        }
+
+        if operation == "commit":
+            add_cmd = "git add " + " ".join(files) if files else "git add -A"
+            cmd = f"{add_cmd} && git commit -m \"{message}\""
+        elif operation in commands:
+            cmd = commands[operation]
+        else:
+            return {"error": f"Unknown git operation: {operation}"}
+
+        if not cmd:
+            return {"error": f"Missing required parameters for '{operation}'"}
+
+        try:
+            use_cwd = cwd if operation != "clone" else str(base)
+            if not Path(use_cwd).exists():
+                Path(use_cwd).mkdir(parents=True, exist_ok=True)
+            proc = await _asyncio.create_subprocess_shell(
+                cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE, cwd=use_cwd
+            )
+            stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=60)
+            return {
+                "result": {
+                    "operation": operation,
+                    "stdout": stdout.decode()[:5000],
+                    "stderr": stderr.decode()[:2000],
+                    "returncode": proc.returncode,
+                    "success": proc.returncode == 0,
+                }
+            }
+        except _asyncio.TimeoutError:
+            return {"error": f"Git operation '{operation}' timed out (60s)"}
+        except Exception as e:
+            return {"error": f"Git operation failed: {e}"}
+
+    async def _sys_project_search_code(self, args: dict) -> dict:
+        """Search through project files by text or regex."""
+        import re as _re
+        from pathlib import Path
+        import os
+
+        project_slug = args.get("project_slug", "")
+        query = args.get("query", "")
+        is_regex = bool(args.get("is_regex", False))
+        file_pattern = args.get("file_pattern", "")
+        max_results = int(args.get("max_results", 50))
+
+        if not project_slug or not query:
+            return {"error": "project_slug and query are required"}
+
+        base = Path(os.environ.get("PROJECTS_DIR", "./data/projects")).resolve()
+        code_dir = (base / project_slug / "code").resolve()
+        if not code_dir.exists():
+            return {"error": f"Project code directory not found: {project_slug}"}
+
+        try:
+            pattern = _re.compile(query, _re.IGNORECASE) if is_regex else None
+        except _re.error as e:
+            return {"error": f"Invalid regex: {e}"}
+
+        matches = []
+        glob_pat = file_pattern if file_pattern else "*"
+        for fpath in sorted(code_dir.rglob(glob_pat)):
+            if not fpath.is_file():
+                continue
+            try:
+                text = fpath.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                found = pattern.search(line) if pattern else (query.lower() in line.lower())
+                if found:
+                    matches.append({
+                        "file": str(fpath.relative_to(code_dir)),
+                        "line": i,
+                        "text": line.strip()[:200],
+                    })
+                    if len(matches) >= max_results:
+                        break
+            if len(matches) >= max_results:
+                break
+
+        return {"result": matches, "total": len(matches)}
+
+    async def _sys_image_generate(self, db, args: dict) -> dict:
+        """Generate an image using OpenAI DALL-E API."""
+        import httpx
+        from app.api.settings import get_setting_value
+
+        prompt = args.get("prompt", "")
+        size = args.get("size", "1024x1024")
+        quality = args.get("quality", "standard")
+        style = args.get("style", "vivid")
+        if not prompt:
+            return {"error": "No prompt provided"}
+
+        api_key = await get_setting_value(db, "openai_api_key")
+        if not api_key:
+            return {"error": "OpenAI API key not configured. Add it in Settings."}
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/images/generations",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": "dall-e-3", "prompt": prompt, "n": 1, "size": size, "quality": quality, "style": style},
+                )
+            if resp.status_code != 200:
+                return {"error": f"DALL-E API error ({resp.status_code}): {resp.text[:500]}"}
+            data = resp.json()
+            image_url = data.get("data", [{}])[0].get("url", "")
+            revised_prompt = data.get("data", [{}])[0].get("revised_prompt", "")
+            return {"result": {"image_url": image_url, "revised_prompt": revised_prompt}}
+        except Exception as e:
+            return {"error": f"Image generation failed: {e}"}
+
+    async def _sys_translate(self, args: dict) -> dict:
+        """Translate text using LLM."""
+        text = args.get("text", "")
+        to_language = args.get("to_language", "English")
+        from_language = args.get("from_language", "auto-detect")
+        if not text:
+            return {"error": "No text provided"}
+        try:
+            from_part = f"from {from_language} " if from_language and from_language != "auto-detect" else ""
+            resp = await self._llm_call(
+                [{"role": "user", "content": f"Translate the following text {from_part}to {to_language}. Output ONLY the translation, nothing else:\n\n{text[:5000]}"}],
+                system="You are a professional translator. Provide accurate, natural translations. Output only the translated text.",
+                temperature=0.1,
+            )
+            return {"result": {"translation": resp.content if resp else text, "to_language": to_language}}
+        except Exception as e:
+            return {"error": f"Translation failed: {e}"}
+
+    async def _sys_csv_parse(self, args: dict) -> dict:
+        """Parse and analyze CSV data."""
+        import csv
+        import io
+
+        text = args.get("text", "")
+        file_path = args.get("file_path", "")
+        operation = args.get("operation", "parse")
+        columns = args.get("columns")
+        limit = int(args.get("limit", 100))
+
+        if file_path and not text:
+            try:
+                from pathlib import Path
+                text = Path(file_path).read_text(encoding="utf-8")
+            except Exception as e:
+                return {"error": f"Failed to read CSV file: {e}"}
+        if not text:
+            return {"error": "No CSV data provided (text or file_path)"}
+
+        try:
+            reader = csv.DictReader(io.StringIO(text))
+            rows = []
+            for i, row in enumerate(reader):
+                if i >= limit:
+                    break
+                if columns:
+                    row = {k: v for k, v in row.items() if k in columns}
+                rows.append(row)
+
+            if operation == "stats":
+                stats = {"rows": len(rows), "columns": list(rows[0].keys()) if rows else []}
+                # Try numeric stats
+                for col in stats["columns"]:
+                    vals = []
+                    for r in rows:
+                        try:
+                            vals.append(float(r[col]))
+                        except (ValueError, TypeError):
+                            pass
+                    if vals:
+                        stats[f"{col}_min"] = min(vals)
+                        stats[f"{col}_max"] = max(vals)
+                        stats[f"{col}_avg"] = sum(vals) / len(vals)
+                return {"result": stats}
+
+            return {"result": {"rows": rows, "total": len(rows), "columns": list(rows[0].keys()) if rows else []}}
+        except Exception as e:
+            return {"error": f"CSV parsing failed: {e}"}
+
+    async def _sys_pdf_read(self, args: dict) -> dict:
+        """Extract text from PDF files."""
+        file_path = args.get("file_path", "")
+        url = args.get("url", "")
+        max_chars = int(args.get("max_chars", 10000))
+
+        pdf_data = None
+        if url:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                    r = await client.get(url)
+                    if r.status_code != 200:
+                        return {"error": f"Failed to download PDF: HTTP {r.status_code}"}
+                    pdf_data = r.content
+            except Exception as e:
+                return {"error": f"Failed to download PDF: {e}"}
+        elif file_path:
+            try:
+                from pathlib import Path
+                pdf_data = Path(file_path).read_bytes()
+            except Exception as e:
+                return {"error": f"Failed to read PDF file: {e}"}
+        else:
+            return {"error": "No file_path or url provided"}
+
+        # Try PyMuPDF first, then fall back to simple extraction
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(stream=pdf_data, filetype="pdf")
+            text_parts = []
+            for page in doc:
+                text_parts.append(page.get_text())
+            text = "\n\n".join(text_parts)[:max_chars]
+            return {"result": {"text": text, "pages": len(doc), "chars": len(text)}}
+        except ImportError:
+            pass
+
+        # Fallback: basic binary text extraction
+        try:
+            text = pdf_data.decode("latin-1", errors="replace")
+            # Extract text between stream markers (very basic)
+            import re as _re
+            texts = _re.findall(r'\((.*?)\)', text)
+            extracted = " ".join(t for t in texts if len(t) > 2 and t.isprintable())[:max_chars]
+            return {"result": {"text": extracted, "note": "Basic extraction (install PyMuPDF for better results)", "chars": len(extracted)}}
+        except Exception as e:
+            return {"error": f"PDF extraction failed: {e}"}
+
+    async def _sys_email_send(self, db, args: dict) -> dict:
+        """Send email via SMTP."""
+        from app.api.settings import get_setting_value
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        to_addr = args.get("to", "")
+        subject = args.get("subject", "")
+        body = args.get("body", "")
+        is_html = bool(args.get("html", False))
+        reply_to = args.get("reply_to", "")
+
+        if not to_addr or not subject or not body:
+            return {"error": "to, subject, and body are required"}
+
+        smtp_host = await get_setting_value(db, "smtp_host")
+        smtp_port = int(await get_setting_value(db, "smtp_port") or 587)
+        smtp_user = await get_setting_value(db, "smtp_user")
+        smtp_pass = await get_setting_value(db, "smtp_password")
+        smtp_from = await get_setting_value(db, "smtp_from") or smtp_user
+
+        if not smtp_host or not smtp_user:
+            return {"error": "SMTP not configured. Add smtp_host, smtp_user, smtp_password in Settings."}
+
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = smtp_from
+            msg["To"] = to_addr
+            msg["Subject"] = subject
+            if reply_to:
+                msg["Reply-To"] = reply_to
+            msg.attach(MIMEText(body, "html" if is_html else "plain", "utf-8"))
+
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.send_message(msg)
+
+            return {"result": {"sent": True, "to": to_addr, "subject": subject}}
+        except Exception as e:
+            return {"error": f"Email sending failed: {e}"}
+
+    async def _sys_schedule_reminder(self, db, agent_id: str, args: dict) -> dict:
+        """Create a scheduled reminder (stored as a task in MongoDB)."""
+        from datetime import datetime, timedelta, timezone
+        from app.mongodb.services import TaskService
+        from app.mongodb.models.task import MongoTask
+
+        title = args.get("title", "")
+        message = args.get("message", "")
+        trigger_at = args.get("trigger_at", "")
+        recurring = bool(args.get("recurring", False))
+
+        if not title or not message or not trigger_at:
+            return {"error": "title, message, and trigger_at are required"}
+
+        # Parse trigger_at
+        now = datetime.now(timezone.utc)
+        if trigger_at.startswith("+"):
+            # Relative time: +1h, +30m, +2d
+            import re as _re
+            match = _re.match(r'\+(\d+)([mhd])', trigger_at)
+            if not match:
+                return {"error": "Invalid relative time format. Use +1h, +30m, +2d"}
+            amount, unit = int(match.group(1)), match.group(2)
+            delta = {"m": timedelta(minutes=amount), "h": timedelta(hours=amount), "d": timedelta(days=amount)}[unit]
+            trigger_dt = now + delta
+        else:
+            try:
+                trigger_dt = datetime.fromisoformat(trigger_at.replace("Z", "+00:00"))
+                if trigger_dt.tzinfo is None:
+                    trigger_dt = trigger_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return {"error": f"Invalid datetime format: {trigger_at}. Use ISO format or +1h/+30m/+2d"}
+
+        # Create as a scheduled task
+        try:
+            task_svc = TaskService(db)
+            task = MongoTask(
+                name=f"⏰ Reminder: {title}",
+                description=message,
+                agent_id=agent_id,
+                task_type="reminder",
+                schedule_cron="" if not recurring else "0 * * * *",
+                enabled=True,
+            )
+            created = await task_svc.create(task)
+            return {
+                "result": {
+                    "reminder_id": created.id,
+                    "title": title,
+                    "trigger_at": trigger_dt.isoformat(),
+                    "recurring": recurring,
+                    "created": True,
+                }
+            }
+        except Exception as e:
+            return {"error": f"Failed to create reminder: {e}"}
+
+    async def _sys_yaml_parse(self, args: dict) -> dict:
+        """Parse YAML text or file."""
+        import yaml
+
+        text = args.get("text", "")
+        file_path = args.get("file_path", "")
+        operation = args.get("operation", "parse")
+
+        if file_path and not text:
+            try:
+                from pathlib import Path
+                text = Path(file_path).read_text(encoding="utf-8")
+            except Exception as e:
+                return {"error": f"Failed to read YAML file: {e}"}
+        if not text:
+            return {"error": "No YAML data provided (text or file_path)"}
+
+        try:
+            data = yaml.safe_load(text)
+            if operation == "validate":
+                return {"result": {"valid": True, "type": type(data).__name__}}
+            import json
+            return {"result": json.loads(json.dumps(data, default=str))}
+        except yaml.YAMLError as e:
+            if operation == "validate":
+                return {"result": {"valid": False, "error": str(e)}}
+            return {"error": f"YAML parse error: {e}"}
+
+    async def _sys_xml_parse(self, args: dict) -> dict:
+        """Parse XML data, optionally query with XPath."""
+        import xml.etree.ElementTree as ET
+
+        text = args.get("text", "")
+        file_path = args.get("file_path", "")
+        xpath = args.get("xpath", "")
+
+        if file_path and not text:
+            try:
+                from pathlib import Path
+                text = Path(file_path).read_text(encoding="utf-8")
+            except Exception as e:
+                return {"error": f"Failed to read XML file: {e}"}
+        if not text:
+            return {"error": "No XML data provided (text or file_path)"}
+
+        try:
+            root = ET.fromstring(text)
+
+            def elem_to_dict(elem):
+                result = {"tag": elem.tag}
+                if elem.attrib:
+                    result["attributes"] = dict(elem.attrib)
+                if elem.text and elem.text.strip():
+                    result["text"] = elem.text.strip()
+                children = [elem_to_dict(c) for c in elem]
+                if children:
+                    result["children"] = children
+                return result
+
+            if xpath:
+                elements = root.findall(xpath)
+                return {"result": [elem_to_dict(e) for e in elements]}
+
+            return {"result": elem_to_dict(root)}
+        except ET.ParseError as e:
+            return {"error": f"XML parse error: {e}"}
+
+    async def _sys_regex_extract(self, args: dict) -> dict:
+        """Extract data from text using regex."""
+        import re as _re
+
+        text = args.get("text", "")
+        pattern = args.get("pattern", "")
+        operation = args.get("operation", "extract")
+        replacement = args.get("replacement", "")
+        flags_str = args.get("flags", "")
+
+        if not text or not pattern:
+            return {"error": "text and pattern are required"}
+
+        flags = 0
+        if "i" in flags_str:
+            flags |= _re.IGNORECASE
+        if "m" in flags_str:
+            flags |= _re.MULTILINE
+        if "s" in flags_str:
+            flags |= _re.DOTALL
+
+        try:
+            compiled = _re.compile(pattern, flags)
+            if operation == "match":
+                m = compiled.search(text)
+                if m:
+                    return {"result": {"match": m.group(), "groups": m.groups(), "groupdict": m.groupdict(), "span": list(m.span())}}
+                return {"result": None, "message": "No match found"}
+            elif operation == "replace":
+                result = compiled.sub(replacement, text)
+                return {"result": {"text": result, "count": len(compiled.findall(text))}}
+            elif operation == "split":
+                return {"result": compiled.split(text)}
+            else:  # extract
+                all_matches = compiled.findall(text)
+                return {"result": {"matches": all_matches[:200], "total": len(all_matches)}}
+        except _re.error as e:
+            return {"error": f"Regex error: {e}"}
+
+    async def _sys_api_call(self, args: dict) -> dict:
+        """Make authenticated REST API calls."""
+        import httpx
+
+        url = args.get("url", "")
+        method = args.get("method", "GET").upper()
+        headers = args.get("headers") or {}
+        body = args.get("body")
+        auth_type = args.get("auth_type", "")
+        auth_value = args.get("auth_value", "")
+        timeout = int(args.get("timeout", 30))
+
+        if not url:
+            return {"error": "No URL provided"}
+
+        # Apply auth
+        if auth_type and auth_value:
+            if auth_type == "bearer":
+                headers["Authorization"] = f"Bearer {auth_value}"
+            elif auth_type == "api_key":
+                headers["X-API-Key"] = auth_value
+            elif auth_type == "basic":
+                import base64
+                headers["Authorization"] = f"Basic {base64.b64encode(auth_value.encode()).decode()}"
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, verify=False) as client:
+                kwargs = {"headers": headers}
+                if body and method in ("POST", "PUT", "PATCH"):
+                    kwargs["json"] = body if isinstance(body, dict) else body
+                r = await getattr(client, method.lower())(url, **kwargs)
+                try:
+                    resp_json = r.json()
+                except Exception:
+                    resp_json = None
+                return {
+                    "result": {
+                        "status": r.status_code,
+                        "body": resp_json if resp_json else r.text[:5000],
+                        "headers": dict(r.headers),
+                    }
+                }
+        except Exception as e:
+            return {"error": f"API call failed: {e}"}
+
+    async def _sys_math_calculate(self, args: dict) -> dict:
+        """Evaluate math expressions safely."""
+        import math
+        import statistics as _stats
+
+        expression = args.get("expression", "")
+        operation = args.get("operation", "eval")
+        data = args.get("data")
+
+        if operation == "statistics" and data:
+            try:
+                nums = [float(x) for x in data]
+                result = {
+                    "count": len(nums),
+                    "sum": sum(nums),
+                    "mean": _stats.mean(nums),
+                    "median": _stats.median(nums),
+                    "min": min(nums),
+                    "max": max(nums),
+                }
+                if len(nums) > 1:
+                    result["stdev"] = _stats.stdev(nums)
+                    result["variance"] = _stats.variance(nums)
+                return {"result": result}
+            except Exception as e:
+                return {"error": f"Statistics error: {e}"}
+
+        if not expression:
+            return {"error": "No expression provided"}
+
+        # Safe math eval
+        allowed_names = {
+            "pi": math.pi, "e": math.e, "tau": math.tau, "inf": math.inf,
+            "sqrt": math.sqrt, "abs": abs, "round": round, "int": int, "float": float,
+            "sin": math.sin, "cos": math.cos, "tan": math.tan,
+            "asin": math.asin, "acos": math.acos, "atan": math.atan, "atan2": math.atan2,
+            "log": math.log, "log2": math.log2, "log10": math.log10,
+            "exp": math.exp, "pow": math.pow,
+            "ceil": math.ceil, "floor": math.floor,
+            "radians": math.radians, "degrees": math.degrees,
+            "factorial": math.factorial, "gcd": math.gcd,
+            "min": min, "max": max, "sum": sum,
+        }
+        try:
+            result = eval(expression, {"__builtins__": {}}, allowed_names)
+            return {"result": {"expression": expression, "value": result}}
+        except Exception as e:
+            return {"error": f"Math evaluation error: {e}"}
+
+    async def _sys_code_review(self, args: dict) -> dict:
+        """Review code using LLM."""
+        code = args.get("code", "")
+        file_path = args.get("file_path", "")
+        language = args.get("language", "auto-detect")
+        focus = args.get("focus", "all")
+
+        if file_path and not code:
+            try:
+                from pathlib import Path
+                code = Path(file_path).read_text(encoding="utf-8")
+            except Exception as e:
+                return {"error": f"Failed to read file: {e}"}
+        if not code:
+            return {"error": "No code provided (code or file_path)"}
+
+        focus_prompt = {
+            "bugs": "Focus specifically on bugs, logic errors, and potential crashes.",
+            "security": "Focus specifically on security vulnerabilities, injection risks, and unsafe patterns.",
+            "style": "Focus on code style, naming, readability, and best practices.",
+            "performance": "Focus on performance issues, inefficiencies, and optimization opportunities.",
+            "all": "Review for bugs, security issues, code style, and performance.",
+        }.get(focus, "Review for bugs, security issues, code style, and performance.")
+
+        try:
+            resp = await self._llm_call(
+                [{"role": "user", "content": f"Review this {language} code:\n\n```\n{code[:8000]}\n```\n\n{focus_prompt}\n\nFormat: list each finding with severity (critical/warning/info), category, description, and fix suggestion."}],
+                system="You are an expert code reviewer. Provide specific, actionable findings. Be thorough but concise.",
+                temperature=0.2,
+            )
+            return {"result": resp.content if resp else "Could not review the code"}
+        except Exception as e:
+            return {"error": f"Code review failed: {e}"}
+
+    async def _sys_docker_manage(self, args: dict) -> dict:
+        """Manage Docker containers."""
+        import asyncio as _asyncio
+
+        operation = args.get("operation", "").lower()
+        container = args.get("container", "")
+        tail = int(args.get("tail", 50))
+
+        commands = {
+            "list": "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}'",
+            "images": "docker images --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}'",
+            "status": f"docker inspect --format '{{{{.State.Status}}}} ({{{{.State.StartedAt}}}})' {container}" if container else "docker ps -a --format 'table {{.Names}}\t{{.Status}}'",
+            "start": f"docker start {container}" if container else None,
+            "stop": f"docker stop {container}" if container else None,
+            "restart": f"docker restart {container}" if container else None,
+            "logs": f"docker logs --tail {tail} {container}" if container else None,
+        }
+
+        if operation not in commands:
+            return {"error": f"Unknown operation: {operation}. Available: {list(commands.keys())}"}
+
+        cmd = commands[operation]
+        if not cmd:
+            return {"error": f"Container name required for '{operation}'"}
+
+        try:
+            proc = await _asyncio.create_subprocess_shell(
+                cmd, stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=30)
+            return {
+                "result": {
+                    "operation": operation,
+                    "output": stdout.decode()[:5000],
+                    "error": stderr.decode()[:2000] if proc.returncode != 0 else "",
+                    "success": proc.returncode == 0,
+                }
+            }
+        except _asyncio.TimeoutError:
+            return {"error": f"Docker operation '{operation}' timed out"}
+        except Exception as e:
+            return {"error": f"Docker operation failed: {e}"}
+
+    async def _sys_rss_read(self, args: dict) -> dict:
+        """Read and parse RSS/Atom feeds."""
+        import httpx
+        import xml.etree.ElementTree as ET
+
+        url = args.get("url", "")
+        limit = int(args.get("limit", 20))
+
+        if not url:
+            return {"error": "No feed URL provided"}
+
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code != 200:
+                    return {"error": f"Failed to fetch feed: HTTP {r.status_code}"}
+
+            root = ET.fromstring(r.text)
+            entries = []
+
+            # RSS 2.0
+            for item in root.findall(".//item")[:limit]:
+                entries.append({
+                    "title": (item.findtext("title") or "").strip(),
+                    "link": (item.findtext("link") or "").strip(),
+                    "description": (item.findtext("description") or "").strip()[:500],
+                    "pubDate": (item.findtext("pubDate") or "").strip(),
+                })
+
+            # Atom
+            if not entries:
+                ns = {"atom": "http://www.w3.org/2005/Atom"}
+                for entry in root.findall(".//atom:entry", ns)[:limit]:
+                    link_el = entry.find("atom:link", ns)
+                    entries.append({
+                        "title": (entry.findtext("atom:title", "", ns)).strip(),
+                        "link": link_el.get("href", "") if link_el is not None else "",
+                        "description": (entry.findtext("atom:summary", "", ns)).strip()[:500],
+                        "pubDate": (entry.findtext("atom:updated", "", ns)).strip(),
+                    })
+
+            return {"result": {"entries": entries, "total": len(entries), "feed_url": url}}
+        except ET.ParseError as e:
+            return {"error": f"Feed parse error: {e}"}
+        except Exception as e:
+            return {"error": f"RSS read failed: {e}"}
 
     def _build_context(self, classification: Classification, user_input: str) -> dict:
         """Build context dict for arg inference."""

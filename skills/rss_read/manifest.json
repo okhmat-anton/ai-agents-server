@@ -1,0 +1,26 @@
+{
+  "name": "rss_read",
+  "display_name": "RSS Read",
+  "description": "Parse RSS/Atom feeds, return latest entries.",
+  "description_for_agent": "Read and parse RSS or Atom feeds. Parameters: url (string, required — RSS/Atom feed URL), limit (integer, optional — max entries to return, default 20). Returns entries with title, link, summary, and published date. Use this to monitor news, blogs, or any content with an RSS feed.",
+  "category": "web",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "RSS/Atom feed URL"
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max entries (default: 20)"
+      }
+    },
+    "required": [
+      "url"
+    ]
+  },
+  "output_schema": {}
+}

@@ -1,0 +1,39 @@
+{
+  "name": "project_search_code",
+  "display_name": "Project Search Code",
+  "description": "Search through project files by text or regex pattern.",
+  "description_for_agent": "Search through project source files using text or regex. Like grep across the codebase. Parameters: project_slug (string, required), query (string, required — search text or regex), is_regex (boolean, optional, default false), file_pattern (string, optional — glob like '*.py'), max_results (integer, optional, default 50). Returns matching lines with file paths and line numbers. Use this to find code patterns, function definitions, or specific strings in a project.",
+  "category": "code",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug"
+      },
+      "query": {
+        "type": "string",
+        "description": "Search text or regex pattern"
+      },
+      "is_regex": {
+        "type": "boolean",
+        "description": "Treat query as regex (default: false)"
+      },
+      "file_pattern": {
+        "type": "string",
+        "description": "File glob pattern (e.g. '*.py', '*.js')"
+      },
+      "max_results": {
+        "type": "integer",
+        "description": "Max results (default: 50)"
+      }
+    },
+    "required": [
+      "project_slug",
+      "query"
+    ]
+  },
+  "output_schema": {}
+}

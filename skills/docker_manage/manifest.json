@@ -1,0 +1,30 @@
+{
+  "name": "docker_manage",
+  "display_name": "Docker Manage",
+  "description": "Manage Docker containers: list, start, stop, logs, status.",
+  "description_for_agent": "Manage Docker containers and images. Parameters: operation (string, required — 'list', 'start', 'stop', 'restart', 'logs', 'status', 'images'), container (string, optional — container name or ID), tail (integer, optional — number of log lines, default 50). Use this to check service health, restart containers, or view logs.",
+  "category": "system",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "operation": {
+        "type": "string",
+        "description": "Operation: list, start, stop, restart, logs, status, images"
+      },
+      "container": {
+        "type": "string",
+        "description": "Container name or ID"
+      },
+      "tail": {
+        "type": "integer",
+        "description": "Number of log lines (default: 50)"
+      }
+    },
+    "required": [
+      "operation"
+    ]
+  },
+  "output_schema": {}
+}

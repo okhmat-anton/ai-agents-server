@@ -1,0 +1,42 @@
+{
+  "name": "csv_parse",
+  "display_name": "CSV Parse",
+  "description": "Parse, filter, and analyze CSV data.",
+  "description_for_agent": "Parse and analyze CSV data from text or file. Parameters: text (string, optional — raw CSV text), file_path (string, optional — path to CSV file), operation (string, optional — 'parse', 'filter', 'stats', 'convert'; default 'parse'), columns (array, optional — select specific columns), filter_expr (string, optional — filter expression like 'age > 25'), limit (integer, optional — max rows to return, default 100). Returns structured data. At least text or file_path required.",
+  "category": "data",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Raw CSV text"
+      },
+      "file_path": {
+        "type": "string",
+        "description": "Path to CSV file"
+      },
+      "operation": {
+        "type": "string",
+        "description": "Operation: parse, filter, stats, convert"
+      },
+      "columns": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Select specific columns"
+      },
+      "filter_expr": {
+        "type": "string",
+        "description": "Filter expression (e.g. 'age > 25')"
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max rows (default: 100)"
+      }
+    }
+  },
+  "output_schema": {}
+}

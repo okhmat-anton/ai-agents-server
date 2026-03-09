@@ -1,0 +1,30 @@
+{
+  "name": "web_search",
+  "display_name": "Web Search",
+  "description": "Search the internet via DuckDuckGo. Returns titles, snippets, and URLs.",
+  "description_for_agent": "Search the internet using DuckDuckGo. Returns search results with titles, URLs, and snippets. Parameters: query (string, required — search query), limit (integer, optional, default 10 — max results), region (string, optional — region code like 'us-en', 'ru-ru'). Use this when you need to find information, research a topic, or discover URLs.",
+  "category": "web",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search query"
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max results (default: 10)"
+      },
+      "region": {
+        "type": "string",
+        "description": "Region code (e.g. 'us-en', 'ru-ru')"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "output_schema": {}
+}

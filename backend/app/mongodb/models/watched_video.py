@@ -19,6 +19,7 @@ class MongoWatchedVideo(BaseModel):
     author: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)  # Extra platform-specific data
     agent_id: Optional[str] = None  # Which agent requested the transcript
+    category: Optional[str] = None  # User-defined category for grouping
     credits_used: int = 1
     error: Optional[str] = None  # Error message if fetch failed
     created_at: datetime = Field(default_factory=datetime.utcnow)

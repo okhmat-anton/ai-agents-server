@@ -1,0 +1,31 @@
+{
+  "name": "code_review",
+  "display_name": "Code Review",
+  "description": "Review code for bugs, security issues, and improvements using LLM.",
+  "description_for_agent": "Review code for bugs, security vulnerabilities, style issues, and suggest improvements. Parameters: code (string, optional — code to review), file_path (string, optional — path to file to review), language (string, optional — programming language, auto-detected), focus (string, optional — 'bugs', 'security', 'style', 'performance', 'all'; default 'all'). Returns categorized review findings with suggestions.",
+  "category": "code",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string",
+        "description": "Code to review"
+      },
+      "file_path": {
+        "type": "string",
+        "description": "Path to file to review"
+      },
+      "language": {
+        "type": "string",
+        "description": "Programming language"
+      },
+      "focus": {
+        "type": "string",
+        "description": "Review focus: bugs, security, style, performance, all"
+      }
+    }
+  },
+  "output_schema": {}
+}

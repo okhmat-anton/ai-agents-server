@@ -1,0 +1,31 @@
+{
+  "name": "notification_send",
+  "display_name": "Send Notification",
+  "description": "Send a notification to the owner via configured channel.",
+  "description_for_agent": "Send a notification to the creator/owner. Parameters: title (string, required — notification title), message (string, required — notification body), priority (string, optional — 'low', 'normal', 'high', 'urgent'; default 'normal'). The notification is delivered via the first available configured messenger. Use this when something important happens that the owner needs to know about.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Notification title"
+      },
+      "message": {
+        "type": "string",
+        "description": "Notification body text"
+      },
+      "priority": {
+        "type": "string",
+        "description": "Priority: low, normal, high, urgent (default: normal)"
+      }
+    },
+    "required": [
+      "title",
+      "message"
+    ]
+  },
+  "output_schema": {}
+}

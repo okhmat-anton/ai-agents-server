@@ -1,0 +1,31 @@
+{
+  "name": "pdf_read",
+  "display_name": "PDF Read",
+  "description": "Extract text and metadata from PDF files.",
+  "description_for_agent": "Extract text content from PDF files. Parameters: file_path (string, optional — local path to PDF), url (string, optional — URL to download PDF from), pages (string, optional — page range like '1-5' or 'all'; default 'all'), max_chars (integer, optional — max characters to return, default 10000). Returns extracted text. At least file_path or url required.",
+  "category": "files",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "file_path": {
+        "type": "string",
+        "description": "Local path to PDF file"
+      },
+      "url": {
+        "type": "string",
+        "description": "URL to download PDF from"
+      },
+      "pages": {
+        "type": "string",
+        "description": "Page range: 'all', '1-5', '3' (default: all)"
+      },
+      "max_chars": {
+        "type": "integer",
+        "description": "Max characters to return (default: 10000)"
+      }
+    }
+  },
+  "output_schema": {}
+}

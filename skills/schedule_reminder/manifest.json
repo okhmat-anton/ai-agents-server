@@ -1,0 +1,36 @@
+{
+  "name": "schedule_reminder",
+  "display_name": "Schedule Reminder",
+  "description": "Create a reminder that triggers at a specified time.",
+  "description_for_agent": "Create a scheduled reminder that will trigger a notification at a specified time. Parameters: title (string, required — reminder title), message (string, required — reminder message), trigger_at (string, required — ISO datetime like '2024-03-15T14:00:00' or relative like '+1h', '+30m', '+2d'), recurring (boolean, optional — repeat on the same schedule, default false). Use this when the user asks to be reminded about something.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Reminder title"
+      },
+      "message": {
+        "type": "string",
+        "description": "Reminder message"
+      },
+      "trigger_at": {
+        "type": "string",
+        "description": "When to trigger: ISO datetime or relative (+1h, +30m, +2d)"
+      },
+      "recurring": {
+        "type": "boolean",
+        "description": "Repeat (default: false)"
+      }
+    },
+    "required": [
+      "title",
+      "message",
+      "trigger_at"
+    ]
+  },
+  "output_schema": {}
+}

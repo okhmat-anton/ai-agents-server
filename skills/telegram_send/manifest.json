@@ -1,0 +1,36 @@
+{
+  "name": "telegram_send",
+  "display_name": "Telegram Send",
+  "description": "Send a message to a Telegram chat via configured messenger.",
+  "description_for_agent": "Send a proactive message to a Telegram chat using a configured messenger integration. Parameters: messenger_id (string, required — ID of the messenger config), chat_id (string, required — Telegram chat ID or username), text (string, required — message text, supports Markdown), parse_mode (string, optional — 'markdown' or 'html', default 'markdown'). Use this to send notifications, reports, or alerts to Telegram.",
+  "category": "messaging",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "messenger_id": {
+        "type": "string",
+        "description": "Messenger configuration ID"
+      },
+      "chat_id": {
+        "type": "string",
+        "description": "Telegram chat ID or username"
+      },
+      "text": {
+        "type": "string",
+        "description": "Message text (supports Markdown)"
+      },
+      "parse_mode": {
+        "type": "string",
+        "description": "Parse mode: markdown or html (default: markdown)"
+      }
+    },
+    "required": [
+      "messenger_id",
+      "chat_id",
+      "text"
+    ]
+  },
+  "output_schema": {}
+}

@@ -1,0 +1,40 @@
+{
+  "name": "email_send",
+  "display_name": "Email Send",
+  "description": "Send emails via SMTP.",
+  "description_for_agent": "Send an email via SMTP. Requires SMTP settings in system configuration. Parameters: to (string, required — recipient email), subject (string, required — email subject), body (string, required — email body text), html (boolean, optional — send as HTML, default false), reply_to (string, optional — reply-to address). Use this to send reports, alerts, or communications via email.",
+  "category": "messaging",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "string",
+        "description": "Recipient email address"
+      },
+      "subject": {
+        "type": "string",
+        "description": "Email subject"
+      },
+      "body": {
+        "type": "string",
+        "description": "Email body"
+      },
+      "html": {
+        "type": "boolean",
+        "description": "Send as HTML (default: false)"
+      },
+      "reply_to": {
+        "type": "string",
+        "description": "Reply-to address"
+      }
+    },
+    "required": [
+      "to",
+      "subject",
+      "body"
+    ]
+  },
+  "output_schema": {}
+}
