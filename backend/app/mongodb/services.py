@@ -27,6 +27,7 @@ from app.mongodb.models import (
 )
 from app.mongodb.models.messenger import MongoMessengerAccount, MongoMessengerMessage, MongoMessengerLog
 from app.mongodb.models.agent_fact import MongoAgentFact
+from app.mongodb.models.agent_event import MongoAgentEvent
 from app.mongodb.models.research_resource import MongoResearchResource
 from app.mongodb.models.watched_video import MongoWatchedVideo
 
@@ -330,6 +331,41 @@ class AgentFactService(BaseMongoService[MongoAgentFact]):
             "content": {"$regex": query, "$options": "i"},
         }
         cursor = self.collection.find(filt).sort("created_at", -1).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def delete_by_agent(self, agent_id: str):
+        result = await self.collection.delete_many({"agent_id": agent_id})
+        return result.deleted_count
+
+
+class AgentEventService(BaseMongoService[MongoAgentEvent]):
+    """CRUD service for agent memory events."""
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "agent_events", MongoAgentEvent)
+
+    async def get_by_agent(self, agent_id: str, event_type: str = None,
+                           importance: str = None, limit: int = 200, skip: int = 0):
+        """Get events for an agent with optional filters."""
+        filt = {"agent_id": agent_id}
+        if event_type:
+            filt["event_type"] = event_type
+        if importance:
+            filt["importance"] = importance
+        cursor = self.collection.find(filt).sort("event_date", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def search_by_text(self, agent_id: str, query: str, limit: int = 20):
+        """Search events by title or description."""
+        filt = {
+            "agent_id": agent_id,
+            "$or": [
+                {"title": {"$regex": query, "$options": "i"}},
+                {"description": {"$regex": query, "$options": "i"}},
+            ],
+        }
+        cursor = self.collection.find(filt).sort("event_date", -1).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [self.model_class.from_mongo(doc) for doc in docs]
 

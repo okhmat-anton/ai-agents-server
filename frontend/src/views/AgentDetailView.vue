@@ -97,6 +97,10 @@
           Facts
           <v-badge v-if="factsCount > 0" :content="factsCount" color="teal" inline />
         </v-tab>
+        <v-tab value="events">
+          Events
+          <v-badge v-if="eventsCount > 0" :content="eventsCount" color="deep-purple" inline />
+        </v-tab>
         <v-tab value="projects">Projects</v-tab>
         <v-tab value="files">Files</v-tab>
         <v-tab value="tasks">Tasks</v-tab>
@@ -609,6 +613,87 @@
             <v-icon size="48" class="mb-2">mdi-lightbulb-question-outline</v-icon>
             <div>No facts or hypotheses yet</div>
             <div class="text-caption mt-1">Add facts manually or let the agent extract them from conversations</div>
+          </div>
+        </div>
+
+        <!-- Events Tab -->
+        <div v-if="tab === 'events'">
+          <!-- Filters row -->
+          <div class="d-flex align-center mb-4 flex-wrap ga-2">
+            <v-btn-toggle v-model="eventFilter" density="compact" variant="outlined" mandatory>
+              <v-btn value="all" size="small">All</v-btn>
+              <v-btn value="conversation" size="small">Conversations</v-btn>
+              <v-btn value="observation" size="small">Observations</v-btn>
+              <v-btn value="discovery" size="small">Discoveries</v-btn>
+              <v-btn value="decision" size="small">Decisions</v-btn>
+              <v-btn value="milestone" size="small">Milestones</v-btn>
+            </v-btn-toggle>
+            <v-spacer />
+            <v-text-field
+              v-model="eventSearch"
+              density="compact"
+              variant="outlined"
+              placeholder="Search events..."
+              prepend-inner-icon="mdi-magnify"
+              hide-details
+              clearable
+              style="max-width: 300px;"
+              @update:model-value="debouncedLoadEvents"
+            />
+            <v-btn color="deep-purple" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openEventDialog()">Add</v-btn>
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-refresh" @click="loadEvents" :loading="eventsLoading">Refresh</v-btn>
+          </div>
+
+          <!-- Events list -->
+          <div v-if="eventsLoading && !events.length" class="text-center pa-8">
+            <v-progress-circular indeterminate color="deep-purple" />
+          </div>
+          <div v-else-if="events.length">
+            <v-card v-for="ev in events" :key="ev.id" variant="outlined" class="mb-2 pa-3">
+              <div class="d-flex align-start">
+                <!-- Type icon -->
+                <v-icon
+                  :color="eventTypeColor(ev.event_type)"
+                  size="20"
+                  class="mr-2 mt-1"
+                >{{ eventTypeIcon(ev.event_type) }}</v-icon>
+
+                <!-- Content -->
+                <div class="flex-grow-1">
+                  <div class="text-body-1 font-weight-medium">{{ ev.title }}</div>
+                  <div v-if="ev.description" class="text-body-2 text-medium-emphasis mt-1">{{ ev.description }}</div>
+                  <div class="d-flex align-center mt-1 flex-wrap ga-1">
+                    <v-chip
+                      :color="eventTypeColor(ev.event_type)"
+                      size="x-small" variant="flat"
+                    >{{ ev.event_type }}</v-chip>
+                    <v-chip
+                      :color="eventImportanceColor(ev.importance)"
+                      size="x-small" variant="flat"
+                    >{{ ev.importance }}</v-chip>
+                    <v-chip size="x-small" variant="tonal">{{ ev.source }}</v-chip>
+                    <v-chip
+                      v-for="tag in ev.tags"
+                      :key="tag"
+                      size="x-small" variant="tonal" color="blue-grey"
+                    >{{ tag }}</v-chip>
+                    <v-chip size="x-small" variant="tonal" class="ml-auto">{{ ev.created_by }}</v-chip>
+                    <v-chip size="x-small" variant="tonal">{{ new Date(ev.event_date).toLocaleString() }}</v-chip>
+                  </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="d-flex ml-2">
+                  <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editEvent(ev)" />
+                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="confirmDeleteEvent(ev)" />
+                </div>
+              </div>
+            </v-card>
+          </div>
+          <div v-else class="text-center text-grey pa-8">
+            <v-icon size="48" class="mb-2">mdi-calendar-clock</v-icon>
+            <div>No events yet</div>
+            <div class="text-caption mt-1">Add events manually or let the agent record them automatically</div>
           </div>
         </div>
 
@@ -1838,6 +1923,47 @@
       </v-card>
     </v-dialog>
 
+    <!-- Event Add/Edit Dialog -->
+    <v-dialog v-model="eventDialog" max-width="600">
+      <v-card>
+        <v-card-title>{{ eventEditId ? 'Edit' : 'Add' }} Event</v-card-title>
+        <v-card-text>
+          <v-text-field v-model="eventFormTitle" label="Title" autofocus density="compact" class="mb-2" />
+          <v-textarea v-model="eventFormDescription" label="Description" rows="3" density="compact" class="mb-2" />
+          <v-row>
+            <v-col cols="4">
+              <v-select v-model="eventFormType" :items="['conversation', 'observation', 'discovery', 'decision', 'milestone', 'custom']" label="Type" density="compact" />
+            </v-col>
+            <v-col cols="4">
+              <v-select v-model="eventFormSource" :items="['user', 'agent', 'system']" label="Source" density="compact" />
+            </v-col>
+            <v-col cols="4">
+              <v-select v-model="eventFormImportance" :items="['low', 'medium', 'high', 'critical']" label="Importance" density="compact" />
+            </v-col>
+          </v-row>
+          <v-combobox v-model="eventFormTags" label="Tags" density="compact" multiple chips closable-chips small-chips hide-details />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="eventDialog = false">Cancel</v-btn>
+          <v-btn color="deep-purple" @click="saveEvent" :loading="eventSaving">{{ eventEditId ? 'Save' : 'Add' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Delete Event Dialog -->
+    <v-dialog v-model="deleteEventDialog" max-width="400">
+      <v-card>
+        <v-card-title>Delete Event</v-card-title>
+        <v-card-text>"{{ deleteEventItem?.title }}"</v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="deleteEventDialog = false">Cancel</v-btn>
+          <v-btn color="error" @click="doDeleteEvent">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- New Personal Skill Dialog -->
     <v-dialog v-model="newSkillDialog" max-width="600">
       <v-card>
@@ -2206,6 +2332,39 @@ const deleteFactDialog = ref(false)
 const deleteFactItem = ref(null)
 
 const factsCount = computed(() => facts.value.length)
+
+// Events state
+const events = ref([])
+const eventsLoading = ref(false)
+const eventFilter = ref('all')
+const eventSearch = ref('')
+const eventDialog = ref(false)
+const eventEditId = ref(null)
+const eventFormTitle = ref('')
+const eventFormDescription = ref('')
+const eventFormType = ref('observation')
+const eventFormSource = ref('user')
+const eventFormImportance = ref('medium')
+const eventFormTags = ref([])
+const eventSaving = ref(false)
+const deleteEventDialog = ref(false)
+const deleteEventItem = ref(null)
+
+const eventsCount = computed(() => events.value.length)
+
+const eventTypeColor = (t) => ({
+  conversation: 'blue', observation: 'teal', discovery: 'amber',
+  decision: 'orange', milestone: 'green', custom: 'grey',
+}[t] || 'grey')
+
+const eventTypeIcon = (t) => ({
+  conversation: 'mdi-chat-outline', observation: 'mdi-eye-outline', discovery: 'mdi-lightbulb-on-outline',
+  decision: 'mdi-scale-balance', milestone: 'mdi-flag-checkered', custom: 'mdi-bookmark-outline',
+}[t] || 'mdi-calendar-clock')
+
+const eventImportanceColor = (i) => ({
+  low: 'blue-grey', medium: 'blue', high: 'orange', critical: 'red',
+}[i] || 'grey')
 
 const id = computed(() => route.params.id)
 
@@ -2862,6 +3021,86 @@ const doDeleteFact = async () => {
   } catch (e) { alert(e.response?.data?.detail || 'Failed to delete fact') }
 }
 
+// ===== Events =====
+let _eventDebounce = null
+const debouncedLoadEvents = () => {
+  clearTimeout(_eventDebounce)
+  _eventDebounce = setTimeout(() => loadEvents(), 400)
+}
+
+const loadEvents = async () => {
+  eventsLoading.value = true
+  try {
+    const params = { limit: 500 }
+    if (eventFilter.value !== 'all') params.event_type = eventFilter.value
+    if (eventSearch.value) params.search = eventSearch.value
+    const { data } = await api.get(`/agents/${id.value}/events`, { params })
+    events.value = data.items || []
+  } catch { events.value = [] }
+  finally { eventsLoading.value = false }
+}
+
+watch(eventFilter, () => loadEvents())
+
+const openEventDialog = (existing = null) => {
+  if (existing) {
+    eventEditId.value = existing.id
+    eventFormTitle.value = existing.title
+    eventFormDescription.value = existing.description || ''
+    eventFormType.value = existing.event_type
+    eventFormSource.value = existing.source
+    eventFormImportance.value = existing.importance
+    eventFormTags.value = existing.tags || []
+  } else {
+    eventEditId.value = null
+    eventFormTitle.value = ''
+    eventFormDescription.value = ''
+    eventFormType.value = 'observation'
+    eventFormSource.value = 'user'
+    eventFormImportance.value = 'medium'
+    eventFormTags.value = []
+  }
+  eventDialog.value = true
+}
+
+const editEvent = (ev) => openEventDialog(ev)
+
+const saveEvent = async () => {
+  if (!eventFormTitle.value.trim()) return
+  eventSaving.value = true
+  try {
+    const payload = {
+      event_type: eventFormType.value,
+      title: eventFormTitle.value.trim(),
+      description: eventFormDescription.value.trim(),
+      source: eventFormSource.value,
+      importance: eventFormImportance.value,
+      tags: eventFormTags.value,
+    }
+    if (eventEditId.value) {
+      await api.patch(`/agents/${id.value}/events/${eventEditId.value}`, payload)
+    } else {
+      await api.post(`/agents/${id.value}/events`, payload)
+    }
+    eventDialog.value = false
+    await loadEvents()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to save event') }
+  finally { eventSaving.value = false }
+}
+
+const confirmDeleteEvent = (ev) => {
+  deleteEventItem.value = ev
+  deleteEventDialog.value = true
+}
+
+const doDeleteEvent = async () => {
+  try {
+    await api.delete(`/agents/${id.value}/events/${deleteEventItem.value.id}`)
+    deleteEventDialog.value = false
+    await loadEvents()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to delete event') }
+}
+
 const doDeleteFile = async () => {
   try {
     await api.delete(`/agents/${id.value}/files/delete`, { params: { path: deleteFilePath.value } })
@@ -2885,6 +3124,7 @@ watch(tab, (val) => {
   if (val === 'beliefs') loadBeliefs()
   if (val === 'aspirations') loadAspirations()
   if (val === 'facts') loadFacts()
+  if (val === 'events') loadEvents()
 })
 
 watch(logLevel, () => { if (tab.value === 'logs') loadLogs() })

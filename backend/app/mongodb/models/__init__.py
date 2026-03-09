@@ -12,6 +12,7 @@ from app.mongodb.models.log import MongoAgentLog
 from app.mongodb.models.memory import MongoMemory, MongoMemoryLink
 from app.mongodb.models.creator_profile import MongoCreatorProfile
 from app.mongodb.models.agent_fact import MongoAgentFact
+from app.mongodb.models.agent_event import MongoAgentEvent
 from app.mongodb.models.research_resource import MongoResearchResource
 from app.mongodb.models.watched_video import MongoWatchedVideo
 

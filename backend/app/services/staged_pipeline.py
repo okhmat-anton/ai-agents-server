@@ -315,6 +315,7 @@ GATHER_SKILLS = frozenset({
     "study_material", "recall_knowledge",
     "creator_context",
     "fact_read",
+    "event_read",
     "video_watch",
 })
 
@@ -323,6 +324,7 @@ ACTION_SKILLS = frozenset({
     "code_execute", "project_update_task", "project_task_comment",
     "project_run_code", "sound_generate",
     "fact_save", "fact_extract",
+    "event_save",
 })
 
 # "safe" action skills that can be auto-executed without user confirmation
@@ -331,6 +333,7 @@ SAFE_ACTION_SKILLS = frozenset({
     "memory_store", "project_file_write", "project_update_task",
     "project_task_comment", "code_execute", "sound_generate",
     "fact_save", "fact_extract",
+    "event_save",
 })
 
 # Dangerous skills require confirmation (never auto-execute)
@@ -512,6 +515,16 @@ def _infer_args(skill_name: str, planned_args: dict, context: dict) -> dict:
         if "text" not in args or not args["text"]:
             args["text"] = user_input
 
+    elif skill_name == "event_save":
+        if "title" not in args or not args["title"]:
+            args["title"] = user_input[:200]
+
+    elif skill_name == "event_read":
+        if "query" not in args or not args["query"]:
+            args["query"] = user_input
+        if "limit" not in args:
+            args["limit"] = 20
+
     return args
 
 
@@ -681,6 +694,7 @@ class StagedPipeline:
         "study_material", "recall_knowledge",
         "creator_context",
         "fact_save", "fact_read", "fact_extract",
+        "event_save", "event_read",
         "video_watch",
     }
 
@@ -737,6 +751,10 @@ class StagedPipeline:
             return await self._sys_fact_extract(db, agent_id, args)
         elif name == "video_watch":
             return await self._sys_video_watch(db, agent_id, args)
+        elif name == "event_save":
+            return await self._sys_event_save(db, agent_id, args)
+        elif name == "event_read":
+            return await self._sys_event_read(db, agent_id, args)
         return None
 
     async def _sys_memory_search(self, db, agent_id: str, args: dict) -> dict:
@@ -1363,6 +1381,72 @@ class StagedPipeline:
         except Exception as e:
             logger.warning(f"fact_extract failed: {e}")
             return {"error": f"Fact extraction failed: {e}"}
+
+    async def _sys_event_save(self, db, agent_id: str, args: dict) -> dict:
+        """Save an event to agent's memory timeline."""
+        from app.mongodb.services import AgentEventService
+        from app.mongodb.models.agent_event import MongoAgentEvent
+
+        title = str(args.get("title", "")).strip()
+        if not title:
+            return {"error": "No title provided for event"}
+
+        event_type = args.get("event_type", "observation")
+        valid_types = {"conversation", "observation", "discovery", "decision", "milestone", "custom"}
+        if event_type not in valid_types:
+            event_type = "observation"
+
+        importance = args.get("importance", "medium")
+        if importance not in {"low", "medium", "high", "critical"}:
+            importance = "medium"
+
+        event = MongoAgentEvent(
+            agent_id=agent_id,
+            event_type=event_type,
+            title=title,
+            description=str(args.get("description", "")).strip(),
+            source=args.get("source", "agent"),
+            importance=importance,
+            tags=args.get("tags", []),
+            created_by="agent",
+        )
+        svc = AgentEventService(db)
+        created = await svc.create(event)
+        return {
+            "result": {"id": created.id, "event_type": created.event_type, "stored": True},
+            "message": f"Event '{title}' saved successfully.",
+        }
+
+    async def _sys_event_read(self, db, agent_id: str, args: dict) -> dict:
+        """Read events from agent's memory timeline."""
+        from app.mongodb.services import AgentEventService
+
+        svc = AgentEventService(db)
+        query = str(args.get("query", "")).strip()
+        event_type = args.get("event_type")  # None = all
+        limit = int(args.get("limit", 20))
+
+        if query:
+            items = await svc.search_by_text(agent_id, query, limit=limit)
+        else:
+            items = await svc.get_by_agent(agent_id, event_type=event_type, limit=limit)
+
+        if not items:
+            return {"result": [], "message": "No events found."}
+
+        results = [
+            {
+                "event_type": e.event_type,
+                "title": e.title,
+                "description": e.description,
+                "source": e.source,
+                "importance": e.importance,
+                "tags": e.tags,
+                "event_date": e.event_date.isoformat() if hasattr(e.event_date, "isoformat") else str(e.event_date),
+            }
+            for e in items
+        ]
+        return {"result": results}
 
     async def _sys_video_watch(self, db, agent_id: str, args: dict) -> dict:
         """Fetch video transcript via ScrapeCreators API and cache in watched_videos collection."""
