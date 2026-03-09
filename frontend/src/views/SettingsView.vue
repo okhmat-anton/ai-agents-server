@@ -95,7 +95,7 @@
     <!-- Audio & AI API Keys -->
     <v-card class="mb-6">
       <v-card-title>
-        <v-icon class="mr-2">mdi-volume-high</v-icon>Audio Settings
+        <v-icon class="mr-2">mdi-volume-high</v-icon>Kie.ai Settings (audio, gpt, gemini, <a href="https://kie.ai/market" target="_blank">models market</a>)
       </v-card-title>
       <v-card-text>
         <v-row>
@@ -468,9 +468,9 @@ const saveAudioSettings = async () => {
     await store.updateSystemSetting('tts_timeout', String(audioSettings.value.tts_timeout))
     originalAudioSettings.value.kieai_api_key = audioSettings.value.kieai_api_key
     originalAudioSettings.value.tts_timeout = audioSettings.value.tts_timeout
-    showSnackbar('Audio settings saved')
+    showSnackbar('Kie.ai settings saved')
   } catch (e) {
-    showSnackbar(e.response?.data?.detail || 'Failed to save audio settings', 'error')
+    showSnackbar(e.response?.data?.detail || 'Failed to save Kie.ai settings', 'error')
   } finally {
     savingAudio.value = false
   }
