@@ -151,18 +151,78 @@ async def start_autonomous_run(
     if not model_ids:
         raise ValueError("Agent has no models configured and no base model available")
 
-    # Create chat session
+    # Find or create chat session (reuse existing project_task / agent chats)
     sess_svc = ChatSessionService(db)
-    chat_session = MongoChatSession(
-        title=f"🔄 Autonomous: {agent.name} — {protocol.name}",
-        model_ids=model_ids,
-        agent_id=agent_id_str,
-        user_id=str(user_id) if user_id else None,
-        multi_model=False,
-        system_prompt="",
-        temperature=agent.temperature,
-    )
-    chat_session = await sess_svc.create(chat_session)
+    chat_session = None
+
+    # Check if agent has assigned projects → use project_task chat
+    assigned_projects = _load_assigned_projects(agent_id_str)
+    primary_project = None
+    if assigned_projects:
+        # Prefer the project where agent is lead, or the first one
+        for p in assigned_projects:
+            if p.get("is_lead"):
+                primary_project = p
+                break
+        if not primary_project:
+            primary_project = assigned_projects[0]
+
+    if primary_project:
+        project_slug = primary_project.get("slug")
+        # Look for existing project_task chat for this project + agent
+        existing = await sess_svc.find_one({
+            "chat_type": "project_task",
+            "project_slug": project_slug,
+            "agent_id": agent_id_str,
+        })
+        if not existing:
+            # Also look for project_task chat for this project without specific agent
+            existing = await sess_svc.find_one({
+                "chat_type": "project_task",
+                "project_slug": project_slug,
+            })
+        if existing:
+            chat_session = existing
+            # Update model_ids if needed
+            await sess_svc.update(chat_session.id, {"model_ids": model_ids})
+    else:
+        # No projects — look for existing agent chat
+        existing = await sess_svc.find_one({
+            "chat_type": "agent",
+            "agent_id": agent_id_str,
+        })
+        if existing:
+            chat_session = existing
+            await sess_svc.update(chat_session.id, {"model_ids": model_ids})
+
+    if not chat_session:
+        # Create new session with correct chat_type
+        if primary_project:
+            chat_session = MongoChatSession(
+                title=primary_project.get("name") or primary_project.get("slug", "Project"),
+                model_ids=model_ids,
+                agent_id=agent_id_str,
+                agent_ids=[agent_id_str],
+                user_id=str(user_id) if user_id else None,
+                multi_model=False,
+                system_prompt="",
+                temperature=agent.temperature,
+                chat_type="project_task",
+                project_slug=primary_project.get("slug"),
+            )
+        else:
+            chat_session = MongoChatSession(
+                title=agent.name,
+                model_ids=model_ids,
+                agent_id=agent_id_str,
+                agent_ids=[agent_id_str],
+                user_id=str(user_id) if user_id else None,
+                multi_model=False,
+                system_prompt="",
+                temperature=agent.temperature,
+                chat_type="agent",
+            )
+        chat_session = await sess_svc.create(chat_session)
 
     # Create autonomous run
     run_svc = AutonomousRunService(db)
