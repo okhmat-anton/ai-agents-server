@@ -142,7 +142,7 @@
           </v-col>
         </v-row>
         <v-alert type="info" variant="tonal" density="compact" class="mt-4">
-          kie.ai API key is used for TTS (Text-to-Speech) and STT (Speech-to-Text) features via ElevenLabs proxy.
+          kie.ai API key is used for TTS (Text-to-Speech), STT (Speech-to-Text), and LLM models (GPT-5.2, Gemini 3.1 Pro, Gemini 3 Pro).
         </v-alert>
       </v-card-text>
     </v-card>

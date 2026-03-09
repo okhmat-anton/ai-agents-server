@@ -48,6 +48,8 @@ from app.config import get_settings
 from app.llm.base import Message, GenerationParams, LLMResponse
 from app.llm.ollama import OllamaProvider
 from app.llm.openai_compatible import OpenAICompatibleProvider
+from app.llm.anthropic import AnthropicProvider
+from app.llm.kieai import KieAIProvider
 from app.mongodb.services import (
     AgentService, AgentModelService, AgentProtocolService,
     ModelConfigService, SkillService, AgentSkillService,
@@ -138,6 +140,14 @@ class AgentChatEngine:
                 raise ValueError(f"No model assigned for role '{role_name}'")
             if mc.provider == "ollama":
                 return (mc.provider, settings.OLLAMA_BASE_URL, mc.model_id, mc.api_key)
+            if mc.provider == "anthropic" and not mc.api_key:
+                from app.api.settings import get_setting_value
+                api_key = await get_setting_value(self.db, "anthropic_api_key")
+                return (mc.provider, mc.base_url or "https://api.anthropic.com", mc.model_id, api_key)
+            if mc.provider == "kieai" and not mc.api_key:
+                from app.api.settings import get_setting_value
+                api_key = await get_setting_value(self.db, "kieai_api_key")
+                return (mc.provider, mc.base_url or "https://api.kie.ai", mc.model_id, api_key)
             return (mc.provider, mc.base_url or "https://api.openai.com/v1", mc.model_id, mc.api_key or "")
 
         try:
@@ -155,6 +165,16 @@ class AgentChatEngine:
 
         if mc.provider == "ollama":
             return (mc.provider, settings.OLLAMA_BASE_URL, mc.model_id, mc.api_key)
+
+        # Resolve API keys from system settings for managed providers
+        if mc.provider == "anthropic" and not mc.api_key:
+            from app.api.settings import get_setting_value
+            api_key = await get_setting_value(self.db, "anthropic_api_key")
+            return (mc.provider, mc.base_url or "https://api.anthropic.com", mc.model_id, api_key)
+        if mc.provider == "kieai" and not mc.api_key:
+            from app.api.settings import get_setting_value
+            api_key = await get_setting_value(self.db, "kieai_api_key")
+            return (mc.provider, mc.base_url or "https://api.kie.ai", mc.model_id, api_key)
 
         return (mc.provider, mc.base_url, mc.model_id, mc.api_key)
 
@@ -215,6 +235,16 @@ class AgentChatEngine:
         if model_cfg.provider == "ollama":
             return (model_cfg.provider, settings.OLLAMA_BASE_URL, model_cfg.model_id, model_cfg.api_key)
 
+        # Resolve API keys from system settings for managed providers
+        if model_cfg.provider == "anthropic" and not model_cfg.api_key:
+            from app.api.settings import get_setting_value
+            api_key = await get_setting_value(self.db, "anthropic_api_key")
+            return (model_cfg.provider, model_cfg.base_url or "https://api.anthropic.com", model_cfg.model_id, api_key)
+        if model_cfg.provider == "kieai" and not model_cfg.api_key:
+            from app.api.settings import get_setting_value
+            api_key = await get_setting_value(self.db, "kieai_api_key")
+            return (model_cfg.provider, model_cfg.base_url or "https://api.kie.ai", model_cfg.model_id, api_key)
+
         return (
             model_cfg.provider,
             model_cfg.base_url or "https://api.openai.com/v1",
@@ -236,6 +266,10 @@ class AgentChatEngine:
 
         if provider == "ollama":
             llm = OllamaProvider(base_url)
+        elif provider == "anthropic":
+            llm = AnthropicProvider(api_key=api_key, base_url=base_url)
+        elif provider == "kieai":
+            llm = KieAIProvider(api_key=api_key, base_url=base_url)
         else:
             llm = OpenAICompatibleProvider(base_url, api_key)
 

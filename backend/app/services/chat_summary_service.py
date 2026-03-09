@@ -129,14 +129,19 @@ Summary:"""
         # Create LLM provider
         from app.llm.ollama import OllamaProvider
         from app.llm.openai_compatible import OpenAICompatibleProvider
+        from app.llm.anthropic import AnthropicProvider
+        from app.llm.kieai import KieAIProvider
         
         if provider_name == "ollama":
             provider = OllamaProvider(base_url=base_url, timeout=120.0)
+        elif provider_name == "anthropic":
+            provider = AnthropicProvider(api_key=api_key, base_url=base_url)
+        elif provider_name == "kieai":
+            provider = KieAIProvider(api_key=api_key, base_url=base_url, timeout=120)
         else:
             provider = OpenAICompatibleProvider(
                 base_url=base_url,
                 api_key=api_key or "",
-                timeout=120.0
             )
         
         # Generate summary

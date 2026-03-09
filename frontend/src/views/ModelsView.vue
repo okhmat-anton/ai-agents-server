@@ -46,7 +46,7 @@
             <template #item.provider="{ item }">
               <v-chip
                 size="small" variant="tonal"
-                :color="item.provider === 'ollama' ? 'green' : item.provider === 'anthropic' ? 'deep-purple' : item.provider === 'openai_compatible' ? 'blue' : 'grey'"
+                :color="item.provider === 'ollama' ? 'green' : item.provider === 'anthropic' ? 'deep-purple' : item.provider === 'kieai' ? 'teal' : item.provider === 'openai_compatible' ? 'blue' : 'grey'"
               >{{ item.provider }}</v-chip>
             </template>
             <template #item.roles="{ item }">
@@ -301,12 +301,35 @@
             class="mb-2"
             :loading="loadingAnthropicModels"
           />
+          <v-select
+            v-else-if="form.provider === 'kieai'"
+            v-model="form.model_id"
+            :items="kieaiModelOptions"
+            item-title="label"
+            item-value="value"
+            label="kie.ai Model"
+            class="mb-2"
+            :loading="loadingKieaiModels"
+          />
           <v-text-field v-else v-model="form.model_id" label="Model ID" hint="e.g. qwen2.5-coder:14b" class="mb-2" />
-          <v-text-field v-model="form.base_url" label="Base URL" class="mb-2" :disabled="form.provider === 'anthropic'" />
-          <v-text-field v-model="form.api_key" label="API Key (optional)" class="mb-2" :hint="form.provider === 'anthropic' ? 'Leave empty to use key from Settings' : ''" />
+          <v-text-field v-model="form.base_url" label="Base URL" class="mb-2" :disabled="form.provider === 'anthropic' || form.provider === 'kieai'" />
+          <v-text-field v-model="form.api_key" label="API Key (optional)" class="mb-2" :hint="form.provider === 'anthropic' ? 'Leave empty to use key from Settings' : form.provider === 'kieai' ? 'Leave empty to use key from Settings' : ''" />
+
+          <v-row>
+            <v-col cols="6">
+              <v-text-field v-model.number="form.timeout" label="Timeout (seconds)" type="number" hint="Max time to wait for response" class="mb-2" />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model.number="form.retry_count" label="Retry Count" type="number" hint="Retries on failure" class="mb-2" />
+            </v-col>
+          </v-row>
+
           <v-checkbox v-model="form.is_active" label="Active" />
           <v-alert v-if="form.provider === 'anthropic' && !anthropicKeyConfigured && !form.api_key" type="warning" variant="tonal" density="compact" class="mt-1">
             No Anthropic API key found. Set it in <router-link to="/settings" class="text-primary font-weight-medium">Settings</router-link> or enter one above.
+          </v-alert>
+          <v-alert v-if="form.provider === 'kieai' && !kieaiKeyConfigured && !form.api_key" type="warning" variant="tonal" density="compact" class="mt-1">
+            No kie.ai API key found. Set it in <router-link to="/settings" class="text-primary font-weight-medium">Settings</router-link> or enter one above.
           </v-alert>
         </v-card-text>
         <v-card-actions>
@@ -581,13 +604,14 @@ const modelHeaders = [
   { title: 'Actions', key: 'actions', sortable: false, width: 180 },
 ]
 
-const defaultForm = () => ({ name: '', model_id: '', provider: 'ollama', base_url: 'http://host.docker.internal:11434', api_key: '', is_active: true })
+const defaultForm = () => ({ name: '', model_id: '', provider: 'ollama', base_url: 'http://host.docker.internal:11434', api_key: '', is_active: true, timeout: 180, retry_count: 3 })
 const form = ref(defaultForm())
 
 // Provider options
 const providerOptions = [
   { value: 'ollama', label: 'Ollama' },
   { value: 'anthropic', label: 'Anthropic (Claude)' },
+  { value: 'kieai', label: 'kie.ai (GPT-5.2, Gemini)' },
   { value: 'openai_compatible', label: 'OpenAI Compatible' },
   { value: 'custom', label: 'Custom' },
 ]
@@ -611,6 +635,25 @@ const fetchAnthropicModels = async () => {
   finally { loadingAnthropicModels.value = false }
 }
 
+// kie.ai models
+const kieaiModels = ref([])
+const kieaiKeyConfigured = ref(false)
+const loadingKieaiModels = ref(false)
+
+const kieaiModelOptions = computed(() =>
+  kieaiModels.value.map(m => ({ value: m.id, label: `${m.name} (${m.id})` }))
+)
+
+const fetchKieaiModels = async () => {
+  loadingKieaiModels.value = true
+  try {
+    const { data } = await api.get('/settings/kieai/models')
+    kieaiModels.value = data.models || []
+    kieaiKeyConfigured.value = data.configured
+  } catch { kieaiModels.value = [] }
+  finally { loadingKieaiModels.value = false }
+}
+
 const onProviderChange = (provider) => {
   if (provider === 'anthropic') {
     form.value.base_url = 'https://api.anthropic.com'
@@ -618,6 +661,16 @@ const onProviderChange = (provider) => {
       form.value.model_id = anthropicModels.value.length ? anthropicModels.value[0].id : 'claude-sonnet-4-20250514'
     }
     if (!form.value.name) form.value.name = 'Claude'
+  } else if (provider === 'kieai') {
+    form.value.base_url = 'https://api.kie.ai'
+    if (!form.value.model_id || !kieaiModels.value.find(m => m.id === form.value.model_id)) {
+      form.value.model_id = kieaiModels.value.length ? kieaiModels.value[0].id : 'gpt-5-2'
+    }
+    if (!form.value.name) {
+      const selected = kieaiModels.value.find(m => m.id === form.value.model_id)
+      form.value.name = selected ? selected.name : 'kie.ai Model'
+    }
+    fetchKieaiModels()
   } else if (provider === 'ollama') {
     form.value.base_url = 'http://host.docker.internal:11434'
   } else {
@@ -627,7 +680,7 @@ const onProviderChange = (provider) => {
 
 const showDialog = (item = null) => {
   editItem.value = item
-  form.value = item ? { ...item } : defaultForm()
+  form.value = item ? { ...defaultForm(), ...item } : defaultForm()
   dialog.value = true
 }
 
@@ -1156,6 +1209,7 @@ onMounted(async () => {
   settingsStore.fetchModels()
   fetchRoles()
   fetchAnthropicModels()
+  fetchKieaiModels()
   await fetchOllamaStatus()
   await Promise.all([fetchOllamaModels(), fetchOllamaRunning()])
 })

@@ -123,6 +123,7 @@ async def test_model(
     from app.llm.ollama import OllamaProvider
     from app.llm.openai_compatible import OpenAICompatibleProvider
     from app.llm.anthropic import AnthropicProvider
+    from app.llm.kieai import KieAIProvider
 
     try:
         if model.provider == "ollama":
@@ -130,6 +131,9 @@ async def test_model(
         elif model.provider == "anthropic":
             api_key = model.api_key or await get_setting_value(db, "anthropic_api_key")
             provider = AnthropicProvider(api_key=api_key, base_url=model.base_url or "https://api.anthropic.com")
+        elif model.provider == "kieai":
+            api_key = model.api_key or await get_setting_value(db, "kieai_api_key")
+            provider = KieAIProvider(api_key=api_key, base_url=model.base_url or "https://api.kie.ai", timeout=model.timeout if hasattr(model, 'timeout') else 180)
         else:
             provider = OpenAICompatibleProvider(model.base_url, model.api_key)
         connected = await provider.check_connection()
@@ -154,6 +158,7 @@ async def list_available_models(
     from app.llm.ollama import OllamaProvider
     from app.llm.openai_compatible import OpenAICompatibleProvider
     from app.llm.anthropic import AnthropicProvider
+    from app.llm.kieai import KieAIProvider
 
     try:
         if model.provider == "ollama":
@@ -161,6 +166,9 @@ async def list_available_models(
         elif model.provider == "anthropic":
             api_key = model.api_key or await get_setting_value(db, "anthropic_api_key")
             provider = AnthropicProvider(api_key=api_key, base_url=model.base_url or "https://api.anthropic.com")
+        elif model.provider == "kieai":
+            api_key = model.api_key or await get_setting_value(db, "kieai_api_key")
+            provider = KieAIProvider(api_key=api_key, base_url=model.base_url or "https://api.kie.ai")
         else:
             provider = OpenAICompatibleProvider(model.base_url, model.api_key)
         models = await provider.list_models()
@@ -198,6 +206,38 @@ async def test_anthropic_connection(
     connected = await provider.check_connection()
     if connected:
         return {"status": "ok", "message": "Anthropic API connection successful"}
+    raise HTTPException(status_code=400, detail="Connection failed — check your API key")
+
+
+# --- kie.ai ---
+@router.get("/kieai/models")
+async def get_kieai_models(
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Return available kie.ai models and whether the key is configured."""
+    from app.llm.kieai import KIEAI_MODELS
+    api_key = await get_setting_value(db, "kieai_api_key")
+    return {
+        "configured": bool(api_key),
+        "models": KIEAI_MODELS,
+    }
+
+
+@router.post("/kieai/test")
+async def test_kieai_connection(
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Test kie.ai API connection using stored key."""
+    api_key = await get_setting_value(db, "kieai_api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="kie.ai API key not configured")
+    from app.llm.kieai import KieAIProvider
+    provider = KieAIProvider(api_key=api_key)
+    connected = await provider.check_connection()
+    if connected:
+        return {"status": "ok", "message": "kie.ai API connection successful"}
     raise HTTPException(status_code=400, detail="Connection failed — check your API key")
 
 
@@ -330,7 +370,7 @@ _DEFAULT_SETTINGS = {
     "system_access_enabled": {"value": "false", "description": "Allow terminal commands, process management and full system control"},
     "log_retention_days": {"value": "14", "description": "Number of days to retain logs (system, agent, thinking). Older logs are automatically deleted."},
     # Audio / TTS / STT via kie.ai
-    "kieai_api_key": {"value": "", "description": "kie.ai API key for TTS/STT (ElevenLabs proxy)"},
+    "kieai_api_key": {"value": "", "description": "kie.ai API key for TTS/STT and LLM models (GPT-5.2, Gemini 3.1 Pro, Gemini 3 Pro)"},
     "tts_timeout": {"value": "120", "description": "Maximum time (seconds) to wait for TTS audio generation. kie.ai processes async, so longer texts need more time."},
     # Anthropic
     "anthropic_api_key": {"value": "", "description": "Anthropic API key for Claude models (claude-sonnet-4, claude-opus-4, etc.)"},

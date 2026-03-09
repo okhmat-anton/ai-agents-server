@@ -58,6 +58,8 @@ class MongoModelConfig(BaseModel):
     supports_vision: bool = False
     context_window: int = 8192
     max_output_tokens: int = 4096
+    timeout: int = 180  # seconds, default 3 minutes
+    retry_count: int = 3  # number of retries on failure
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

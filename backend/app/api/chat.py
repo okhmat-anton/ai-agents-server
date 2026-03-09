@@ -30,6 +30,7 @@ from app.llm.base import Message, GenerationParams, LLMResponse
 from app.llm.ollama import OllamaProvider
 from app.llm.openai_compatible import OpenAICompatibleProvider
 from app.llm.anthropic import AnthropicProvider
+from app.llm.kieai import KieAIProvider
 from app.api.agent_files import read_agent_config, read_agent_settings
 from app.api.agent_beliefs import read_beliefs
 from app.services.protocol_executor import (
@@ -242,6 +243,10 @@ async def _resolve_model(model_id_str: str, db: AsyncIOMotorDatabase) -> tuple[s
             from app.api.settings import get_setting_value
             anthropic_key = await get_setting_value(db, "anthropic_api_key")
             return (mc.provider, mc.base_url or "https://api.anthropic.com", mc.model_id, anthropic_key)
+        if mc.provider == "kieai" and not mc.api_key:
+            from app.api.settings import get_setting_value
+            kieai_key = await get_setting_value(db, "kieai_api_key")
+            return (mc.provider, mc.base_url or "https://api.kie.ai", mc.model_id, kieai_key)
         return (mc.provider, mc.base_url, mc.model_id, mc.api_key)
 
     try:
@@ -267,6 +272,12 @@ async def _resolve_model(model_id_str: str, db: AsyncIOMotorDatabase) -> tuple[s
         from app.api.settings import get_setting_value
         anthropic_key = await get_setting_value(db, "anthropic_api_key")
         return (mc.provider, mc.base_url or "https://api.anthropic.com", mc.model_id, anthropic_key)
+
+    # For kie.ai: resolve api_key from system settings if not stored on model
+    if mc.provider == "kieai" and not mc.api_key:
+        from app.api.settings import get_setting_value
+        kieai_key = await get_setting_value(db, "kieai_api_key")
+        return (mc.provider, mc.base_url or "https://api.kie.ai", mc.model_id, kieai_key)
 
     return (mc.provider, mc.base_url, mc.model_id, mc.api_key)
 
@@ -339,6 +350,8 @@ async def _chat_with_model(
         llm = OllamaProvider(base_url)
     elif provider == "anthropic":
         llm = AnthropicProvider(api_key=api_key, base_url=base_url)
+    elif provider == "kieai":
+        llm = KieAIProvider(api_key=api_key, base_url=base_url)
     else:
         llm = OpenAICompatibleProvider(base_url, api_key)
 

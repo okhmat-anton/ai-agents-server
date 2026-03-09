@@ -10,6 +10,8 @@ class ModelConfigCreate(BaseModel):
     base_url: str = "http://host.docker.internal:11434"
     api_key: str | None = None
     is_active: bool = True
+    timeout: int = 180
+    retry_count: int = 3
 
 
 class ModelConfigUpdate(BaseModel):
@@ -19,6 +21,8 @@ class ModelConfigUpdate(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     is_active: bool | None = None
+    timeout: int | None = None
+    retry_count: int | None = None
 
 
 class ModelConfigResponse(BaseModel):
@@ -29,6 +33,8 @@ class ModelConfigResponse(BaseModel):
     base_url: str
     api_key: str | None = None
     is_active: bool
+    timeout: int = 180
+    retry_count: int = 3
     created_at: datetime
     updated_at: datetime
 
