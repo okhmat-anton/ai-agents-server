@@ -27,6 +27,18 @@
       </v-btn-toggle>
       <v-spacer />
       <v-select
+        v-model="filterCategory"
+        :items="categoryOptions"
+        label="Category"
+        variant="outlined"
+        density="compact"
+        hide-details
+        clearable
+        style="max-width: 200px;"
+        prepend-inner-icon="mdi-tag-outline"
+        @update:model-value="loadFacts"
+      />
+      <v-select
         v-model="filterAgent"
         :items="agentOptions"
         item-title="name"
@@ -53,8 +65,59 @@
       />
     </div>
 
-    <!-- Facts Table -->
-    <v-card>
+    <!-- Facts grouped by category -->
+    <div v-if="!filterCategory && groupedFacts.length > 1">
+      <div v-for="group in groupedFacts" :key="group.category" class="mb-6">
+        <div class="text-subtitle-1 font-weight-bold mb-2 d-flex align-center">
+          <v-icon size="18" class="mr-2">mdi-tag</v-icon>
+          {{ group.category || 'Uncategorized' }}
+          <v-chip size="x-small" variant="tonal" class="ml-2">{{ group.items.length }}</v-chip>
+        </div>
+        <v-card>
+          <v-card-text class="pa-0">
+            <v-data-table
+              :headers="headers"
+              :items="group.items"
+              :loading="loading"
+              hover
+              density="compact"
+            >
+              <template #item.type="{ item }">
+                <v-chip :color="item.type === 'fact' ? 'teal' : 'orange'" size="small" variant="tonal">
+                  <v-icon start size="14">{{ item.type === 'fact' ? 'mdi-check-decagram' : 'mdi-help-circle-outline' }}</v-icon>
+                  {{ item.type }}
+                </v-chip>
+              </template>
+              <template #item.content="{ item }">
+                <div class="text-truncate" style="max-width: 500px;">{{ item.content }}</div>
+              </template>
+              <template #item.agent_id="{ item }">
+                <v-chip size="small" variant="tonal" color="blue">{{ agentName(item.agent_id) }}</v-chip>
+              </template>
+              <template #item.category="{ item }">
+                <v-chip v-if="item.category" size="small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
+              </template>
+              <template #item.verified="{ item }">
+                <v-icon v-if="item.verified" color="green" size="20">mdi-check-circle</v-icon>
+                <v-icon v-else color="grey" size="20">mdi-minus-circle-outline</v-icon>
+              </template>
+              <template #item.confidence="{ item }">
+                <v-chip size="small" variant="tonal">{{ (item.confidence * 100).toFixed(0) }}%</v-chip>
+              </template>
+              <template #item.created_at="{ item }">{{ formatDate(item.created_at) }}</template>
+              <template #item.actions="{ item }">
+                <v-btn v-if="item.type === 'hypothesis' && !item.verified" icon size="small" variant="text" color="green" @click.stop="verifyFact(item)"><v-icon>mdi-check-circle</v-icon></v-btn>
+                <v-btn icon size="small" variant="text" @click.stop="editFact(item)"><v-icon>mdi-pencil</v-icon></v-btn>
+                <v-btn icon size="small" variant="text" color="error" @click.stop="deleteFact(item.id)"><v-icon>mdi-delete</v-icon></v-btn>
+              </template>
+            </v-data-table>
+          </v-card-text>
+        </v-card>
+      </div>
+    </div>
+
+    <!-- Flat table -->
+    <v-card v-else>
       <v-card-text class="pa-0">
         <v-data-table
           :headers="headers"
@@ -77,6 +140,10 @@
             <v-chip size="small" variant="tonal" color="blue">
               {{ agentName(item.agent_id) }}
             </v-chip>
+          </template>
+
+          <template #item.category="{ item }">
+            <v-chip v-if="item.category" size="small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
           </template>
 
           <template #item.verified="{ item }">
@@ -168,6 +235,16 @@
             class="mb-3"
           />
           <v-combobox
+            v-model="formData.category"
+            :items="categoryOptions"
+            label="Category"
+            variant="outlined"
+            density="compact"
+            clearable
+            prepend-inner-icon="mdi-tag-outline"
+            class="mb-3"
+          />
+          <v-combobox
             v-model="formData.tags"
             label="Tags"
             variant="outlined"
@@ -201,6 +278,7 @@ const loading = ref(false)
 const errorMsg = ref(null)
 const filterType = ref('all')
 const filterAgent = ref(null)
+const filterCategory = ref(null)
 const searchQuery = ref('')
 
 const formDialog = ref(false)
@@ -208,16 +286,34 @@ const editingFact = ref(null)
 const saving = ref(false)
 const formData = ref({
   agent_id: null, type: 'fact', content: '', source: 'user',
-  verified: false, confidence: 0.8, tags: [],
+  verified: false, confidence: 0.8, category: '', tags: [],
 })
 
 const agents = ref([])
 const agentOptions = computed(() => agents.value)
 
+const categoryOptions = computed(() => {
+  const cats = [...new Set(facts.value.map(f => f.category).filter(Boolean))]
+  return cats.sort()
+})
+
+const groupedFacts = computed(() => {
+  const groups = {}
+  for (const f of facts.value) {
+    const cat = f.category || ''
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(f)
+  }
+  return Object.entries(groups)
+    .sort(([a], [b]) => { if (!a) return 1; if (!b) return -1; return a.localeCompare(b) })
+    .map(([cat, items]) => ({ category: cat, items }))
+})
+
 const headers = [
   { title: 'Type', key: 'type', width: 130 },
   { title: 'Content', key: 'content' },
   { title: 'Agent', key: 'agent_id', width: 150 },
+  { title: 'Category', key: 'category', width: 140 },
   { title: 'Verified', key: 'verified', width: 90 },
   { title: 'Confidence', key: 'confidence', width: 110 },
   { title: 'Created', key: 'created_at', width: 140 },
@@ -246,6 +342,7 @@ async function loadFacts() {
     const params = { limit: 200 }
     if (filterType.value && filterType.value !== 'all') params.type = filterType.value
     if (filterAgent.value) params.agent_id = filterAgent.value
+    if (filterCategory.value) params.category = filterCategory.value
     if (searchQuery.value) params.search = searchQuery.value
     const { data } = await api.get('/facts', { params })
     facts.value = data.items || []
@@ -267,7 +364,7 @@ function openCreateDialog() {
   formData.value = {
     agent_id: agents.value.length ? agents.value[0].id : null,
     type: 'fact', content: '', source: 'user',
-    verified: false, confidence: 0.8, tags: [],
+    verified: false, confidence: 0.8, category: '', tags: [],
   }
   formDialog.value = true
 }
@@ -281,6 +378,7 @@ function editFact(item) {
     source: item.source,
     verified: item.verified,
     confidence: item.confidence,
+    category: item.category || '',
     tags: [...(item.tags || [])],
   }
   formDialog.value = true
@@ -296,6 +394,7 @@ async function saveFact() {
         source: formData.value.source,
         verified: formData.value.verified,
         confidence: formData.value.confidence,
+        category: formData.value.category || null,
         tags: formData.value.tags,
       })
       showSnackbar?.('Fact updated', 'success')

@@ -239,6 +239,23 @@
 
         <v-divider />
 
+        <!-- Category -->
+        <div class="d-flex align-center ga-2 px-4 py-2" style="background: rgba(255,255,255,0.02);">
+          <v-combobox
+            :model-value="currentVideo.category"
+            :items="categoryOptions"
+            label="Category"
+            variant="outlined"
+            density="compact"
+            hide-details
+            clearable
+            style="max-width: 250px;"
+            prepend-inner-icon="mdi-tag-outline"
+            @update:model-value="updateVideoCategory($event)"
+          />
+          <v-spacer />
+        </div>
+
         <!-- Action toolbar (only when transcript is available) -->
         <div v-if="transcript" class="d-flex align-center flex-wrap ga-2 px-4 py-2" style="background: rgba(255,255,255,0.02);">
           <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-chat-plus-outline" @click="startChatWithTranscript">
@@ -354,6 +371,28 @@ const filteredHistory = computed(() => {
   return history.value.filter(v => v.platform === filterPlatform.value)
 })
 
+const categoryOptions = computed(() => {
+  const cats = [...new Set(history.value.map(v => v.category).filter(Boolean))]
+  return cats.sort()
+})
+
+const groupedHistory = computed(() => {
+  const items = filteredHistory.value
+  const groups = {}
+  for (const v of items) {
+    const cat = v.category || ''
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(v)
+  }
+  return Object.entries(groups)
+    .sort(([a], [b]) => {
+      if (!a) return 1
+      if (!b) return -1
+      return a.localeCompare(b)
+    })
+    .map(([cat, items]) => ({ category: cat, items }))
+})
+
 onMounted(async () => {
   await Promise.all([loadHistory(), loadAgents()])
 })
@@ -375,6 +414,7 @@ async function loadHistory() {
   try {
     const params = { limit: 200 }
     if (filterPlatform.value) params.platform = filterPlatform.value
+    if (filterCategory.value) params.category = filterCategory.value
     const { data } = await api.get('/watched-videos', { params })
     history.value = data.items || []
   } catch (e) {
@@ -552,6 +592,20 @@ function confirmDeleteVideo(id) {
   deleteVideoId.value = id
   deleteConfirmText.value = ''
   deleteDialog.value = true
+}
+
+async function updateVideoCategory(val) {
+  if (!currentVideo.value) return
+  const category = val || null
+  try {
+    await api.patch(`/watched-videos/${currentVideo.value.id}`, { category })
+    currentVideo.value = { ...currentVideo.value, category }
+    const idx = history.value.findIndex(v => v.id === currentVideo.value.id)
+    if (idx !== -1) history.value[idx] = { ...history.value[idx], category }
+    showSnackbar?.('Category updated', 'success')
+  } catch (e) {
+    showSnackbar?.('Failed to update category', 'error')
+  }
 }
 
 async function doDeleteVideo() {

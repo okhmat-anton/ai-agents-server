@@ -31,6 +31,7 @@ from app.mongodb.models.agent_event import MongoAgentEvent
 from app.mongodb.models.research_resource import MongoResearchResource
 from app.mongodb.models.watched_video import MongoWatchedVideo
 from app.mongodb.models.analysis_topic import MongoAnalysisTopic
+from app.mongodb.models.idea import MongoIdea
 
 
 class UserService(BaseMongoService[MongoUser]):
@@ -538,4 +539,44 @@ class AnalysisTopicService(BaseMongoService[MongoAnalysisTopic]):
             {"_id": topic_id},
             {"$pull": {"fact_ids": fact_id}}
         )
+
+
+class IdeaService(BaseMongoService[MongoIdea]):
+    """CRUD service for ideas."""
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "ideas", MongoIdea)
+
+    async def get_by_agent(self, agent_id: str, status: str = None,
+                           source: str = None, limit: int = 200, skip: int = 0):
+        """Get ideas for a specific agent."""
+        filt = {"agent_id": agent_id}
+        if status:
+            filt["status"] = status
+        if source:
+            filt["source"] = source
+        cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+    async def get_all_ideas(self, status: str = None, source: str = None,
+                            agent_id: str = None, category: str = None,
+                            search: str = None, limit: int = 200, skip: int = 0):
+        """Get all ideas (global view)."""
+        filt = {}
+        if status:
+            filt["status"] = status
+        if source:
+            filt["source"] = source
+        if agent_id:
+            filt["agent_id"] = agent_id
+        if category:
+            filt["category"] = category
+        if search:
+            filt["$or"] = [
+                {"title": {"$regex": search, "$options": "i"}},
+                {"description": {"$regex": search, "$options": "i"}},
+            ]
+        cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
 

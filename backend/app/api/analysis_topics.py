@@ -38,6 +38,7 @@ class TopicCreate(BaseModel):
     title: str
     description: str = ""
     status: str = "active"
+    category: Optional[str] = None
     tags: List[str] = []
     fact_ids: List[str] = []
 
@@ -46,6 +47,7 @@ class TopicUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    category: Optional[str] = None
     tags: Optional[List[str]] = None
 
 
@@ -58,6 +60,7 @@ def _topic_to_response(t: MongoAnalysisTopic) -> dict:
         "description": t.description,
         "status": t.status,
         "agent_id": t.agent_id,
+        "category": t.category,
         "fact_ids": t.fact_ids,
         "tags": t.tags,
         "created_by": t.created_by,
@@ -101,6 +104,7 @@ async def create_global_topic(
         description=body.description.strip() if body.description else "",
         status=body.status,
         agent_id=None,
+        category=body.category,
         fact_ids=body.fact_ids,
         tags=body.tags,
         created_by="user",
@@ -148,6 +152,8 @@ async def update_topic(
         update_data["status"] = body.status
     if body.tags is not None:
         update_data["tags"] = body.tags
+    if body.category is not None:
+        update_data["category"] = body.category if body.category else None
 
     if update_data:
         update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -294,6 +300,7 @@ async def create_agent_topic(
         description=body.description.strip() if body.description else "",
         status=body.status,
         agent_id=agent_id,
+        category=body.category,
         fact_ids=body.fact_ids,
         tags=body.tags,
         created_by="user",

@@ -1,33 +1,34 @@
-"""MongoDB model for Agent Facts & Hypotheses."""
+"""MongoDB model for Ideas — user and agent ideas."""
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
-class MongoAgentFact(BaseModel):
+class MongoIdea(BaseModel):
     """
-    A fact or hypothesis stored by an agent.
+    An idea from a user or agent.
 
     Fields:
-      - type: "fact" or "hypothesis"
-      - content: the actual text
-      - source: where the fact/hypothesis came from (e.g. "conversation", "web", "analysis")
-      - verified: whether this has been verified (for hypotheses)
-      - confidence: how confident the agent is (0.0-1.0)
+      - title: short idea name
+      - description: detailed description
+      - source: "user" or "agent"
+      - agent_id: optional — if created by/for a specific agent
+      - category: optional grouping category
+      - priority: low, medium, high
+      - status: new, in_progress, done, archived
       - tags: free-form labels
-      - created_by: "agent" or "user"
     """
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    agent_id: str
-    type: str = "fact"  # "fact" or "hypothesis"
-    content: str
-    source: str = "conversation"  # conversation, web, analysis, observation, user
-    verified: bool = False
-    confidence: float = 0.8
-    tags: List[str] = Field(default_factory=list)
+    title: str
+    description: str = ""
+    source: str = "user"  # "user" or "agent"
+    agent_id: Optional[str] = None  # None = global user idea, set = agent idea
     category: Optional[str] = None  # User-defined category for grouping
-    created_by: str = "agent"  # agent, user
+    priority: str = "medium"  # low, medium, high
+    status: str = "new"  # new, in_progress, done, archived
+    tags: List[str] = Field(default_factory=list)
+    created_by: str = "user"  # user, agent
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -39,7 +40,7 @@ class MongoAgentFact(BaseModel):
         return doc
 
     @classmethod
-    def from_mongo(cls, doc: dict) -> "MongoAgentFact":
+    def from_mongo(cls, doc: dict) -> "MongoIdea":
         if not doc:
             return None
         doc = dict(doc)

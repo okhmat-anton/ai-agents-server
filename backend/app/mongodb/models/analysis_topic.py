@@ -23,6 +23,7 @@ class MongoAnalysisTopic(BaseModel):
     description: str = ""
     status: str = "active"  # draft, active, completed, archived
     agent_id: Optional[str] = None  # None = global, set = agent-specific
+    category: Optional[str] = None  # User-defined category for grouping
     fact_ids: List[str] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     created_by: str = "user"  # agent, user

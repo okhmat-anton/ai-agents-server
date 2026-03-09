@@ -24,6 +24,18 @@
         </v-chip>
       </v-chip-group>
       <v-spacer />
+      <v-select
+        v-model="filterCategory"
+        :items="categoryOptions"
+        label="Category"
+        variant="outlined"
+        density="compact"
+        hide-details
+        clearable
+        style="max-width: 200px;"
+        prepend-inner-icon="mdi-tag-outline"
+        @update:model-value="loadTopics"
+      />
       <v-text-field
         v-model="searchQuery"
         density="compact"
@@ -37,8 +49,56 @@
       />
     </div>
 
-    <!-- Topics Table -->
-    <v-card>
+    <!-- Topics grouped by category -->
+    <div v-if="!filterCategory && groupedTopics.length > 1">
+      <div v-for="group in groupedTopics" :key="group.category" class="mb-6">
+        <div class="text-subtitle-1 font-weight-bold mb-2 d-flex align-center">
+          <v-icon size="18" class="mr-2">mdi-tag</v-icon>
+          {{ group.category || 'Uncategorized' }}
+          <v-chip size="x-small" variant="tonal" class="ml-2">{{ group.items.length }}</v-chip>
+        </div>
+        <v-card>
+          <v-card-text class="pa-0">
+            <v-data-table
+              :headers="headers"
+              :items="group.items"
+              :loading="loading"
+              hover
+              density="compact"
+              @click:row="(_, { item }) => openDetail(item)"
+            >
+              <template #item.status="{ item }">
+                <v-chip :color="statusColor(item.status)" size="small" variant="tonal">{{ item.status }}</v-chip>
+              </template>
+              <template #item.title="{ item }">
+                <div>
+                  <span class="font-weight-medium">{{ item.title }}</span>
+                  <div v-if="item.description" class="text-caption text-grey text-truncate" style="max-width: 400px;">{{ item.description }}</div>
+                </div>
+              </template>
+              <template #item.agent_id="{ item }">
+                <v-chip v-if="item.agent_id" size="small" variant="tonal" color="blue">{{ agentName(item.agent_id) }}</v-chip>
+                <v-chip v-else size="small" variant="tonal" color="grey">Global</v-chip>
+              </template>
+              <template #item.category="{ item }">
+                <v-chip v-if="item.category" size="small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
+              </template>
+              <template #item.fact_ids="{ item }">
+                <v-chip size="small" variant="tonal" color="teal">{{ item.fact_ids?.length || 0 }} facts</v-chip>
+              </template>
+              <template #item.created_at="{ item }">{{ formatDate(item.created_at) }}</template>
+              <template #item.actions="{ item }">
+                <v-btn icon size="small" variant="text" @click.stop="editTopic(item)"><v-icon>mdi-pencil</v-icon></v-btn>
+                <v-btn icon size="small" variant="text" color="error" @click.stop="deleteTopic(item.id)"><v-icon>mdi-delete</v-icon></v-btn>
+              </template>
+            </v-data-table>
+          </v-card-text>
+        </v-card>
+      </div>
+    </div>
+
+    <!-- Flat table -->
+    <v-card v-else>
       <v-card-text class="pa-0">
         <v-data-table
           :headers="headers"
@@ -67,6 +127,10 @@
               {{ agentName(item.agent_id) }}
             </v-chip>
             <v-chip v-else size="small" variant="tonal" color="grey">Global</v-chip>
+          </template>
+
+          <template #item.category="{ item }">
+            <v-chip v-if="item.category" size="small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
           </template>
 
           <template #item.fact_ids="{ item }">
@@ -207,6 +271,16 @@
             class="mb-3"
           />
           <v-combobox
+            v-model="formData.category"
+            :items="categoryOptions"
+            label="Category"
+            variant="outlined"
+            density="compact"
+            clearable
+            prepend-inner-icon="mdi-tag-outline"
+            class="mb-3"
+          />
+          <v-combobox
             v-model="formData.tags"
             label="Tags"
             variant="outlined"
@@ -302,7 +376,8 @@ const connectedFacts = ref([])
 const formDialog = ref(false)
 const editingTopic = ref(null)
 const saving = ref(false)
-const formData = ref({ title: '', description: '', status: 'active', agent_id: null, tags: [] })
+const formData = ref({ title: '', description: '', status: 'active', agent_id: null, category: '', tags: [] })
+const filterCategory = ref(null)
 
 const connectFactDialog = ref(false)
 const availableFacts = ref([])
@@ -322,12 +397,30 @@ const headers = [
   { title: 'Status', key: 'status', width: 120 },
   { title: 'Title', key: 'title' },
   { title: 'Agent', key: 'agent_id', width: 150 },
+  { title: 'Category', key: 'category', width: 140 },
   { title: 'Facts', key: 'fact_ids', width: 100 },
   { title: 'Created', key: 'created_at', width: 140 },
   { title: 'Actions', key: 'actions', sortable: false, width: 100 },
 ]
 
 const agentOptions = computed(() => agents.value)
+
+const categoryOptions = computed(() => {
+  const cats = [...new Set(topics.value.map(t => t.category).filter(Boolean))]
+  return cats.sort()
+})
+
+const groupedTopics = computed(() => {
+  const groups = {}
+  for (const t of topics.value) {
+    const cat = t.category || ''
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(t)
+  }
+  return Object.entries(groups)
+    .sort(([a], [b]) => { if (!a) return 1; if (!b) return -1; return a.localeCompare(b) })
+    .map(([cat, items]) => ({ category: cat, items }))
+})
 
 onMounted(async () => {
   await Promise.all([loadTopics(), loadAgents()])
@@ -365,7 +458,7 @@ function debouncedLoad() {
 
 function openCreateDialog() {
   editingTopic.value = null
-  formData.value = { title: '', description: '', status: 'active', agent_id: null, tags: [] }
+  formData.value = { title: '', description: '', status: 'active', agent_id: null, category: '', tags: [] }
   formDialog.value = true
 }
 
@@ -376,6 +469,7 @@ function editTopic(item) {
     description: item.description,
     status: item.status,
     agent_id: item.agent_id,
+    category: item.category || '',
     tags: [...(item.tags || [])],
   }
   formDialog.value = true
@@ -389,6 +483,7 @@ async function saveTopic() {
         title: formData.value.title,
         description: formData.value.description,
         status: formData.value.status,
+        category: formData.value.category || null,
         tags: formData.value.tags,
       })
       showSnackbar?.('Topic updated', 'success')

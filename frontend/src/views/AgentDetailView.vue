@@ -105,6 +105,10 @@
           Analysis
           <v-badge v-if="analysisTopicsCount > 0" :content="analysisTopicsCount" color="blue" inline />
         </v-tab>
+        <v-tab value="ideas">
+          Ideas
+          <v-badge v-if="ideasCount > 0" :content="ideasCount" color="amber-darken-2" inline />
+        </v-tab>
         <v-tab value="projects">Projects</v-tab>
         <v-tab value="files">Files</v-tab>
         <v-tab value="tasks">Tasks</v-tab>
@@ -809,6 +813,85 @@
             <div class="text-caption mt-1">Add topics to structure your research and connect facts</div>
           </div>
         </div>
+
+        <!-- Ideas Tab -->
+        <div v-if="tab === 'ideas'">
+          <!-- Filters row -->
+          <div class="d-flex align-center mb-4 flex-wrap ga-2">
+            <v-btn-toggle v-model="ideasSourceFilter" density="compact" variant="outlined" mandatory @update:model-value="loadIdeas">
+              <v-btn value="all" size="small">All</v-btn>
+              <v-btn value="user" size="small"><v-icon size="14" class="mr-1">mdi-account</v-icon> User</v-btn>
+              <v-btn value="agent" size="small"><v-icon size="14" class="mr-1">mdi-robot</v-icon> Agent</v-btn>
+            </v-btn-toggle>
+            <v-chip-group v-model="ideasStatusFilter" selected-class="text-primary" @update:model-value="loadIdeas">
+              <v-chip value="" variant="tonal" size="small">All</v-chip>
+              <v-chip value="new" color="blue" variant="tonal" size="small">New</v-chip>
+              <v-chip value="in_progress" color="orange" variant="tonal" size="small">In Progress</v-chip>
+              <v-chip value="done" color="success" variant="tonal" size="small">Done</v-chip>
+              <v-chip value="archived" color="brown" variant="tonal" size="small">Archived</v-chip>
+            </v-chip-group>
+            <v-spacer />
+            <v-btn color="amber-darken-2" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openIdeaDialog()">Add</v-btn>
+            <v-btn size="small" variant="tonal" prepend-icon="mdi-refresh" @click="loadIdeas" :loading="ideasLoading">Refresh</v-btn>
+          </div>
+
+          <!-- Ideas list -->
+          <div v-if="ideasLoading && !agentIdeas.length" class="text-center pa-8">
+            <v-progress-circular indeterminate color="amber-darken-2" />
+          </div>
+          <div v-else-if="agentIdeas.length">
+            <v-card v-for="idea in agentIdeas" :key="idea.id" variant="outlined" class="mb-2 pa-3">
+              <div class="d-flex align-start">
+                <v-icon :color="ideaPriorityColor(idea.priority)" size="20" class="mr-2 mt-1">
+                  {{ idea.priority === 'high' ? 'mdi-arrow-up-bold' : idea.priority === 'low' ? 'mdi-arrow-down' : 'mdi-minus' }}
+                </v-icon>
+                <div class="flex-grow-1">
+                  <div class="text-body-1 font-weight-medium">{{ idea.title }}</div>
+                  <div v-if="idea.description" class="text-body-2 text-medium-emphasis mt-1">{{ idea.description }}</div>
+                  <div class="d-flex align-center mt-1 flex-wrap ga-1">
+                    <v-chip :color="ideaStatusColor(idea.status)" size="x-small" variant="flat">{{ idea.status }}</v-chip>
+                    <v-chip :color="idea.source === 'user' ? 'blue' : 'orange'" size="x-small" variant="tonal">
+                      <v-icon start size="10">{{ idea.source === 'user' ? 'mdi-account' : 'mdi-robot' }}</v-icon>
+                      {{ idea.source }}
+                    </v-chip>
+                    <v-chip v-if="idea.category" size="x-small" variant="tonal" color="indigo">{{ idea.category }}</v-chip>
+                    <v-chip v-for="tag in idea.tags" :key="tag" size="x-small" variant="tonal" color="blue-grey">{{ tag }}</v-chip>
+                  </div>
+                </div>
+                <div class="d-flex ml-2">
+                  <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editIdea(idea)" />
+                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteIdea(idea.id)" />
+                </div>
+              </div>
+            </v-card>
+          </div>
+          <div v-else class="text-center text-grey pa-8">
+            <v-icon size="48" class="mb-2">mdi-lightbulb-on-outline</v-icon>
+            <div>No ideas yet</div>
+            <div class="text-caption mt-1">Add ideas from the user or let the agent generate them</div>
+          </div>
+        </div>
+
+        <!-- Idea Create/Edit Dialog -->
+        <v-dialog v-model="ideaDialog" max-width="600">
+          <v-card>
+            <v-card-title>{{ ideaEditId ? 'Edit Idea' : 'New Idea' }}</v-card-title>
+            <v-card-text>
+              <v-text-field v-model="ideaFormTitle" label="Title" variant="outlined" density="compact" class="mb-3" />
+              <v-textarea v-model="ideaFormDescription" label="Description" variant="outlined" density="compact" rows="4" class="mb-3" />
+              <v-select v-model="ideaFormSource" :items="['user', 'agent']" label="Source" variant="outlined" density="compact" class="mb-3" />
+              <v-select v-model="ideaFormPriority" :items="['low', 'medium', 'high']" label="Priority" variant="outlined" density="compact" class="mb-3" />
+              <v-select v-model="ideaFormStatus" :items="['new', 'in_progress', 'done', 'archived']" label="Status" variant="outlined" density="compact" class="mb-3" />
+              <v-combobox v-model="ideaFormCategory" label="Category" variant="outlined" density="compact" clearable class="mb-3" />
+              <v-combobox v-model="ideaFormTags" label="Tags" variant="outlined" density="compact" chips multiple closable-chips />
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer />
+              <v-btn @click="ideaDialog = false">Cancel</v-btn>
+              <v-btn color="amber-darken-2" :loading="ideaSaving" @click="saveIdea">{{ ideaEditId ? 'Update' : 'Create' }}</v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
 
         <!-- Tasks Tab -->
         <div v-if="tab === 'tasks'">
@@ -2506,6 +2589,31 @@ const analysisFormTags = ref([])
 const analysisSaving = ref(false)
 const analysisTopicsCount = computed(() => analysisTopics.value.length)
 
+// Ideas state
+const agentIdeas = ref([])
+const ideasLoading = ref(false)
+const ideasSourceFilter = ref('all')
+const ideasStatusFilter = ref('')
+const ideaDialog = ref(false)
+const ideaEditId = ref(null)
+const ideaFormTitle = ref('')
+const ideaFormDescription = ref('')
+const ideaFormSource = ref('user')
+const ideaFormPriority = ref('medium')
+const ideaFormStatus = ref('new')
+const ideaFormCategory = ref('')
+const ideaFormTags = ref([])
+const ideaSaving = ref(false)
+const ideasCount = computed(() => agentIdeas.value.length)
+
+const ideaStatusColor = (s) => ({
+  new: 'blue', in_progress: 'orange', done: 'success', archived: 'brown',
+}[s] || 'grey')
+
+const ideaPriorityColor = (p) => ({
+  low: 'blue-grey', medium: 'blue', high: 'red',
+}[p] || 'grey')
+
 const analysisStatusColor = (s) => ({
   draft: 'grey', active: 'blue', completed: 'success', archived: 'brown',
 }[s] || 'grey')
@@ -3328,6 +3436,75 @@ const deleteAnalysis = async (topicId) => {
   } catch (e) { alert(e.response?.data?.detail || 'Failed to delete topic') }
 }
 
+// ===== Ideas =====
+const loadIdeas = async () => {
+  ideasLoading.value = true
+  try {
+    const params = { limit: 200 }
+    if (ideasSourceFilter.value && ideasSourceFilter.value !== 'all') params.source = ideasSourceFilter.value
+    if (ideasStatusFilter.value) params.status = ideasStatusFilter.value
+    const { data } = await api.get(`/agents/${id.value}/ideas`, { params })
+    agentIdeas.value = data.items || []
+  } catch { agentIdeas.value = [] }
+  finally { ideasLoading.value = false }
+}
+
+const openIdeaDialog = (existing = null) => {
+  if (existing) {
+    ideaEditId.value = existing.id
+    ideaFormTitle.value = existing.title
+    ideaFormDescription.value = existing.description || ''
+    ideaFormSource.value = existing.source || 'user'
+    ideaFormPriority.value = existing.priority || 'medium'
+    ideaFormStatus.value = existing.status || 'new'
+    ideaFormCategory.value = existing.category || ''
+    ideaFormTags.value = existing.tags || []
+  } else {
+    ideaEditId.value = null
+    ideaFormTitle.value = ''
+    ideaFormDescription.value = ''
+    ideaFormSource.value = 'user'
+    ideaFormPriority.value = 'medium'
+    ideaFormStatus.value = 'new'
+    ideaFormCategory.value = ''
+    ideaFormTags.value = []
+  }
+  ideaDialog.value = true
+}
+
+const editIdea = (idea) => openIdeaDialog(idea)
+
+const saveIdea = async () => {
+  if (!ideaFormTitle.value.trim()) return
+  ideaSaving.value = true
+  try {
+    const payload = {
+      title: ideaFormTitle.value.trim(),
+      description: ideaFormDescription.value.trim(),
+      source: ideaFormSource.value,
+      priority: ideaFormPriority.value,
+      status: ideaFormStatus.value,
+      category: ideaFormCategory.value || null,
+      tags: ideaFormTags.value,
+    }
+    if (ideaEditId.value) {
+      await api.patch(`/ideas/${ideaEditId.value}`, payload)
+    } else {
+      await api.post(`/agents/${id.value}/ideas`, payload)
+    }
+    ideaDialog.value = false
+    await loadIdeas()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to save idea') }
+  finally { ideaSaving.value = false }
+}
+
+const deleteIdea = async (ideaId) => {
+  try {
+    await api.delete(`/ideas/${ideaId}`)
+    await loadIdeas()
+  } catch (e) { alert(e.response?.data?.detail || 'Failed to delete idea') }
+}
+
 const doDeleteFile = async () => {
   try {
     await api.delete(`/agents/${id.value}/files/delete`, { params: { path: deleteFilePath.value } })
@@ -3352,6 +3529,7 @@ watch(tab, (val) => {
   if (val === 'aspirations') loadAspirations()
   if (val === 'facts') loadFacts()
   if (val === 'events') loadEvents()
+  if (val === 'ideas') loadIdeas()
 })
 
 watch(logLevel, () => { if (tab.value === 'logs') loadLogs() })
@@ -3901,6 +4079,9 @@ watch(tab, (val) => {
   }
   if (val === 'analysis' && !analysisTopics.value.length && !analysisLoading.value) {
     loadAnalysisTopics()
+  }
+  if (val === 'ideas' && !agentIdeas.value.length && !ideasLoading.value) {
+    loadIdeas()
   }
 })
 

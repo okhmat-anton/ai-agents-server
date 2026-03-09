@@ -32,6 +32,7 @@ class GlobalFactCreate(BaseModel):
     source: str = "user"
     verified: bool = False
     confidence: float = 0.8
+    category: Optional[str] = None
     tags: List[str] = []
 
 
@@ -46,6 +47,7 @@ def _fact_to_response(f: MongoAgentFact) -> dict:
         "source": f.source,
         "verified": f.verified,
         "confidence": f.confidence,
+        "category": f.category,
         "tags": f.tags,
         "created_by": f.created_by,
         "created_at": f.created_at.isoformat() if isinstance(f.created_at, datetime) else str(f.created_at),
@@ -61,6 +63,7 @@ async def list_all_facts(
     verified: Optional[bool] = Query(None, description="Filter by verified status"),
     search: Optional[str] = Query(None, description="Text search in content"),
     agent_id: Optional[str] = Query(None, description="Filter by agent"),
+    category: Optional[str] = Query(None, description="Filter by category"),
     limit: int = Query(200, ge=1, le=500),
     skip: int = Query(0, ge=0),
     _user=Depends(get_current_user),
@@ -74,6 +77,10 @@ async def list_all_facts(
         items = await svc.get_by_agent(agent_id, fact_type=type, verified=verified, limit=limit, skip=skip)
     else:
         items = await svc.get_all(fact_type=type, verified=verified, search=search, limit=limit, skip=skip)
+
+    # Apply category filter if set
+    if category:
+        items = [f for f in items if f.category == category]
 
     return {"items": [_fact_to_response(f) for f in items], "total": len(items)}
 
@@ -100,6 +107,7 @@ async def create_global_fact(
         source=body.source,
         verified=body.verified,
         confidence=body.confidence,
+        category=body.category,
         tags=body.tags,
         created_by="user",
     )
@@ -123,7 +131,7 @@ async def update_global_fact(
         raise HTTPException(status_code=404, detail="Fact not found")
 
     update_data = {}
-    for field in ("type", "content", "source", "verified", "confidence", "tags"):
+    for field in ("type", "content", "source", "verified", "confidence", "category", "tags"):
         if field in body and body[field] is not None:
             update_data[field] = body[field]
 
