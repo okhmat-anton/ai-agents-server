@@ -702,22 +702,25 @@ SYSTEM_SKILLS = [
     {
         "name": "video_watch",
         "display_name": "Video Watch",
-        "description": "Fetch video transcript from YouTube, TikTok, Instagram, Facebook, or Twitter via ScrapeCreators API.",
+        "description": "Fetch video transcript or post content from YouTube (incl. Shorts), TikTok, Instagram, Facebook, Twitter/X, Threads, LinkedIn, Reddit, Twitch, or Kick via ScrapeCreators API.",
         "description_for_agent": (
-            "Fetch the transcript (subtitles/captions) of a video from YouTube, TikTok, Instagram, "
-            "Facebook, or Twitter using the ScrapeCreators API. The transcript is saved to the "
-            "watched videos database so repeated requests for the same URL are served from cache. "
-            "Parameters: url (string, required — full video URL), "
+            "Fetch the transcript (subtitles/captions) of a video or post content from YouTube (including Shorts), "
+            "TikTok, Instagram, Facebook, Twitter/X, Threads, LinkedIn, Reddit, Twitch clips, or Kick clips "
+            "using the ScrapeCreators API. For YouTube, TikTok, Instagram, Facebook, and Twitter the actual "
+            "video transcript is fetched. For Threads, LinkedIn, Reddit, Twitch, and Kick the post/clip content "
+            "and metadata is fetched instead. The result is saved to the watched videos database so repeated "
+            "requests for the same URL are served from cache. "
+            "Parameters: url (string, required — full video/post URL), "
             "language (string, optional — 2-letter language code like 'en', 'es', 'fr'; default: auto-detect). "
             "Returns: {platform, video_id, transcript, language, cached} on success or {error} on failure. "
-            "Use this when asked to watch, transcribe, or get the content of a video."
+            "Use this when asked to watch, transcribe, or get the content of a video or social media post."
         ),
         "category": "web",
         "code": "# Video transcript via ScrapeCreators — executed by pipeline handler",
         "input_schema": {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "Full video URL (YouTube, TikTok, Instagram, Facebook, or Twitter)"},
+                "url": {"type": "string", "description": "Full video/post URL (YouTube, TikTok, Instagram, Facebook, Twitter/X, Threads, LinkedIn, Reddit, Twitch, Kick)"},
                 "language": {"type": "string", "description": "2-letter language code (en, es, fr, etc.). Optional."},
             },
             "required": ["url"],

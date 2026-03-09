@@ -101,6 +101,16 @@ def _detect_video_platform(url: str) -> tuple[str | None, str | None]:
         return ("facebook", "/v1/facebook/post/transcript")
     elif "twitter.com" in url_lower or "x.com" in url_lower:
         return ("twitter", "/v1/twitter/tweet/transcript")
+    elif "threads.net" in url_lower:
+        return ("threads", "/v1/threads/post")
+    elif "linkedin.com" in url_lower:
+        return ("linkedin", "/v1/linkedin/post")
+    elif "reddit.com" in url_lower:
+        return ("reddit", "/v1/reddit/post/comments")
+    elif "twitch.tv" in url_lower or "clips.twitch.tv" in url_lower:
+        return ("twitch", "/v1/twitch/clip")
+    elif "kick.com" in url_lower:
+        return ("kick", "/v1/kick/clip")
     return (None, None)
 
 
@@ -173,6 +183,117 @@ def _parse_transcript_response(
                 s.get("text", "") for s in transcript_text if isinstance(s, dict)
             )
         language = data.get("language")
+
+    elif platform == "threads":
+        # Threads returns {success, post: {id, user, caption: {text}, transcription_data, ...}, comments, relatedPosts}
+        post = data.get("post") or {}
+        video_id = post.get("pk") or post.get("id")
+        # Try transcription_data first (for actual video transcripts)
+        transcription = post.get("transcription_data")
+        if transcription and isinstance(transcription, dict):
+            transcript_text = transcription.get("text") or transcription.get("transcript")
+        # Fallback to caption text
+        if not transcript_text:
+            caption = post.get("caption") or {}
+            transcript_text = caption.get("text")
+        # Also extract text from text_fragments
+        if not transcript_text:
+            tpa = post.get("text_post_app_info") or {}
+            frags = (tpa.get("text_fragments") or {}).get("fragments") or []
+            parts = [f.get("plaintext", "") for f in frags if isinstance(f, dict) and f.get("plaintext")]
+            if parts:
+                transcript_text = " ".join(parts)
+        user = post.get("user") or {}
+        if user.get("username"):
+            video_id = video_id or user["username"]
+
+    elif platform == "linkedin":
+        # LinkedIn returns {success, url, name, headline, description, author: {name}, comments, ...}
+        video_id = data.get("url")
+        title = data.get("name") or ""
+        description = data.get("description") or ""
+        headline = data.get("headline") or ""
+        parts = [p for p in [title, headline, description] if p]
+        transcript_text = "\n\n".join(parts) if parts else None
+        author = data.get("author") or {}
+        if author.get("name"):
+            video_id = video_id or author["name"]
+
+    elif platform == "reddit":
+        # Reddit returns {post: {title, selftext, author, id, is_video, ...}, comments: [...]}
+        post = data.get("post") or {}
+        video_id = post.get("id")
+        title = post.get("title") or ""
+        selftext = post.get("selftext") or ""
+        parts = [p for p in [title, selftext] if p.strip()]
+        transcript_text = "\n\n".join(parts) if parts else None
+        # Also include top comments for context
+        comments = data.get("comments") or []
+        if comments and isinstance(comments, list):
+            comment_texts = []
+            for c in comments[:10]:  # Top 10 comments
+                if isinstance(c, dict):
+                    body = c.get("body", "").strip()
+                    author = c.get("author", "unknown")
+                    if body:
+                        comment_texts.append(f"[{author}]: {body}")
+            if comment_texts:
+                existing = transcript_text or ""
+                transcript_text = existing + "\n\n--- Comments ---\n" + "\n".join(comment_texts)
+
+    elif platform == "twitch":
+        # Twitch returns complex GraphQL response: [{data: {clip: {title, viewCount, durationSeconds, ...}}}]
+        clip_data = None
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    nested = (item.get("data") or {}).get("clip")
+                    if nested and isinstance(nested, dict) and nested.get("title"):
+                        clip_data = nested
+                        break
+        elif isinstance(data, dict):
+            clip_data = data.get("clip") or (data.get("data") or {}).get("clip")
+        if clip_data and isinstance(clip_data, dict):
+            video_id = clip_data.get("slug") or clip_data.get("id")
+            title = clip_data.get("title") or ""
+            broadcaster = (clip_data.get("broadcaster") or {}).get("displayName", "")
+            game = (clip_data.get("game") or {}).get("name", "")
+            duration = clip_data.get("durationSeconds", "")
+            views = clip_data.get("viewCount", "")
+            parts = [f"Clip: {title}"]
+            if broadcaster:
+                parts.append(f"Channel: {broadcaster}")
+            if game:
+                parts.append(f"Category: {game}")
+            if duration:
+                parts.append(f"Duration: {duration}s")
+            if views:
+                parts.append(f"Views: {views}")
+            language = clip_data.get("language")
+            transcript_text = "\n".join(parts)
+
+    elif platform == "kick":
+        # Kick returns {clip: {id, title, clip_url, views, duration, creator, channel, ...}}
+        clip_data = data.get("clip") or {}
+        video_id = clip_data.get("id")
+        title = clip_data.get("title") or ""
+        creator = (clip_data.get("creator") or {}).get("username", "")
+        channel = (clip_data.get("channel") or {}).get("username", "")
+        duration = clip_data.get("duration", "")
+        views = clip_data.get("views") or clip_data.get("view_count", "")
+        parts = [f"Clip: {title}"]
+        if channel:
+            parts.append(f"Channel: {channel}")
+        if creator:
+            parts.append(f"Clipped by: {creator}")
+        if duration:
+            parts.append(f"Duration: {duration}s")
+        if views:
+            parts.append(f"Views: {views}")
+        category = (clip_data.get("category") or {}).get("name", "")
+        if category:
+            parts.append(f"Category: {category}")
+        transcript_text = "\n".join(parts)
 
     # Clean up transcript text
     if isinstance(transcript_text, str):
@@ -1278,7 +1399,7 @@ class StagedPipeline:
         # Detect platform and build request
         platform, api_path = _detect_video_platform(url)
         if not platform:
-            return {"error": f"Unsupported video URL. Supported platforms: YouTube, TikTok, Instagram, Facebook, Twitter."}
+            return {"error": f"Unsupported video URL. Supported platforms: YouTube (incl. Shorts), TikTok, Instagram, Facebook, Twitter/X, Threads, LinkedIn, Reddit, Twitch, Kick."}
 
         # Call ScrapeCreators API
         base_url = "https://api.scrapecreators.com"
