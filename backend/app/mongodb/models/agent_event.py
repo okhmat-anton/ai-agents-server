@@ -28,6 +28,7 @@ class MongoAgentEvent(BaseModel):
     event_type: str = "observation"  # conversation, observation, discovery, decision, milestone, custom
     title: str
     description: str = ""
+    comment: str = ""  # outcome / comment on the event
     source: str = "agent"  # agent, user, system
     importance: str = "medium"  # low, medium, high, critical
     tags: List[str] = Field(default_factory=list)

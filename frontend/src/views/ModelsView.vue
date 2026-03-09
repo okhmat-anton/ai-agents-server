@@ -299,7 +299,6 @@
             item-value="value"
             label="Claude Model"
             class="mb-2"
-            :loading="loadingAnthropicModels"
           />
           <v-select
             v-else-if="form.provider === 'kieai'"
@@ -312,8 +311,8 @@
             :loading="loadingKieaiModels"
           />
           <v-text-field v-else v-model="form.model_id" label="Model ID" hint="e.g. qwen2.5-coder:14b" class="mb-2" />
-          <v-text-field v-model="form.base_url" label="Base URL" class="mb-2" :disabled="form.provider === 'anthropic' || form.provider === 'kieai'" />
-          <v-text-field v-model="form.api_key" label="API Key (optional)" class="mb-2" :hint="form.provider === 'anthropic' ? 'Leave empty to use key from Settings' : form.provider === 'kieai' ? 'Leave empty to use key from Settings' : ''" />
+          <v-text-field v-if="form.provider !== 'anthropic' && form.provider !== 'kieai'" v-model="form.base_url" label="Base URL" class="mb-2" />
+          <v-text-field v-if="form.provider !== 'anthropic' && form.provider !== 'kieai'" v-model="form.api_key" label="API Key (optional)" class="mb-2" />
 
           <v-row>
             <v-col cols="6">
@@ -325,11 +324,11 @@
           </v-row>
 
           <v-checkbox v-model="form.is_active" label="Active" />
-          <v-alert v-if="form.provider === 'anthropic' && !anthropicKeyConfigured && !form.api_key" type="warning" variant="tonal" density="compact" class="mt-1">
-            No Anthropic API key found. Set it in <router-link to="/settings" class="text-primary font-weight-medium">Settings</router-link> or enter one above.
+          <v-alert v-if="form.provider === 'anthropic' && !anthropicKeyConfigured" type="warning" variant="tonal" density="compact" class="mt-1">
+            No Anthropic API key found. Set it in <router-link to="/settings" class="text-primary font-weight-medium">Settings</router-link>.
           </v-alert>
-          <v-alert v-if="form.provider === 'kieai' && !kieaiKeyConfigured && !form.api_key" type="warning" variant="tonal" density="compact" class="mt-1">
-            No kie.ai API key found. Set it in <router-link to="/settings" class="text-primary font-weight-medium">Settings</router-link> or enter one above.
+          <v-alert v-if="form.provider === 'kieai' && !kieaiKeyConfigured" type="warning" variant="tonal" density="compact" class="mt-1">
+            No kie.ai API key found. Set it in <router-link to="/settings" class="text-primary font-weight-medium">Settings</router-link>.
           </v-alert>
         </v-card-text>
         <v-card-actions>
@@ -616,23 +615,20 @@ const providerOptions = [
   { value: 'custom', label: 'Custom' },
 ]
 
-// Anthropic models
-const anthropicModels = ref([])
+// Anthropic models (hardcoded)
 const anthropicKeyConfigured = ref(false)
 const loadingAnthropicModels = ref(false)
 
-const anthropicModelOptions = computed(() =>
-  anthropicModels.value.map(m => ({ value: m.id, label: `${m.name} (${m.id})` }))
-)
+const anthropicModelOptions = [
+  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (claude-sonnet-4-6)' },
+  { value: 'claude-opus-4-6', label: 'Claude Opus 4.6 (claude-opus-4-6)' },
+]
 
 const fetchAnthropicModels = async () => {
-  loadingAnthropicModels.value = true
   try {
     const { data } = await api.get('/settings/anthropic/models')
-    anthropicModels.value = data.models || []
     anthropicKeyConfigured.value = data.configured
-  } catch { anthropicModels.value = [] }
-  finally { loadingAnthropicModels.value = false }
+  } catch { /* ignore */ }
 }
 
 // kie.ai models
@@ -658,7 +654,7 @@ const onProviderChange = (provider) => {
   if (provider === 'anthropic') {
     form.value.base_url = 'https://api.anthropic.com'
     if (!form.value.model_id || !form.value.model_id.startsWith('claude')) {
-      form.value.model_id = anthropicModels.value.length ? anthropicModels.value[0].id : 'claude-sonnet-4-20250514'
+      form.value.model_id = 'claude-sonnet-4-6'
     }
     if (!form.value.name) form.value.name = 'Claude'
   } else if (provider === 'kieai') {

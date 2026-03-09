@@ -32,6 +32,7 @@ class EventCreate(BaseModel):
     event_type: str = "observation"  # conversation, observation, discovery, decision, milestone, custom
     title: str
     description: str = ""
+    comment: str = ""  # outcome / result of the event
     source: str = "user"
     importance: str = "medium"  # low, medium, high, critical
     tags: List[str] = []
@@ -42,6 +43,7 @@ class EventUpdate(BaseModel):
     event_type: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
+    comment: Optional[str] = None
     source: Optional[str] = None
     importance: Optional[str] = None
     tags: Optional[List[str]] = None
@@ -54,6 +56,7 @@ class EventResponse(BaseModel):
     event_type: str
     title: str
     description: str
+    comment: str
     source: str
     importance: str
     tags: List[str]
@@ -83,6 +86,7 @@ def _event_to_response(e: MongoAgentEvent) -> dict:
         "event_type": e.event_type,
         "title": e.title,
         "description": e.description,
+        "comment": e.comment,
         "source": e.source,
         "importance": e.importance,
         "tags": e.tags,
@@ -148,6 +152,7 @@ async def create_event(
         event_type=body.event_type,
         title=body.title.strip(),
         description=body.description.strip() if body.description else "",
+        comment=body.comment.strip() if body.comment else "",
         source=body.source,
         importance=body.importance,
         tags=body.tags,
@@ -184,6 +189,8 @@ async def update_event(
         update_data["title"] = body.title.strip()
     if body.description is not None:
         update_data["description"] = body.description.strip()
+    if body.comment is not None:
+        update_data["comment"] = body.comment.strip()
     if body.source is not None:
         update_data["source"] = body.source
     if body.importance is not None:

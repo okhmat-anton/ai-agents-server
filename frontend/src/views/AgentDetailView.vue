@@ -662,6 +662,10 @@
                 <div class="flex-grow-1">
                   <div class="text-body-1 font-weight-medium">{{ ev.title }}</div>
                   <div v-if="ev.description" class="text-body-2 text-medium-emphasis mt-1">{{ ev.description }}</div>
+                  <div v-if="ev.comment" class="text-body-2 mt-1">
+                    <v-icon size="14" class="mr-1" color="amber">mdi-comment-text-outline</v-icon>
+                    <span class="font-italic">{{ ev.comment }}</span>
+                  </div>
                   <div class="d-flex align-center mt-1 flex-wrap ga-1">
                     <v-chip
                       :color="eventTypeColor(ev.event_type)"
@@ -1930,6 +1934,7 @@
         <v-card-text>
           <v-text-field v-model="eventFormTitle" label="Title" autofocus density="compact" class="mb-2" />
           <v-textarea v-model="eventFormDescription" label="Description" rows="3" density="compact" class="mb-2" />
+          <v-textarea v-model="eventFormComment" label="Comment (outcome)" rows="2" density="compact" class="mb-2" />
           <v-row>
             <v-col cols="4">
               <v-select v-model="eventFormType" :items="['conversation', 'observation', 'discovery', 'decision', 'milestone', 'custom']" label="Type" density="compact" />
@@ -2342,6 +2347,7 @@ const eventDialog = ref(false)
 const eventEditId = ref(null)
 const eventFormTitle = ref('')
 const eventFormDescription = ref('')
+const eventFormComment = ref('')
 const eventFormType = ref('observation')
 const eventFormSource = ref('user')
 const eventFormImportance = ref('medium')
@@ -3047,6 +3053,7 @@ const openEventDialog = (existing = null) => {
     eventEditId.value = existing.id
     eventFormTitle.value = existing.title
     eventFormDescription.value = existing.description || ''
+    eventFormComment.value = existing.comment || ''
     eventFormType.value = existing.event_type
     eventFormSource.value = existing.source
     eventFormImportance.value = existing.importance
@@ -3055,6 +3062,7 @@ const openEventDialog = (existing = null) => {
     eventEditId.value = null
     eventFormTitle.value = ''
     eventFormDescription.value = ''
+    eventFormComment.value = ''
     eventFormType.value = 'observation'
     eventFormSource.value = 'user'
     eventFormImportance.value = 'medium'
@@ -3073,6 +3081,7 @@ const saveEvent = async () => {
       event_type: eventFormType.value,
       title: eventFormTitle.value.trim(),
       description: eventFormDescription.value.trim(),
+      comment: eventFormComment.value.trim(),
       source: eventFormSource.value,
       importance: eventFormImportance.value,
       tags: eventFormTags.value,
