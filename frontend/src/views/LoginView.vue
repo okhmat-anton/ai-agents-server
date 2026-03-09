@@ -62,7 +62,11 @@ const handleLogin = async () => {
   error.value = ''
   try {
     await auth.login(username.value, password.value)
-    router.push('/')
+    if (auth.user && !auth.user.disclaimer_accepted) {
+      router.push('/disclaimer')
+    } else {
+      router.push('/')
+    }
   } catch (e) {
     error.value = e.response?.data?.detail || 'Login failed'
   } finally {

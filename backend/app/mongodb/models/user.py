@@ -11,6 +11,7 @@ class MongoUser(BaseModel):
     username: str
     password_hash: str
     is_active: bool = True
+    disclaimer_accepted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -20,6 +21,8 @@ class MongoUser(BaseModel):
         doc["_id"] = doc.pop("id")
         doc["created_at"] = doc["created_at"].isoformat()
         doc["updated_at"] = doc["updated_at"].isoformat()
+        if doc.get("disclaimer_accepted_at"):
+            doc["disclaimer_accepted_at"] = doc["disclaimer_accepted_at"].isoformat()
         return doc
 
     @classmethod
@@ -32,4 +35,6 @@ class MongoUser(BaseModel):
             doc["created_at"] = datetime.fromisoformat(doc["created_at"])
         if isinstance(doc.get("updated_at"), str):
             doc["updated_at"] = datetime.fromisoformat(doc["updated_at"])
+        if isinstance(doc.get("disclaimer_accepted_at"), str):
+            doc["disclaimer_accepted_at"] = datetime.fromisoformat(doc["disclaimer_accepted_at"])
         return cls(**doc)

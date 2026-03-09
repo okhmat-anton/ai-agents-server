@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from datetime import datetime, timezone
 from app.database import get_mongodb
 from app import database as _db
 from app.core.security import (
@@ -91,4 +92,30 @@ async def logout(
 
 @router.get("/me", response_model=UserResponse)
 async def me(user: MongoUser = Depends(get_current_user)):
-    return user
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        is_active=user.is_active,
+        disclaimer_accepted=user.disclaimer_accepted_at is not None,
+        disclaimer_accepted_at=user.disclaimer_accepted_at,
+    )
+
+
+@router.post("/disclaimer/accept", response_model=MessageResponse)
+async def accept_disclaimer(
+    user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Accept the legal disclaimer. Sets disclaimer_accepted_at timestamp."""
+    if user.disclaimer_accepted_at:
+        return MessageResponse(message="Disclaimer already accepted")
+
+    now = datetime.now(timezone.utc)
+    user_service = UserService(db)
+    await user_service.update(user.id, {
+        "disclaimer_accepted_at": now.isoformat(),
+        "updated_at": now.isoformat(),
+    })
+    await syslog("info", f"User '{user.username}' accepted legal disclaimer", source="auth",
+                 metadata={"user_id": str(user.id)})
+    return MessageResponse(message="Disclaimer accepted")

@@ -9,6 +9,12 @@ const routes = [
     meta: { guest: true },
   },
   {
+    path: '/disclaimer',
+    name: 'Disclaimer',
+    component: () => import('../views/DisclaimerView.vue'),
+    meta: { requiresAuth: true, skipDisclaimer: true },
+  },
+  {
     path: '/',
     component: () => import('../layouts/MainLayout.vue'),
     meta: { requiresAuth: true },
@@ -48,12 +54,22 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const auth = useAuthStore()
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     next('/login')
   } else if (to.meta.guest && auth.isAuthenticated) {
     next('/')
+  } else if (to.meta.requiresAuth && auth.isAuthenticated && !to.meta.skipDisclaimer) {
+    // Check if user has accepted disclaimer
+    if (!auth.user) {
+      await auth.fetchUser()
+    }
+    if (auth.user && !auth.user.disclaimer_accepted) {
+      next('/disclaimer')
+    } else {
+      next()
+    }
   } else {
     next()
   }

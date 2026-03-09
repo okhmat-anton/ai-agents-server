@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 from uuid import UUID
+from typing import Optional
+from datetime import datetime
 
 
 class LoginRequest(BaseModel):
@@ -21,6 +23,8 @@ class UserResponse(BaseModel):
     id: UUID
     username: str
     is_active: bool
+    disclaimer_accepted: bool = False
+    disclaimer_accepted_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
