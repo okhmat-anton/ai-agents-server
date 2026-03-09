@@ -144,6 +144,18 @@ export const useChatStore = defineStore('chat', {
       }
     },
 
+    async clearHistory(sessionId) {
+      try {
+        await api.post(`/chat/sessions/${sessionId}/clear`)
+        if (this.currentSession?.id === sessionId) {
+          this.messages = []
+        }
+      } catch (e) {
+        console.error('Failed to clear history:', e)
+        throw e
+      }
+    },
+
     async markSessionAsRead(sessionId) {
       try {
         await api.post(`/chat/sessions/${sessionId}/mark-read`)

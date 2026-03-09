@@ -228,17 +228,21 @@ async def get_kieai_models(
 async def test_kieai_connection(
     _user: MongoUser = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_mongodb),
+    model: str | None = None,
 ):
-    """Test kie.ai API connection using stored key."""
+    """Test kie.ai API connection using stored key. Optional model param to test a specific model."""
     api_key = await get_setting_value(db, "kieai_api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="kie.ai API key not configured")
-    from app.llm.kieai import KieAIProvider
+    from app.llm.kieai import KieAIProvider, KIEAI_MODELS
+    valid_ids = {m["id"] for m in KIEAI_MODELS}
+    test_model = model if model and model in valid_ids else "gemini-3-pro"
     provider = KieAIProvider(api_key=api_key)
-    connected = await provider.check_connection()
+    connected = await provider.check_connection(test_model)
+    model_label = next((m["name"] for m in KIEAI_MODELS if m["id"] == test_model), test_model)
     if connected:
-        return {"status": "ok", "message": "kie.ai API connection successful"}
-    raise HTTPException(status_code=400, detail="Connection failed — check your API key")
+        return {"status": "ok", "message": f"{model_label} — connection successful"}
+    raise HTTPException(status_code=400, detail=f"{model_label} — connection failed, check your API key")
 
 
 # --- Model Roles ---

@@ -115,12 +115,12 @@ class KieAIProvider:
         """Return well-known kie.ai models (no list API available)."""
         return [ModelInfo(name=m["id"]) for m in KIEAI_MODELS]
 
-    async def check_connection(self) -> bool:
-        """Test connection by sending a minimal request to a known model."""
+    async def check_connection(self, model: str = "gemini-3-pro") -> bool:
+        """Test connection by sending a minimal request to the given model."""
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
-                    self._endpoint("gemini-3-pro"),
+                    self._endpoint(model),
                     json={
                         "messages": [{"role": "user", "content": "hi"}],
                         "stream": False,

@@ -94,7 +94,7 @@
     <!-- Audio & AI API Keys -->
     <v-card class="mb-6">
       <v-card-title>
-        <v-icon class="mr-2">mdi-volume-high</v-icon>Kie.ai Settings (audio, gpt, gemini, <a href="https://kie.ai/market" target="_blank">models market</a>)
+        <v-icon class="mr-2">mdi-volume-high</v-icon>Kie.ai Settings (audio, gpt, gemini, <a href="https://kie.ai/market" target="_blank">models market</a>) <a href="https://kie.ai/api-key" target="_blank" class="text-primary font-weight-medium">API Key</a>
       </v-card-title>
       <v-card-text>
         <v-row>
@@ -128,7 +128,7 @@
           </v-col>
         </v-row>
         <v-row class="mt-2">
-          <v-col cols="12">
+          <v-col cols="12" class="d-flex align-center ga-2">
             <v-btn
               color="primary"
               :disabled="!audioSettingsChanged"
@@ -138,8 +138,39 @@
               <v-icon start>mdi-content-save</v-icon>
               Save
             </v-btn>
+            <v-btn
+              variant="tonal"
+              color="info"
+              :loading="testingKieai === 'gpt'"
+              :disabled="!audioSettings.kieai_api_key || !!testingKieai"
+              @click="testKieaiModel('gpt-5-2', 'gpt')"
+            >
+              <v-icon start>mdi-connection</v-icon>
+              Test GPT
+            </v-btn>
+            <v-btn
+              variant="tonal"
+              color="info"
+              :loading="testingKieai === 'gemini'"
+              :disabled="!audioSettings.kieai_api_key || !!testingKieai"
+              @click="testKieaiModel('gemini-3.1-pro', 'gemini')"
+            >
+              <v-icon start>mdi-connection</v-icon>
+              Test Gemini
+            </v-btn>
           </v-col>
         </v-row>
+        <v-alert
+          v-if="kieaiTestResult"
+          :type="kieaiTestResult.type"
+          variant="tonal"
+          density="compact"
+          class="mt-3"
+          closable
+          @click:close="kieaiTestResult = null"
+        >
+          {{ kieaiTestResult.message }}
+        </v-alert>
         <v-alert type="info" variant="tonal" density="compact" class="mt-4">
           kie.ai API key is used for TTS (Text-to-Speech), STT (Speech-to-Text), and LLM models (GPT-5.2, Gemini 3.1 Pro, Gemini 3 Pro).
         </v-alert>
@@ -149,7 +180,7 @@
     <!-- Anthropic (Claude) API -->
     <v-card class="mb-6">
       <v-card-title>
-        <v-icon class="mr-2" color="deep-purple">mdi-creation</v-icon>Anthropic (Claude)
+        <v-icon class="mr-2" color="deep-purple">mdi-creation</v-icon>Anthropic (Claude) <a href="https://platform.claude.com/settings/keys" target="_blank" class="text-primary font-weight-medium">API Key</a>
       </v-card-title>
       <v-card-text>
         <v-row>
@@ -209,7 +240,7 @@
     <!-- ScrapeCreators (Video Transcripts) -->
     <v-card class="mb-6">
       <v-card-title>
-        <v-icon class="mr-2" color="teal">mdi-video-outline</v-icon>ScrapeCreators (Video Transcripts)
+        <v-icon class="mr-2" color="teal">mdi-video-outline</v-icon>ScrapeCreators (Video Transcripts) <a href="https://app.scrapecreators.com" target="_blank" class="text-primary font-weight-medium">API Key</a>
       </v-card-title>
       <v-card-text>
         <v-row>
@@ -342,6 +373,10 @@ const audioSettingsChanged = computed(() => {
     || String(audioSettings.value.tts_timeout) !== String(originalAudioSettings.value.tts_timeout)
 })
 
+// kie.ai test
+const testingKieai = ref(null)     // 'gpt' | 'gemini' | null
+const kieaiTestResult = ref(null)
+
 // Anthropic settings
 const anthropicSettings = ref({ anthropic_api_key: '' })
 const originalAnthropicSettings = ref({ anthropic_api_key: '' })
@@ -472,6 +507,24 @@ const saveAudioSettings = async () => {
     showSnackbar(e.response?.data?.detail || 'Failed to save Kie.ai settings', 'error')
   } finally {
     savingAudio.value = false
+  }
+}
+
+const testKieaiModel = async (modelId, label) => {
+  testingKieai.value = label
+  kieaiTestResult.value = null
+  try {
+    // Save first if changed
+    if (audioSettingsChanged.value) {
+      await store.updateSystemSetting('kieai_api_key', audioSettings.value.kieai_api_key)
+      originalAudioSettings.value.kieai_api_key = audioSettings.value.kieai_api_key
+    }
+    const { data } = await api.post(`/settings/kieai/test?model=${modelId}`)
+    kieaiTestResult.value = { type: 'success', message: data.message }
+  } catch (e) {
+    kieaiTestResult.value = { type: 'error', message: e.response?.data?.detail || 'Connection failed' }
+  } finally {
+    testingKieai.value = null
   }
 }
 

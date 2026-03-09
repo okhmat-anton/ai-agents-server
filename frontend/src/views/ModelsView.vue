@@ -743,7 +743,11 @@ const displayedModels = computed(() => settingsStore.models.filter(m => {
 const activeModels = computed(() => displayedModels.value.filter(m => m.is_active))
 
 // All active models (including offline Ollama) for role assignment dropdown
-const allActiveModels = computed(() => settingsStore.models.filter(m => m.is_active))
+// Keep currently assigned models even if inactive
+const allActiveModels = computed(() => {
+  const assignedIds = new Set(Object.values(roleAssignments.value).filter(Boolean))
+  return settingsStore.models.filter(m => m.is_active || assignedIds.has(m.id))
+})
 
 // Check if a model is online (running for Ollama, always true for API)
 const isModelOnline = (model) => {

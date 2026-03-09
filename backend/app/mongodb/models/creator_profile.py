@@ -11,6 +11,7 @@ class GoalItem(BaseModel):
     title: str = ""
     description: str = ""
     target_date: Optional[str] = None          # target date (ISO or free-form text)
+    priority: int = 1                          # 0=high, 1=medium, 2=low
     children: List["GoalItem"] = Field(default_factory=list)  # sub-goals
 
 
@@ -19,6 +20,7 @@ class DreamItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str = ""
     description: str = ""
+    priority: int = 1                          # 0=high, 1=medium, 2=low
 
 
 class IdeaItem(BaseModel):
@@ -26,6 +28,15 @@ class IdeaItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     title: str = ""
     description: str = ""
+    priority: int = 1                          # 0=high, 1=medium, 2=low
+
+
+class NoteItem(BaseModel):
+    """A single note."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str = ""
+    content: str = ""
+    created_at: Optional[str] = None  # ISO datetime string
 
 
 class MongoCreatorProfile(BaseModel):
@@ -42,6 +53,7 @@ class MongoCreatorProfile(BaseModel):
     failures: Optional[str] = None       # failures
     action_history: Optional[str] = None # action attempt history
     ideas: List[IdeaItem] = Field(default_factory=list)          # ideas
+    notes: List[NoteItem] = Field(default_factory=list)          # notes
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -63,13 +75,14 @@ class MongoCreatorProfile(BaseModel):
         if isinstance(doc.get("updated_at"), str):
             doc["updated_at"] = datetime.fromisoformat(doc["updated_at"])
         # Backward compat: old string fields → empty lists
-        for field in ("goals", "dreams", "ideas"):
+        for field in ("goals", "dreams", "ideas", "notes"):
             if isinstance(doc.get(field), str):
                 doc[field] = []
         return cls(**doc)
 
     def to_context_string(self) -> str:
         """Build a human-readable context string for LLM consumption."""
+        priority_labels = {0: "HIGH", 1: "MEDIUM", 2: "LOW"}
         sections = []
         if self.name:
             sections.append(f"Name: {self.name}")
@@ -79,7 +92,8 @@ class MongoCreatorProfile(BaseModel):
             lines = ["Goals:"]
             for g in self.goals:
                 date_part = f" (target: {g.target_date})" if g.target_date else ""
-                lines.append(f"  - {g.title}{date_part}")
+                prio = f" [{priority_labels.get(g.priority, 'MEDIUM')}]"
+                lines.append(f"  - {g.title}{prio}{date_part}")
                 if g.description:
                     lines.append(f"    {g.description}")
                 for sub in g.children:
@@ -91,7 +105,8 @@ class MongoCreatorProfile(BaseModel):
         if self.dreams:
             lines = ["Dreams:"]
             for d in self.dreams:
-                lines.append(f"  - {d.title}")
+                prio = f" [{priority_labels.get(d.priority, 'MEDIUM')}]"
+                lines.append(f"  - {d.title}{prio}")
                 if d.description:
                     lines.append(f"    {d.description}")
             sections.append("\n".join(lines))
@@ -110,8 +125,16 @@ class MongoCreatorProfile(BaseModel):
         if self.ideas:
             lines = ["Ideas:"]
             for i in self.ideas:
-                lines.append(f"  - {i.title}")
+                prio = f" [{priority_labels.get(i.priority, 'MEDIUM')}]"
+                lines.append(f"  - {i.title}{prio}")
                 if i.description:
                     lines.append(f"    {i.description}")
+            sections.append("\n".join(lines))
+        if self.notes:
+            lines = ["Notes:"]
+            for n in self.notes:
+                lines.append(f"  - {n.title}")
+                if n.content:
+                    lines.append(f"    {n.content}")
             sections.append("\n".join(lines))
         return "\n".join(sections) if sections else ""

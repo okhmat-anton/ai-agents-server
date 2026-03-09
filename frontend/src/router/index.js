@@ -58,6 +58,10 @@ const routes = [
       { path: 'projects', name: 'Projects', component: () => import('../views/ProjectsView.vue') },
       { path: 'projects/:slug', name: 'ProjectDetail', component: () => import('../views/ProjectDetailView.vue') },
       { path: 'creator', name: 'Creator', component: () => import('../views/CreatorView.vue') },
+      { path: 'creator/goals', name: 'CreatorGoals', component: () => import('../views/CreatorView.vue') },
+      { path: 'creator/dreams', name: 'CreatorDreams', component: () => import('../views/CreatorView.vue') },
+      { path: 'creator/ideas', name: 'CreatorIdeas', component: () => import('../views/CreatorView.vue') },
+      { path: 'creator/notes', name: 'CreatorNotes', component: () => import('../views/CreatorView.vue') },
     ],
   },
 ]

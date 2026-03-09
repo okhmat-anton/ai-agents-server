@@ -322,18 +322,23 @@ const models = computed(() => settingsStore.models)
 
 // Combined list: roles first, then specific models
 const modelChoices = computed(() => {
+  // Collect currently selected model IDs to keep them visible even if inactive
+  const selectedIds = new Set(form.value.models.map(e => e.model_config_id).filter(Boolean))
+
   const roleItems = modelRoles.value.map(r => ({
     title: `🎭 ${r.label}`,
     value: `role:${r.role}`,
     subtitle: `Role — uses whatever model is assigned to "${r.role}"`,
     isRole: true,
   }))
-  const modelItems = models.value.map(m => ({
-    title: m.name || m.model_id,
-    value: m.id,
-    subtitle: m.model_id,
-    isRole: false,
-  }))
+  const modelItems = models.value
+    .filter(m => m.is_active || selectedIds.has(m.id))
+    .map(m => ({
+      title: m.name || m.model_id,
+      value: m.id,
+      subtitle: m.model_id + (m.is_active ? '' : ' (disabled)'),
+      isRole: false,
+    }))
   return [...roleItems, ...modelItems]
 })
 const protocolItems = computed(() => protocolsList.value)

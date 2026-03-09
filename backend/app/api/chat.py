@@ -622,6 +622,27 @@ async def delete_session(
     return {"message": "Session deleted"}
 
 
+@router.post("/sessions/{session_id}/clear")
+async def clear_session_history(
+    session_id: str,
+    user = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Delete all messages from a session but keep the session itself."""
+    sess_svc = ChatSessionService(db)
+    session = await sess_svc.get_by_id(session_id)
+    if not session or session.user_id != str(user.id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    await ChatMessageService(db).delete_by_session(session_id)
+    # Reset summary and protocol state
+    await sess_svc.update(session_id, {
+        "summary": None,
+        "summary_message_count": 0,
+        "protocol_state": {},
+    })
+    return {"message": "Chat history cleared"}
+
+
 @router.post("/sessions/{session_id}/mark-read")
 async def mark_session_as_read(
     session_id: str,

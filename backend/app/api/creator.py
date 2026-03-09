@@ -9,7 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database import get_mongodb
 from app.core.dependencies import get_current_user
 from app.mongodb.services import CreatorProfileService
-from app.mongodb.models.creator_profile import GoalItem, DreamItem, IdeaItem
+from app.mongodb.models.creator_profile import GoalItem, DreamItem, IdeaItem, NoteItem
 
 router = APIRouter(prefix="/api/creator", tags=["creator"])
 
@@ -26,6 +26,7 @@ class CreatorProfileRequest(BaseModel):
     failures: Optional[str] = None
     action_history: Optional[str] = None
     ideas: Optional[List[IdeaItem]] = None
+    notes: Optional[List[NoteItem]] = None
 
 
 class CreatorProfileResponse(BaseModel):
@@ -41,6 +42,7 @@ class CreatorProfileResponse(BaseModel):
     failures: Optional[str] = None
     action_history: Optional[str] = None
     ideas: Optional[List[IdeaItem]] = None
+    notes: Optional[List[NoteItem]] = None
 
 
 @router.get("", response_model=CreatorProfileResponse)

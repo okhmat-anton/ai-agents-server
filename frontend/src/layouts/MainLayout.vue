@@ -11,15 +11,37 @@
       />
       <v-divider />
       <v-list density="compact" nav>
-        <v-list-item
-          v-for="item in navItems"
-          :key="item.path"
-          :to="item.path"
-          :prepend-icon="item.icon"
-          :title="item.title"
-          :value="item.path"
-          rounded="xl"
-        />
+        <template v-for="item in navItems" :key="item.path">
+          <!-- Collapsible group -->
+          <v-list-group v-if="item.children" :value="item.path">
+            <template #activator="{ props }">
+              <v-list-item
+                v-bind="props"
+                :prepend-icon="item.icon"
+                :title="item.title"
+                rounded="xl"
+              />
+            </template>
+            <v-list-item
+              v-for="child in item.children"
+              :key="child.path"
+              :to="child.path"
+              :prepend-icon="child.icon"
+              :title="child.title"
+              :value="child.path"
+              rounded="xl"
+            />
+          </v-list-group>
+          <!-- Simple item -->
+          <v-list-item
+            v-else
+            :to="item.path"
+            :prepend-icon="item.icon"
+            :title="item.title"
+            :value="item.path"
+            rounded="xl"
+          />
+        </template>
         <v-divider class="my-2" />
         <v-list-item
           v-for="item in settingsNav"
@@ -163,7 +185,18 @@ onBeforeUnmount(() => {
 
 const navItems = [
   { path: '/', icon: 'mdi-view-dashboard', title: 'Dashboard' },
-  { path: '/creator', icon: 'mdi-account-heart', title: 'Creator' },
+  {
+    path: '/creator',
+    icon: 'mdi-account-heart',
+    title: 'Creator',
+    children: [
+      { path: '/creator', icon: 'mdi-account', title: 'Context' },
+      { path: '/creator/goals', icon: 'mdi-flag-variant', title: 'Goals' },
+      { path: '/creator/dreams', icon: 'mdi-creation', title: 'Dreams' },
+      { path: '/creator/ideas', icon: 'mdi-lightbulb-on', title: 'Ideas' },
+      { path: '/creator/notes', icon: 'mdi-note-text', title: 'Notes' },
+    ],
+  },
   { path: '/agents', icon: 'mdi-robot', title: 'Agents' },
   { path: '/research-resources', icon: 'mdi-book-search', title: 'Research Resources' },
   { path: '/tasks', icon: 'mdi-clipboard-list', title: 'Tasks' },

@@ -21,6 +21,16 @@
         <v-icon size="18">mdi-plus</v-icon>
         <v-tooltip activator="parent" location="bottom">New Chat</v-tooltip>
       </v-btn>
+      <v-btn
+        v-if="!sessionsExpanded && chatStore.currentSession && chatStore.messages.length > 0"
+        icon
+        size="x-small"
+        variant="text"
+        @click="confirmClearHistory"
+      >
+        <v-icon size="18">mdi-broom</v-icon>
+        <v-tooltip activator="parent" location="bottom">Clear history</v-tooltip>
+      </v-btn>
       <v-btn icon size="x-small" variant="text" @click="chatStore.closePanel()">
         <v-icon size="18">mdi-close</v-icon>
       </v-btn>
@@ -1118,6 +1128,16 @@ function newChat() {
   temperature.value = 0.7
   messageInput.value = ''
   sessionsExpanded.value = true
+}
+
+async function confirmClearHistory() {
+  if (!chatStore.currentSession) return
+  if (!confirm('Clear all messages in this chat? This cannot be undone.')) return
+  try {
+    await chatStore.clearHistory(chatStore.currentSession.id)
+  } catch (e) {
+    alert(e.response?.data?.detail || 'Failed to clear history')
+  }
 }
 
 function goBackToList() {
