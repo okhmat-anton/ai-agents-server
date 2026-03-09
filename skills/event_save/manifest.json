@@ -1,0 +1,41 @@
+{
+  "name": "event_save",
+  "display_name": "Save Event",
+  "description": "Save an event to agent's memory timeline",
+  "description_for_agent": "Use this skill to record notable events in your memory timeline. Events can be conversations, observations, discoveries, decisions, or milestones. This helps you remember what happened and when.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Short title for the event"
+      },
+      "description": {
+        "type": "string",
+        "description": "Detailed description of what happened"
+      },
+      "event_type": {
+        "type": "string",
+        "enum": ["conversation", "observation", "discovery", "decision", "milestone", "custom"],
+        "default": "observation",
+        "description": "Type of event"
+      },
+      "importance": {
+        "type": "string",
+        "enum": ["low", "medium", "high", "critical"],
+        "default": "medium",
+        "description": "How important this event is"
+      },
+      "tags": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Tags/labels for categorization"
+      }
+    },
+    "required": ["title"]
+  },
+  "output_schema": {}
+}

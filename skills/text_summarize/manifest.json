@@ -1,0 +1,22 @@
+{
+  "name": "text_summarize",
+  "display_name": "Text Summarize",
+  "description": "Summarize text using LLM",
+  "description_for_agent": "",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      },
+      "max_length": {
+        "type": "integer",
+        "default": 200
+      }
+    }
+  },
+  "output_schema": {}
+}

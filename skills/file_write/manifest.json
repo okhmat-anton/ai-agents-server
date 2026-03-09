@@ -1,0 +1,21 @@
+{
+  "name": "file_write",
+  "display_name": "File Write",
+  "description": "Write files to filesystem",
+  "description_for_agent": "",
+  "category": "files",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      }
+    }
+  },
+  "output_schema": {}
+}

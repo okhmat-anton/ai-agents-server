@@ -1,0 +1,27 @@
+{
+  "name": "akm_crm_goals",
+  "display_name": "AKM: CRM Goals",
+  "description": "List business goals from AKM Advisor CRM.",
+  "description_for_agent": "List business/strategic goals from AKM Advisor CRM. Parameters: type (string, optional — filter by goal type), status (string, optional — filter by status), limit (integer, optional, default 50). Returns goals with title, description, metrics, deadlines, progress.",
+  "category": "crm",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "description": "Filter by goal type"
+      },
+      "status": {
+        "type": "string",
+        "description": "Filter by goal status"
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max results (default: 50)"
+      }
+    }
+  },
+  "output_schema": {}
+}

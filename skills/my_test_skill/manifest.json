@@ -1,0 +1,11 @@
+{
+  "name": "my_test_skill",
+  "display_name": "My Test Skill",
+  "description": "A test personal skill",
+  "description_for_agent": "",
+  "category": "custom",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {},
+  "output_schema": {}
+}

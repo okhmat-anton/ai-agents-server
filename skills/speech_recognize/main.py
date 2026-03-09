@@ -1,0 +1,1 @@
+# STT via audio_service — executed by pipeline handler

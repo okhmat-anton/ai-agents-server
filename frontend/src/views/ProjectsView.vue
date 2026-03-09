@@ -25,30 +25,25 @@
 
     <!-- Projects Grid -->
     <v-row v-if="!loading && filteredProjects.length">
-      <v-col v-for="project in filteredProjects" :key="project.slug" cols="12" sm="6" md="4" lg="3">
+      <v-col v-for="project in filteredProjects" :key="project.slug" cols="12">
         <v-card
           class="project-card"
           :class="{ 'border-warning': project.status === 'paused', 'border-success': project.status === 'completed' }"
           hover
           @click="goToProject(project)"
         >
-          <v-card-item>
-            <template #prepend>
-              <v-icon :color="statusColor(project.status)" size="28">{{ statusIcon(project.status) }}</v-icon>
-            </template>
-            <v-card-title class="text-truncate">{{ project.name }}</v-card-title>
-            <v-card-subtitle v-if="project.tech_stack && project.tech_stack.length" class="text-truncate">
-              {{ Array.isArray(project.tech_stack) ? project.tech_stack.join(', ') : project.tech_stack }}
-            </v-card-subtitle>
-          </v-card-item>
+          <div class="d-flex align-center">
+            <v-card-item class="flex-grow-1" style="min-width: 0">
+              <template #prepend>
+                <v-icon :color="statusColor(project.status)" size="28">{{ statusIcon(project.status) }}</v-icon>
+              </template>
+              <v-card-title class="text-truncate">{{ project.name }}</v-card-title>
+              <v-card-subtitle v-if="project.tech_stack && project.tech_stack.length" class="text-truncate">
+                {{ Array.isArray(project.tech_stack) ? project.tech_stack.join(', ') : project.tech_stack }}
+              </v-card-subtitle>
+            </v-card-item>
 
-          <v-card-text v-if="project.description" class="text-medium-emphasis" style="min-height:40px">
-            {{ truncate(project.description, 100) }}
-          </v-card-text>
-
-          <!-- Stats -->
-          <v-card-text class="pt-0">
-            <div class="d-flex align-center ga-3">
+            <div class="d-flex align-center ga-2 px-4 flex-shrink-0">
               <v-chip size="x-small" variant="tonal" color="info" prepend-icon="mdi-file-document-outline">
                 {{ project.file_count }} files
               </v-chip>
@@ -58,27 +53,26 @@
               <v-chip v-if="project.task_stats?.done" size="x-small" variant="tonal" color="success" prepend-icon="mdi-check">
                 {{ project.task_stats.done }}
               </v-chip>
-            </div>
-            <div v-if="project.tags?.length" class="mt-2 d-flex ga-1 flex-wrap">
-              <v-chip v-for="tag in project.tags" :key="tag" size="x-small" variant="outlined" color="grey">
+              <v-chip v-for="tag in (project.tags || [])" :key="tag" size="x-small" variant="outlined" color="grey">
                 {{ tag }}
               </v-chip>
+              <v-chip size="x-small" :color="statusColor(project.status)" variant="flat">
+                {{ project.status }}
+              </v-chip>
             </div>
-          </v-card-text>
 
-          <v-divider />
-          <v-card-actions>
-            <v-chip size="x-small" :color="statusColor(project.status)" variant="flat">
-              {{ project.status }}
-            </v-chip>
-            <v-spacer />
-            <v-btn icon size="small" variant="text" @click.stop="editProject(project)">
-              <v-icon size="18">mdi-pencil</v-icon>
-            </v-btn>
-            <v-btn icon size="small" variant="text" color="error" @click.stop="confirmDelete(project)">
-              <v-icon size="18">mdi-delete</v-icon>
-            </v-btn>
-          </v-card-actions>
+            <div class="d-flex align-center pr-2 flex-shrink-0">
+              <v-btn icon size="small" variant="text" @click.stop="editProject(project)">
+                <v-icon size="18">mdi-pencil</v-icon>
+              </v-btn>
+              <v-btn icon size="small" variant="text" color="error" @click.stop="confirmDelete(project)">
+                <v-icon size="18">mdi-delete</v-icon>
+              </v-btn>
+            </div>
+          </div>
+          <v-card-text v-if="project.description" class="text-medium-emphasis pt-0 pb-3">
+            {{ truncate(project.description, 200) }}
+          </v-card-text>
         </v-card>
       </v-col>
     </v-row>
@@ -93,8 +87,8 @@
 
     <!-- Loading -->
     <v-row v-if="loading">
-      <v-col v-for="i in 4" :key="i" cols="12" sm="6" md="4" lg="3">
-        <v-skeleton-loader type="card" />
+      <v-col v-for="i in 4" :key="i" cols="12">
+        <v-skeleton-loader type="list-item-two-line" />
       </v-col>
     </v-row>
 

@@ -392,6 +392,31 @@
                 </v-chip>
               </div>
             </v-card>
+
+            <!-- Creator Context Toggle -->
+            <v-card variant="outlined" class="pa-3 mt-3">
+              <div class="d-flex align-center">
+                <v-switch
+                  :model-value="agent.use_creator_context"
+                  color="teal"
+                  hide-details
+                  density="compact"
+                  :loading="permSaving"
+                  @update:model-value="(v) => toggleAgentPermission('use_creator_context', v)"
+                >
+                  <template #label>
+                    <div>
+                      <span class="font-weight-medium">👤 Creator Context</span>
+                      <div class="text-caption text-medium-emphasis">Include creator's goals, notes, profile as context. Disable for API-only or specialized agents.</div>
+                    </div>
+                  </template>
+                </v-switch>
+                <v-spacer />
+                <v-chip :color="agent.use_creator_context !== false ? 'teal' : 'grey'" size="x-small" variant="flat">
+                  {{ agent.use_creator_context !== false ? 'ON' : 'OFF' }}
+                </v-chip>
+              </div>
+            </v-card>
           </div>
         </div>
 
@@ -446,15 +471,20 @@
         <!-- Aspirations Tab (Dreams, Desires, Goals) -->
         <div v-if="tab === 'aspirations'">
           <!-- Dreams -->
-          <div class="d-flex align-center mb-3">
+          <div class="d-flex align-center mb-3" style="cursor: pointer" @click="aspirationsCollapsed.dreams = !aspirationsCollapsed.dreams">
+            <v-btn icon variant="text" size="x-small" class="mr-1">
+              <v-icon>{{ aspirationsCollapsed.dreams ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
+            </v-btn>
             <div class="text-subtitle-1 font-weight-bold">
               <v-icon color="deep-purple-lighten-2" size="20" class="mr-1">mdi-weather-night</v-icon>
               Dreams
             </div>
-            <v-chip size="x-small" class="ml-2" variant="tonal" color="deep-purple-lighten-2">long-term visions</v-chip>
+            <v-chip size="x-small" class="ml-2" variant="tonal" color="deep-purple-lighten-2">{{ aspirations.dreams.length }}</v-chip>
             <v-spacer />
-            <v-btn color="deep-purple-lighten-2" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openAspirationDialog('dreams')">Add Dream</v-btn>
+            <v-btn color="deep-purple-lighten-2" size="small" variant="tonal" prepend-icon="mdi-plus" @click.stop="openAspirationDialog('dreams')">Add Dream</v-btn>
           </div>
+          <v-expand-transition>
+          <div v-show="!aspirationsCollapsed.dreams">
           <div v-if="aspirations.dreams.length" class="mb-6">
             <v-card v-for="a in aspirations.dreams" :key="a.id" variant="outlined" class="mb-2 pa-3">
               <div class="d-flex align-center">
@@ -468,17 +498,24 @@
             </v-card>
           </div>
           <div v-else class="text-center text-grey pa-4 mb-6">No dreams defined</div>
+          </div>
+          </v-expand-transition>
 
           <!-- Desires -->
-          <div class="d-flex align-center mb-3">
+          <div class="d-flex align-center mb-3" style="cursor: pointer" @click="aspirationsCollapsed.desires = !aspirationsCollapsed.desires">
+            <v-btn icon variant="text" size="x-small" class="mr-1">
+              <v-icon>{{ aspirationsCollapsed.desires ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
+            </v-btn>
             <div class="text-subtitle-1 font-weight-bold">
               <v-icon color="pink-lighten-2" size="20" class="mr-1">mdi-heart-outline</v-icon>
               Desires
             </div>
-            <v-chip size="x-small" class="ml-2" variant="tonal" color="pink-lighten-2">wants & preferences</v-chip>
+            <v-chip size="x-small" class="ml-2" variant="tonal" color="pink-lighten-2">{{ aspirations.desires.length }}</v-chip>
             <v-spacer />
-            <v-btn color="pink-lighten-2" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openAspirationDialog('desires')">Add Desire</v-btn>
+            <v-btn color="pink-lighten-2" size="small" variant="tonal" prepend-icon="mdi-plus" @click.stop="openAspirationDialog('desires')">Add Desire</v-btn>
           </div>
+          <v-expand-transition>
+          <div v-show="!aspirationsCollapsed.desires">
           <div v-if="aspirations.desires.length" class="mb-6">
             <v-card v-for="a in aspirations.desires" :key="a.id" variant="outlined" class="mb-2 pa-3">
               <div class="d-flex align-center">
@@ -492,17 +529,24 @@
             </v-card>
           </div>
           <div v-else class="text-center text-grey pa-4 mb-6">No desires defined</div>
+          </div>
+          </v-expand-transition>
 
           <!-- Goals -->
-          <div class="d-flex align-center mb-3">
+          <div class="d-flex align-center mb-3" style="cursor: pointer" @click="aspirationsCollapsed.goals = !aspirationsCollapsed.goals">
+            <v-btn icon variant="text" size="x-small" class="mr-1">
+              <v-icon>{{ aspirationsCollapsed.goals ? 'mdi-chevron-right' : 'mdi-chevron-down' }}</v-icon>
+            </v-btn>
             <div class="text-subtitle-1 font-weight-bold">
               <v-icon color="green" size="20" class="mr-1">mdi-flag-checkered</v-icon>
               Goals
             </div>
-            <v-chip size="x-small" class="ml-2" variant="tonal" color="green">actionable objectives</v-chip>
+            <v-chip size="x-small" class="ml-2" variant="tonal" color="green">{{ aspirations.goals.length }}</v-chip>
             <v-spacer />
-            <v-btn color="green" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openAspirationDialog('goals')">Add Goal</v-btn>
+            <v-btn color="green" size="small" variant="tonal" prepend-icon="mdi-plus" @click.stop="openAspirationDialog('goals')">Add Goal</v-btn>
           </div>
+          <v-expand-transition>
+          <div v-show="!aspirationsCollapsed.goals">
           <div v-if="aspirations.goals.length">
             <v-card v-for="a in aspirations.goals" :key="a.id" variant="outlined" class="mb-2 pa-3">
               <div class="d-flex align-center">
@@ -518,6 +562,8 @@
             </v-card>
           </div>
           <div v-else class="text-center text-grey pa-4">No goals defined</div>
+          </div>
+          </v-expand-transition>
         </div>
 
         <!-- Facts & Hypotheses Tab -->
@@ -2306,6 +2352,7 @@ const beliefCategories = ['moral', 'behavioral', 'communication', 'restriction',
 
 // Aspirations tab state
 const aspirations = ref({ dreams: [], desires: [], goals: [] })
+const aspirationsCollapsed = ref({ dreams: false, desires: false, goals: false })
 const aspirationDialog = ref(false)
 const aspirationDialogType = ref('dreams')
 const aspirationText = ref('')

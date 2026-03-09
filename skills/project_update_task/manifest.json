@@ -1,0 +1,35 @@
+{
+  "name": "project_update_task",
+  "display_name": "Project Update Task",
+  "description": "Update the status of a project task (e.g. move to in_progress, review, done).",
+  "description_for_agent": "Update a project task's status or other fields. Parameters: project_slug (string), task_id (string, the task ID from the task list), status (string, optional: 'backlog', 'todo', 'in_progress', 'review', 'done', 'cancelled'), assignee (string, optional: your agent name). Use this after completing work on a task to move it to 'done' or 'review'. ALWAYS update task status when you start or finish working on a task.",
+  "category": "project",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug (e.g. 'hello-world')"
+      },
+      "task_id": {
+        "type": "string",
+        "description": "Task ID or key (e.g. '245dd6f23bde' or 'T-1')"
+      },
+      "status": {
+        "type": "string",
+        "description": "New status: backlog, todo, in_progress, review, done, cancelled"
+      },
+      "assignee": {
+        "type": "string",
+        "description": "Agent name to assign (optional)"
+      }
+    },
+    "required": [
+      "project_slug",
+      "task_id"
+    ]
+  },
+  "output_schema": {}
+}

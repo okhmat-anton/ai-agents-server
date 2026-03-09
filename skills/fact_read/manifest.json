@@ -1,0 +1,29 @@
+{
+  "name": "fact_read",
+  "display_name": "Read Facts",
+  "description": "Read facts and hypotheses from agent's knowledge base",
+  "description_for_agent": "Use this skill to recall facts and hypotheses you've previously stored. You can search by keywords or filter by type (fact/hypothesis).",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search text to find relevant facts"
+      },
+      "type": {
+        "type": "string",
+        "enum": ["fact", "hypothesis"],
+        "description": "Filter by type (omit to get both)"
+      },
+      "limit": {
+        "type": "integer",
+        "default": 20,
+        "description": "Maximum number of facts to return"
+      }
+    }
+  },
+  "output_schema": {}
+}

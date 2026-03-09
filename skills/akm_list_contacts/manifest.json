@@ -1,0 +1,27 @@
+{
+  "name": "akm_list_contacts",
+  "display_name": "AKM: List Contacts",
+  "description": "List contacts from AKM CRM.",
+  "description_for_agent": "List contacts from AKM Advisor CRM. Parameters: search (string, optional — search by name/email/phone), limit (integer, optional, default 50), page (integer, optional, default 1). Returns contacts with name, email, phone, company, and other details.",
+  "category": "crm",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "search": {
+        "type": "string",
+        "description": "Search by name, email, phone"
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Results per page (default: 50)"
+      },
+      "page": {
+        "type": "integer",
+        "description": "Page number (default: 1)"
+      }
+    }
+  },
+  "output_schema": {}
+}

@@ -1,0 +1,30 @@
+{
+  "name": "memory_store",
+  "display_name": "Memory Store",
+  "description": "Save information to long-term memory",
+  "description_for_agent": "",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string"
+      },
+      "importance": {
+        "type": "number"
+      },
+      "tags": {
+        "type": "array"
+      }
+    }
+  },
+  "output_schema": {}
+}

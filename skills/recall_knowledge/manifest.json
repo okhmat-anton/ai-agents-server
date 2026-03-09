@@ -1,0 +1,33 @@
+{
+  "name": "recall_knowledge",
+  "display_name": "Recall Knowledge",
+  "description": "Search and aggregate previously studied knowledge from memory.",
+  "description_for_agent": "Recall previously studied knowledge. Searches agent memory for knowledge entries, aggregates findings, and provides a structured answer based on what was learned. Parameters: query (string, required — what to recall/remember), depth (string, optional: 'quick', 'detailed', default 'quick'), tags (array of strings, optional — filter by specific tags). Use this when asked to recall, remember, or answer based on previously studied material.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "What to recall/remember"
+      },
+      "depth": {
+        "type": "string",
+        "description": "Recall depth: quick or detailed (default: quick)"
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Filter by tags"
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "output_schema": {}
+}

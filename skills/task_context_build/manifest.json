@@ -1,0 +1,39 @@
+{
+  "name": "task_context_build",
+  "display_name": "Task Context Build",
+  "description": "Build complete task context including details, comments, related files, and activity history",
+  "description_for_agent": "Get comprehensive task context in a single call. Returns task details, all comments, related files inferred from activity logs, and task-specific activity timeline. Parameters: project_slug (string), task_id (string, task ID or key like 'T-1'), include_comments (boolean, default: true), include_related_files (boolean, default: true), include_activity (boolean, default: true). Use this when starting work on a task to understand what has been done, what files are involved, and the full context.",
+  "category": "project",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug (e.g. 'hello-world')"
+      },
+      "task_id": {
+        "type": "string",
+        "description": "Task ID or key (e.g. '245dd6f23bde' or 'T-1')"
+      },
+      "include_comments": {
+        "type": "boolean",
+        "description": "Include all task comments (default: true)"
+      },
+      "include_related_files": {
+        "type": "boolean",
+        "description": "Include related files inferred from logs (default: true)"
+      },
+      "include_activity": {
+        "type": "boolean",
+        "description": "Include task activity timeline (default: true)"
+      }
+    },
+    "required": [
+      "project_slug",
+      "task_id"
+    ]
+  },
+  "output_schema": {}
+}

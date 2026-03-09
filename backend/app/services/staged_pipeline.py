@@ -1821,9 +1821,11 @@ Rules:
             needs_skills.add("task_context_build")
         if not classification.is_greeting and classification.complexity != "simple" and "memory_search" in available:
             needs_skills.add("memory_search")
-        # Always include creator context when available (not greetings)
+        # Include creator context when available (not greetings) and agent has it enabled
         if not classification.is_greeting and "creator_context" in available:
-            needs_skills.add("creator_context")
+            use_creator = getattr(self.ctx.agent, 'use_creator_context', True)
+            if use_creator:
+                needs_skills.add("creator_context")
 
         # Filter to gather-only skills
         needs_skills = needs_skills.intersection(available).intersection(GATHER_SKILLS)

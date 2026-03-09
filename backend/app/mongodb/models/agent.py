@@ -47,6 +47,9 @@ class MongoAgent(BaseModel):
     # Self-thinking mode
     self_thinking: bool = False
 
+    # Whether to include creator/owner context in agent responses
+    use_creator_context: bool = True
+
     # Thinking protocol
     thinking_protocol_id: Optional[str] = None
 

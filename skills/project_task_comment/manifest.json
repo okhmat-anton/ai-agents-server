@@ -1,0 +1,36 @@
+{
+  "name": "project_task_comment",
+  "display_name": "Project Task Comment",
+  "description": "Add a comment to a project task.",
+  "description_for_agent": "Add a comment to a project task. Parameters: project_slug (string), task_id (string, the task ID or key), content (string, the comment text). Use this to document your progress, explain what you did, or note any issues. ALWAYS leave a comment when you complete or make progress on a task.",
+  "category": "project",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug (e.g. 'hello-world')"
+      },
+      "task_id": {
+        "type": "string",
+        "description": "Task ID or key (e.g. '245dd6f23bde' or 'T-2')"
+      },
+      "content": {
+        "type": "string",
+        "description": "Comment text"
+      },
+      "author": {
+        "type": "string",
+        "description": "Comment author (default: 'agent')"
+      }
+    },
+    "required": [
+      "project_slug",
+      "task_id",
+      "content"
+    ]
+  },
+  "output_schema": {}
+}

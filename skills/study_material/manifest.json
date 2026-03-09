@@ -1,0 +1,31 @@
+{
+  "name": "study_material",
+  "display_name": "Study Material",
+  "description": "Study and memorize material from text, file, or topic. Creates structured knowledge in memory.",
+  "description_for_agent": "Study and deeply learn material. Reads the input, creates a summary, extracts key topics, writes detailed notes with source references, and links everything in the knowledge graph. Parameters: topic (string, optional — subject to study), file_path (string, optional — path to a file in agent's data/ folder), text (string, optional — direct text to study), depth (string, optional: 'quick', 'normal', 'deep', default 'normal'). At least one of topic/file_path/text must be provided. Use this when asked to study, learn, read, memorize material.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "topic": {
+        "type": "string",
+        "description": "Topic/subject to study"
+      },
+      "file_path": {
+        "type": "string",
+        "description": "Path to file in agent data/ folder"
+      },
+      "text": {
+        "type": "string",
+        "description": "Direct text to study"
+      },
+      "depth": {
+        "type": "string",
+        "description": "Study depth: quick, normal, deep (default: normal)"
+      }
+    }
+  },
+  "output_schema": {}
+}

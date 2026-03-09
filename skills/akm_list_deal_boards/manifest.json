@@ -1,0 +1,14 @@
+{
+  "name": "akm_list_deal_boards",
+  "display_name": "AKM: Deal Boards",
+  "description": "List deal pipeline boards (statuses/stages) from AKM CRM.",
+  "description_for_agent": "Get deal pipeline stats and stages from AKM Advisor CRM. Returns deal collection statistics and pipeline structure. No parameters needed. Use this to understand the deal pipeline before viewing deals.",
+  "category": "crm",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "output_schema": {}
+}

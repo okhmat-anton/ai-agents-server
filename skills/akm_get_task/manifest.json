@@ -1,0 +1,22 @@
+{
+  "name": "akm_get_task",
+  "display_name": "AKM: Get Task",
+  "description": "Get a specific task by ID from AKM project.",
+  "description_for_agent": "Get detailed info about a specific task/issue in AKM Advisor. Parameters: task_id (string, required — issue ID or key like PROJ-123). Returns full task details: summary, description, status, priority, comments, assignee.",
+  "category": "crm",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "task_id": {
+        "type": "string",
+        "description": "Task/issue ID or key (e.g. PROJ-123)"
+      }
+    },
+    "required": [
+      "task_id"
+    ]
+  },
+  "output_schema": {}
+}

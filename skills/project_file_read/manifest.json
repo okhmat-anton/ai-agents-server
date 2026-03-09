@@ -1,0 +1,27 @@
+{
+  "name": "project_file_read",
+  "display_name": "Project File Read",
+  "description": "Read a file from a project's code directory.",
+  "description_for_agent": "Read a file from a project's code directory. Parameters: project_slug (string), path (string, relative path). Returns the file content. Use this to read existing project files before modifying them.",
+  "category": "files",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug (e.g. 'hello-world')"
+      },
+      "path": {
+        "type": "string",
+        "description": "Relative file path inside project code dir"
+      }
+    },
+    "required": [
+      "project_slug",
+      "path"
+    ]
+  },
+  "output_schema": {}
+}

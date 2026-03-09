@@ -1,0 +1,22 @@
+{
+  "name": "web_fetch",
+  "display_name": "Web Fetch",
+  "description": "HTTP GET/POST requests to URL",
+  "description_for_agent": "",
+  "category": "web",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string"
+      },
+      "method": {
+        "type": "string",
+        "default": "GET"
+      }
+    }
+  },
+  "output_schema": {}
+}

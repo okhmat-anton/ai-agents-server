@@ -315,39 +315,74 @@ async def get_kieai_balance(
     if not api_key:
         raise HTTPException(status_code=400, detail="kie.ai API key not configured")
 
-    headers = {"Authorization": f"Bearer {api_key}"}
-    tried_urls = [
-        "https://api.kie.ai/v1/balance",
-        "https://api.kie.ai/v1/me",
-        "https://api.kie.ai/v1/credits",
-        "https://api.kie.ai/v1/dashboard/billing/credit_grants",
-    ]
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    credit_url = "https://api.kie.ai/api/v1/chat/credit"
 
     async with httpx.AsyncClient(timeout=10) as client:
-        for url in tried_urls:
-            try:
-                r = await client.get(url, headers=headers)
-                if r.status_code == 200:
-                    data = r.json()
-                    return {
-                        "available": True,
-                        "balance": data.get("balance") or data.get("credits") or data.get("total_granted"),
-                        "raw": data,
-                    }
-            except Exception:
-                continue
+        try:
+            r = await client.get(credit_url, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                # Try known field names; kie.ai returns {"code":200,"msg":"success","data":751.08}
+                balance = (
+                    data.get("data")
+                    or data.get("balance")
+                    or data.get("credits")
+                    or data.get("credit")
+                    or data.get("total_granted")
+                    or data.get("remaining")
+                )
+                return {
+                    "available": True,
+                    "balance": balance,
+                    "raw": data,
+                }
+            else:
+                return {
+                    "available": False,
+                    "key_valid": r.status_code != 401,
+                    "message": f"Credit API returned {r.status_code}",
+                    "url": "https://kie.ai/market",
+                }
+        except Exception as e:
+            return {
+                "available": False,
+                "key_valid": False,
+                "message": f"Failed to reach kie.ai: {e}",
+                "url": "https://kie.ai/market",
+            }
 
-        # Verify key works with a minimal request
-        from app.llm.kieai import KieAIProvider
-        provider = KieAIProvider(api_key=api_key)
-        key_valid = await provider.check_connection("gemini-3-pro")
 
-    return {
-        "available": False,
-        "key_valid": key_valid,
-        "message": "Balance unavailable via API — check kie.ai/market",
-        "url": "https://kie.ai/market",
-    }
+# --- AKM Advisor ---
+@router.post("/akm-advisor/test")
+async def test_akm_advisor_connection(
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Test AKM Advisor API connection using stored key."""
+    api_key = await get_setting_value(db, "akm_advisor_api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="AKM Advisor API key not configured")
+    base_url = (await get_setting_value(db, "akm_advisor_url") or "").rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=400, detail="AKM Advisor API URL not configured")
+
+    headers = {"X-Agent-Key": api_key}
+    async with httpx.AsyncClient(timeout=15) as client:
+        try:
+            r = await client.get(f"{base_url}/context", headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                name = data.get("name") or data.get("key") or "OK"
+                return {"status": "ok", "message": f"Connected to project: {name}"}
+            raise HTTPException(status_code=400, detail=f"Connection failed (HTTP {r.status_code}): {r.text[:200]}")
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=400, detail=f"Connection failed: {e}")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")
 
 
 # --- Model Roles ---
@@ -485,6 +520,9 @@ _DEFAULT_SETTINGS = {
     "anthropic_api_key": {"value": "", "description": "Anthropic API key for Claude models (claude-sonnet-4, claude-opus-4, etc.)"},
     # ScrapeCreators — social media video transcripts
     "scrapecreators_api_key": {"value": "", "description": "ScrapeCreators API key for fetching video transcripts from YouTube, TikTok, Instagram, Facebook, Twitter"},
+    # AKM Advisor CRM
+    "akm_advisor_api_key": {"value": "", "description": "AKM Advisor Agent API key (X-Agent-Key) for CRM access"},
+    "akm_advisor_url": {"value": "", "description": "AKM Advisor Agent API URL (e.g. https://app.akm-advisor.com/api/v1/agent/PROJECT_ID)"},
 }
 
 

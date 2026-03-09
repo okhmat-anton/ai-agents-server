@@ -1,0 +1,27 @@
+{
+  "name": "project_run_code",
+  "display_name": "Project Run Code",
+  "description": "Execute a Python file from a project's code directory.",
+  "description_for_agent": "Run/execute a Python file from project code directory. Parameters: project_slug (string), file_path (string, relative path like 'main.py' or 't-5_solution.py'). Returns stdout, stderr, exit code. Use this to test/run your code after writing it. Working directory is set to the project's code directory.",
+  "category": "code",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug (e.g. 'hello-world')"
+      },
+      "file_path": {
+        "type": "string",
+        "description": "Relative file path (e.g. 'main.py', 't-5_solution.py')"
+      }
+    },
+    "required": [
+      "project_slug",
+      "file_path"
+    ]
+  },
+  "output_schema": {}
+}

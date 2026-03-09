@@ -1,0 +1,22 @@
+{
+  "name": "project_list_files",
+  "display_name": "Project List Files",
+  "description": "List files in a project's code directory.",
+  "description_for_agent": "List all files in a project's code directory (recursively). Parameters: project_slug (string). Returns list of file paths relative to code dir.",
+  "category": "files",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug"
+      }
+    },
+    "required": [
+      "project_slug"
+    ]
+  },
+  "output_schema": {}
+}

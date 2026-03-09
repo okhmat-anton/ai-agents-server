@@ -1,0 +1,23 @@
+{
+  "name": "akm_project_tasks",
+  "display_name": "AKM: Project Tasks",
+  "description": "Get tasks and backlog for the AKM project.",
+  "description_for_agent": "Get tasks/backlog for the project in AKM Advisor. Parameters: status (string, optional — filter: backlog, todo, in_progress, review, testing, done), include_done (boolean, optional, default false). Returns list of issues/tasks with their status, priority, assignee.",
+  "category": "crm",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "status": {
+        "type": "string",
+        "description": "Filter by status: backlog, todo, in_progress, review, testing, done"
+      },
+      "include_done": {
+        "type": "boolean",
+        "description": "Include completed tasks (default: false)"
+      }
+    }
+  },
+  "output_schema": {}
+}

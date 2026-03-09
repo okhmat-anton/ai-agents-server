@@ -1,0 +1,34 @@
+{
+  "name": "project_context_build",
+  "display_name": "Project Context Build",
+  "description": "Build complete project context including metadata, tasks, files, and recent activity",
+  "description_for_agent": "Get comprehensive project context in a single call. Returns project info, task statistics, file tree, and recent activity logs. Parameters: project_slug (string), include_logs (boolean, default: true), include_file_tree (boolean, default: true), max_recent_logs (integer, default: 50). Use this when starting work on a project to understand its current state, goals, and recent activity.",
+  "category": "project",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug (e.g. 'hello-world')"
+      },
+      "include_logs": {
+        "type": "boolean",
+        "description": "Include recent activity logs (default: true)"
+      },
+      "include_file_tree": {
+        "type": "boolean",
+        "description": "Include project file tree (default: true)"
+      },
+      "max_recent_logs": {
+        "type": "integer",
+        "description": "Maximum number of recent log entries (default: 50)"
+      }
+    },
+    "required": [
+      "project_slug"
+    ]
+  },
+  "output_schema": {}
+}

@@ -1,0 +1,25 @@
+{
+  "name": "fact_extract",
+  "display_name": "Extract Facts",
+  "description": "Extract facts and hypotheses from text using LLM analysis",
+  "description_for_agent": "Use this skill to extract structured facts and hypotheses from a piece of text. The extracted items will be automatically saved to your knowledge base.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "The text to extract facts from"
+      },
+      "source": {
+        "type": "string",
+        "default": "extraction",
+        "description": "Source label for extracted facts"
+      }
+    },
+    "required": ["text"]
+  },
+  "output_schema": {}
+}

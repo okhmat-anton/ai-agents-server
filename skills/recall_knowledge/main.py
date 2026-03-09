@@ -1,0 +1,1 @@
+# Knowledge recall from memory — executed by pipeline handler

@@ -1,0 +1,30 @@
+{
+  "name": "speech_recognize",
+  "display_name": "Speech Recognize (STT)",
+  "description": "Transcribe audio to text using OpenAI Whisper.",
+  "description_for_agent": "Transcribe audio to text (Speech-to-Text). Parameters: audio_url (string, URL or local path to the audio file), language (string, optional, ISO-639-1 code like 'en', 'ru' for better accuracy), provider (string, optional: 'openai', uses system default if omitted). Currently only OpenAI Whisper is supported for STT. Use this to transcribe audio messages or files the user provides.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "audio_url": {
+        "type": "string",
+        "description": "URL or path of the audio file to transcribe"
+      },
+      "language": {
+        "type": "string",
+        "description": "Language code (e.g. 'en', 'ru') for better accuracy"
+      },
+      "provider": {
+        "type": "string",
+        "description": "STT provider: openai (optional, uses system default)"
+      }
+    },
+    "required": [
+      "audio_url"
+    ]
+  },
+  "output_schema": {}
+}

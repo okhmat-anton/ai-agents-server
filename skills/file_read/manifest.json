@@ -1,0 +1,18 @@
+{
+  "name": "file_read",
+  "display_name": "File Read",
+  "description": "Read files from filesystem",
+  "description_for_agent": "",
+  "category": "files",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string"
+      }
+    }
+  },
+  "output_schema": {}
+}

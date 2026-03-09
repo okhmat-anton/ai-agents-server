@@ -1,0 +1,30 @@
+{
+  "name": "sound_generate",
+  "display_name": "Sound Generate (TTS)",
+  "description": "Generate speech audio from text using OpenAI or MiniMax TTS.",
+  "description_for_agent": "Generate speech audio from text. Returns an audio_url you can include in your response. Parameters: text (string, required, max 10000 chars), voice (string, optional — provider-specific voice name), provider (string, optional: 'openai' or 'minimax', uses system default if omitted). OpenAI voices: alloy, echo, fable, onyx, nova, shimmer. MiniMax voices: male-qn-qingse, female-shaonv, female-yujie, etc. Use this skill when the user asks you to read something aloud, generate speech, or create audio.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Text to convert to speech (max 10000 chars)"
+      },
+      "voice": {
+        "type": "string",
+        "description": "Voice name (provider-specific, optional)"
+      },
+      "provider": {
+        "type": "string",
+        "description": "TTS provider: openai or minimax (optional, uses system default)"
+      }
+    },
+    "required": [
+      "text"
+    ]
+  },
+  "output_schema": {}
+}

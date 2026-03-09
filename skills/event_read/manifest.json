@@ -1,0 +1,29 @@
+{
+  "name": "event_read",
+  "display_name": "Read Events",
+  "description": "Read events from agent's memory timeline",
+  "description_for_agent": "Use this skill to recall events from your memory timeline. You can search by keywords or filter by event type to remember what happened.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search text to find relevant events"
+      },
+      "event_type": {
+        "type": "string",
+        "enum": ["conversation", "observation", "discovery", "decision", "milestone", "custom"],
+        "description": "Filter by event type (omit to get all)"
+      },
+      "limit": {
+        "type": "integer",
+        "default": 20,
+        "description": "Maximum number of events to return"
+      }
+    }
+  },
+  "output_schema": {}
+}

@@ -1,0 +1,46 @@
+{
+  "name": "fact_save",
+  "display_name": "Save Fact",
+  "description": "Save a fact or hypothesis to agent's knowledge base",
+  "description_for_agent": "Use this skill to save important facts or hypotheses you discover. Facts are verified knowledge, hypotheses are unverified assumptions that need checking.",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "content": {
+        "type": "string",
+        "description": "The fact or hypothesis text to save"
+      },
+      "type": {
+        "type": "string",
+        "enum": ["fact", "hypothesis"],
+        "default": "fact",
+        "description": "Whether this is a verified fact or unverified hypothesis"
+      },
+      "source": {
+        "type": "string",
+        "default": "agent",
+        "description": "Where the fact came from: agent, conversation, web, analysis, observation"
+      },
+      "verified": {
+        "type": "boolean",
+        "default": false,
+        "description": "Whether the fact has been verified"
+      },
+      "confidence": {
+        "type": "number",
+        "default": 0.8,
+        "description": "Confidence level 0.0-1.0"
+      },
+      "tags": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Tags/labels for categorization"
+      }
+    },
+    "required": ["content"]
+  },
+  "output_schema": {}
+}

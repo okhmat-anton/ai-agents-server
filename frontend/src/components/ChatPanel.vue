@@ -1218,7 +1218,7 @@ async function saveMessageToNotes(msg) {
   savingToNotes[msg.id] = true
   try {
     const title = msg.content.substring(0, 80).replace(/[#*`\n]/g, '').trim() + (msg.content.length > 80 ? '…' : '')
-    await api.post('/api/creator/append-item', {
+    await api.post('/creator/append-item', {
       target: 'notes',
       title,
       content: msg.content,
@@ -1249,28 +1249,28 @@ async function saveSelectedTextTo(target, text, extra = {}) {
     const aid = extra.agentId
     switch (target) {
       case 'agent_fact':
-        await api.post(`/api/agents/${aid}/facts`, {
+        await api.post(`/agents/${aid}/facts`, {
           type: 'fact', content: trimmed, source: 'chat_selection',
         })
         return
       case 'agent_belief':
-        await api.post(`/api/agents/${aid}/beliefs/core`, {
+        await api.post(`/agents/${aid}/beliefs/core`, {
           text: trimmed, category: 'other',
         })
         return
       case 'agent_aspiration':
-        await api.post(`/api/agents/${aid}/aspirations/goals`, {
+        await api.post(`/agents/${aid}/aspirations/goals`, {
           text: trimmed, priority: 'medium', locked: true,
         })
         return
       case 'agent_event':
-        await api.post(`/api/agents/${aid}/events`, {
+        await api.post(`/agents/${aid}/events`, {
           event_type: 'observation', title: titleSnippet, description: trimmed,
           source: 'chat_selection', importance: 'medium',
         })
         return
       case 'agent_task':
-        await api.post(`/api/agents/${aid}/tasks`, {
+        await api.post(`/agents/${aid}/tasks`, {
           title: titleSnippet, description: trimmed,
         })
         return
@@ -1278,7 +1278,7 @@ async function saveSelectedTextTo(target, text, extra = {}) {
   }
 
   // ── Creator items ──
-  await api.post('/api/creator/append-item', {
+  await api.post('/creator/append-item', {
     target,
     title: titleSnippet,
     content: trimmed,

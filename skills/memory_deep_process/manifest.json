@@ -1,0 +1,19 @@
+{
+  "name": "memory_deep_process",
+  "display_name": "Memory Deep Process",
+  "description": "Analyze all memory records, establish typed links between them, build knowledge graph (see Memory Links)",
+  "description_for_agent": "",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "depth": {
+        "type": "integer",
+        "default": 2
+      }
+    }
+  },
+  "output_schema": {}
+}

@@ -458,6 +458,21 @@ class AgentChatEngine:
         _settings = get_settings()
         os.environ.setdefault("PROJECTS_DIR", _settings.PROJECTS_DIR)
 
+        # Inject AKM Advisor settings from MongoDB for CRM skills
+        if skill_name.startswith("akm_"):
+            try:
+                from app.database import get_mongodb
+                from app.api.settings import get_setting_value
+                _db = get_mongodb()
+                akm_key = await get_setting_value(_db, "akm_advisor_api_key")
+                akm_url = await get_setting_value(_db, "akm_advisor_url")
+                if akm_key:
+                    os.environ["AKM_ADVISOR_API_KEY"] = akm_key
+                if akm_url:
+                    os.environ["AKM_ADVISOR_URL"] = akm_url
+            except Exception as e:
+                logger.warning(f"Failed to load AKM settings: {e}")
+
         try:
             namespace = {}
             exec(code, namespace)

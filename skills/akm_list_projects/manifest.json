@@ -1,0 +1,14 @@
+{
+  "name": "akm_list_projects",
+  "display_name": "AKM: List Projects",
+  "description": "List all business projects from AKM Advisor CRM.",
+  "description_for_agent": "List all projects in the AKM Advisor CRM/ERP system. Returns project names, keys, task statistics. No parameters needed. Use this when user asks about their business projects or tasks overview.",
+  "category": "crm",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "output_schema": {}
+}

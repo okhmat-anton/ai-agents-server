@@ -1,0 +1,14 @@
+{
+  "name": "akm_list_lead_boards",
+  "display_name": "AKM: Lead Boards",
+  "description": "List lead pipeline boards (statuses/stages) from AKM CRM.",
+  "description_for_agent": "Get all lead boards/pipelines from AKM Advisor CRM. Returns lead collection stats and available statuses/stages. No parameters needed. Use this to understand the lead pipeline structure before viewing leads.",
+  "category": "crm",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "output_schema": {}
+}

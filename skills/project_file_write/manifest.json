@@ -1,0 +1,32 @@
+{
+  "name": "project_file_write",
+  "display_name": "Project File Write",
+  "description": "Write/create a file inside a project's code directory. Use this to save code to your assigned projects.",
+  "description_for_agent": "Write or create a file inside a project's code directory. Parameters: project_slug (string, e.g. 'hello-world'), path (string, relative path inside project code dir, e.g. 'main.py' or 'src/utils.py'), content (string, file content). Creates parent directories automatically. ALWAYS use this skill to save code to projects instead of file_write.",
+  "category": "files",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "project_slug": {
+        "type": "string",
+        "description": "Project slug (e.g. 'hello-world')"
+      },
+      "path": {
+        "type": "string",
+        "description": "Relative file path inside project code dir"
+      },
+      "content": {
+        "type": "string",
+        "description": "File content to write"
+      }
+    },
+    "required": [
+      "project_slug",
+      "path",
+      "content"
+    ]
+  },
+  "output_schema": {}
+}

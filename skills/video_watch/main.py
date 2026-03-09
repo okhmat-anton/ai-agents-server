@@ -1,0 +1,1 @@
+# Video transcript via ScrapeCreators — executed by pipeline handler

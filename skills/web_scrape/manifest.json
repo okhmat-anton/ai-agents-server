@@ -1,0 +1,21 @@
+{
+  "name": "web_scrape",
+  "display_name": "Web Scrape",
+  "description": "Parse HTML pages (BeautifulSoup)",
+  "description_for_agent": "",
+  "category": "web",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string"
+      },
+      "selector": {
+        "type": "string"
+      }
+    }
+  },
+  "output_schema": {}
+}
