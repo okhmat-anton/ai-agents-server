@@ -4,6 +4,16 @@
     <div class="d-flex align-center mb-6">
       <div class="text-h4 font-weight-bold">Notes</div>
       <v-spacer />
+      <v-btn
+        v-if="notes.length"
+        variant="text"
+        size="small"
+        :prepend-icon="allExpanded ? 'mdi-unfold-less-horizontal' : 'mdi-unfold-more-horizontal'"
+        class="mr-3"
+        @click="toggleAll"
+      >
+        {{ allExpanded ? 'Collapse All' : 'Expand All' }}
+      </v-btn>
       <v-btn color="teal" prepend-icon="mdi-plus" @click="openCreateDialog">
         New Note
       </v-btn>
@@ -64,8 +74,17 @@
             <div class="card-accent" :class="priorityAccentClass(note.priority)" />
             <v-card-text class="pa-5 pl-7">
               <div class="d-flex align-start">
-                <div class="flex-grow-1">
-                  <div class="d-flex align-center mb-2 ga-2">
+                <v-btn
+                  icon
+                  size="x-small"
+                  variant="text"
+                  class="mr-2 mt-1"
+                  @click.stop="toggleExpand(note.id)"
+                >
+                  <v-icon size="16">{{ expandedNotes.has(note.id) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+                </v-btn>
+                <div class="flex-grow-1" @click="toggleExpand(note.id)" style="cursor: pointer;">
+                  <div class="d-flex align-center mb-1 ga-2 flex-wrap">
                     <span class="text-subtitle-1 font-weight-medium">{{ note.title }}</span>
                     <v-chip :color="priorityColor(note.priority)" size="x-small" variant="tonal">
                       {{ note.priority }}
@@ -80,17 +99,20 @@
                       <v-icon start size="12">mdi-brain-off</v-icon>
                       Hidden from context
                     </v-chip>
+                    <span v-if="!expandedNotes.has(note.id) && note.content" class="text-caption text-medium-emphasis text-truncate" style="max-width: 300px;">{{ note.content.substring(0, 80) }}</span>
                   </div>
-                  <div v-if="note.content" class="text-body-2 text-medium-emphasis note-content">{{ note.content }}</div>
-                  <div class="d-flex align-center ga-2 mt-2">
-                    <v-chip v-for="tag in note.tags" :key="tag" size="x-small" variant="tonal" color="blue-grey">
-                      {{ tag }}
-                    </v-chip>
-                    <v-spacer />
-                    <span class="text-caption text-grey">{{ formatDate(note.created_at) }}</span>
+                  <div v-if="expandedNotes.has(note.id)">
+                    <div v-if="note.content" class="text-body-2 text-medium-emphasis note-content mt-1">{{ note.content }}</div>
+                    <div class="d-flex align-center ga-2 mt-2">
+                      <v-chip v-for="tag in note.tags" :key="tag" size="x-small" variant="tonal" color="blue-grey">
+                        {{ tag }}
+                      </v-chip>
+                      <v-spacer />
+                      <span class="text-caption text-grey">{{ formatDate(note.created_at) }}</span>
+                    </div>
                   </div>
                 </div>
-                <div class="d-flex flex-column ml-3 ga-1">
+                <div class="d-flex ml-3 ga-1">
                   <v-btn icon size="small" variant="text" @click.stop="editNote(note)">
                     <v-icon>mdi-pencil</v-icon>
                   </v-btn>
@@ -114,8 +136,17 @@
         <div class="card-accent" :class="priorityAccentClass(note.priority)" />
         <v-card-text class="pa-5 pl-7">
           <div class="d-flex align-start">
-            <div class="flex-grow-1">
-              <div class="d-flex align-center mb-2 ga-2">
+            <v-btn
+              icon
+              size="x-small"
+              variant="text"
+              class="mr-2 mt-1"
+              @click.stop="toggleExpand(note.id)"
+            >
+              <v-icon size="16">{{ expandedNotes.has(note.id) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+            </v-btn>
+            <div class="flex-grow-1" @click="toggleExpand(note.id)" style="cursor: pointer;">
+              <div class="d-flex align-center mb-1 ga-2 flex-wrap">
                 <span class="text-subtitle-1 font-weight-medium">{{ note.title }}</span>
                 <v-chip :color="priorityColor(note.priority)" size="x-small" variant="tonal">
                   {{ note.priority }}
@@ -130,17 +161,20 @@
                   <v-icon start size="12">mdi-brain-off</v-icon>
                   Hidden from context
                 </v-chip>
+                <span v-if="!expandedNotes.has(note.id) && note.content" class="text-caption text-medium-emphasis text-truncate" style="max-width: 300px;">{{ note.content.substring(0, 80) }}</span>
               </div>
-              <div v-if="note.content" class="text-body-2 text-medium-emphasis note-content">{{ note.content }}</div>
-              <div class="d-flex align-center ga-2 mt-2">
-                <v-chip v-for="tag in note.tags" :key="tag" size="x-small" variant="tonal" color="blue-grey">
-                  {{ tag }}
-                </v-chip>
-                <v-spacer />
-                <span class="text-caption text-grey">{{ formatDate(note.created_at) }}</span>
+              <div v-if="expandedNotes.has(note.id)">
+                <div v-if="note.content" class="text-body-2 text-medium-emphasis note-content mt-1">{{ note.content }}</div>
+                <div class="d-flex align-center ga-2 mt-2">
+                  <v-chip v-for="tag in note.tags" :key="tag" size="x-small" variant="tonal" color="blue-grey">
+                    {{ tag }}
+                  </v-chip>
+                  <v-spacer />
+                  <span class="text-caption text-grey">{{ formatDate(note.created_at) }}</span>
+                </div>
               </div>
             </div>
-            <div class="d-flex flex-column ml-3 ga-1">
+            <div class="d-flex ml-3 ga-1">
               <v-btn icon size="small" variant="text" @click.stop="editNote(note)">
                 <v-icon>mdi-pencil</v-icon>
               </v-btn>
@@ -298,6 +332,8 @@ const formData = ref({
 const deleteDialog = ref(false)
 const deleteNoteId = ref(null)
 const deleteConfirmText = ref('')
+const expandedNotes = ref(new Set())
+const allExpanded = ref(false)
 
 const statuses = [
   { value: 'active', label: 'Active', color: 'teal', icon: 'mdi-note-text-outline' },
@@ -346,6 +382,24 @@ let _debounce = null
 function debouncedLoad() {
   clearTimeout(_debounce)
   _debounce = setTimeout(() => loadNotes(), 400)
+}
+
+function toggleExpand(noteId) {
+  if (expandedNotes.value.has(noteId)) {
+    expandedNotes.value.delete(noteId)
+  } else {
+    expandedNotes.value.add(noteId)
+  }
+  expandedNotes.value = new Set(expandedNotes.value) // trigger reactivity
+}
+
+function toggleAll() {
+  if (allExpanded.value) {
+    expandedNotes.value = new Set()
+  } else {
+    expandedNotes.value = new Set(notes.value.map(n => n.id))
+  }
+  allExpanded.value = !allExpanded.value
 }
 
 function openCreateDialog() {

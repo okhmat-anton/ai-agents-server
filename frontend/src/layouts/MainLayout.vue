@@ -131,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, provide, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useChatStore } from '../stores/chat'
@@ -153,16 +153,6 @@ const rail = ref(false)
 const globalSelectionPopupRef = ref(null)
 const mainContentEl = ref(null)
 const globalAgents = ref([])
-
-// ── Data refresh signal for child views ──────────────────────────────
-// When text selection popup saves data, we notify the relevant view to reload
-const dataRefreshSignal = reactive({ type: '', timestamp: 0 })
-provide('dataRefreshSignal', dataRefreshSignal)
-
-function emitDataRefresh(entityType) {
-  dataRefreshSignal.type = entityType
-  dataRefreshSignal.timestamp = Date.now()
-}
 
 const baseModelAlert = computed(() => settingsStore.baseModelAlertText)
 
@@ -219,6 +209,8 @@ const navItems = [
       { path: '/creator', icon: 'mdi-account', title: 'Context' },
       { path: '/creator/goals', icon: 'mdi-flag-variant', title: 'Goals' },
       { path: '/creator/dreams', icon: 'mdi-creation', title: 'Dreams' },
+      { path: '/creator/ideas', icon: 'mdi-lightbulb-on', title: 'Ideas' },
+      { path: '/creator/notes', icon: 'mdi-note-text', title: 'Notes' },
     ],
   },
   { path: '/agents', icon: 'mdi-robot', title: 'Agents' },
@@ -229,13 +221,13 @@ const navItems = [
   { path: '/facts', icon: 'mdi-check-decagram', title: 'Facts' },
   { path: '/events', icon: 'mdi-calendar-clock', title: 'Events' },
   { path: '/ideas', icon: 'mdi-lightbulb-on', title: 'Ideas' },
-  { path: '/notes', icon: 'mdi-note-text', title: 'Notes' },
   { path: '/projects', icon: 'mdi-folder-wrench', title: 'Projects' },
   { path: '/models', icon: 'mdi-brain', title: 'Models' },
 ]
 
 const settingsNav = [
   { path: '/settings', icon: 'mdi-cog', title: 'Settings' },
+  { path: '/backups', icon: 'mdi-backup-restore', title: 'Backups' },
 ]
 
 onMounted(() => {
@@ -280,11 +272,6 @@ async function handleGlobalSelectionSave(target, extra = {}) {
         description: trimmed,
         source: 'user',
       })
-    } else if (target === 'global_note') {
-      await api.post('/notes', {
-        title: titleSnippet,
-        content: trimmed,
-      })
     } else if (target.startsWith('agent_') && extra.agentId) {
       // Agent targets
       const aid = extra.agentId
@@ -317,7 +304,7 @@ async function handleGlobalSelectionSave(target, extra = {}) {
           break
       }
     } else {
-      // Creator items (goals, dreams)
+      // Creator items (notes, goals, ideas, dreams)
       await api.post('/creator/append-item', {
         target,
         title: titleSnippet,
@@ -326,17 +313,6 @@ async function handleGlobalSelectionSave(target, extra = {}) {
     }
     globalSelectionPopupRef.value?.showStatus('Saved!', 'success')
     window.getSelection()?.removeAllRanges()
-
-    // Notify current page to refresh its data
-    const refreshMap = {
-      global_fact: 'facts', global_analysis: 'analysis',
-      global_idea: 'ideas', global_note: 'notes',
-      agent_fact: 'facts', agent_belief: 'beliefs',
-      agent_aspiration: 'aspirations', agent_event: 'events',
-      agent_task: 'tasks', goals: 'creator', dreams: 'creator',
-    }
-    const entityType = refreshMap[target]
-    if (entityType) emitDataRefresh(entityType)
   } catch (e) {
     console.error('Global selection save failed:', e)
     globalSelectionPopupRef.value?.showStatus('Error', 'error')

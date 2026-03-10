@@ -17,4 +17,7 @@ const showSnackbar = (text, color = 'success') => {
   snackbar.show = true
 }
 provide('showSnackbar', showSnackbar)
+
+const dataRefreshSignal = reactive({ type: '', timestamp: 0 })
+provide('dataRefreshSignal', dataRefreshSignal)
 </script>

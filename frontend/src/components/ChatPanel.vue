@@ -1247,20 +1247,24 @@ async function retryMessage(msgIndex) {
   scrollToBottom()
 }
 
-// ── Save assistant message to Creator Notes ───────────────────────
+// ── Save assistant message to Notes ───────────────────────────────
 async function saveMessageToNotes(msg) {
   if (!msg?.content || savingToNotes[msg.id]) return
   savingToNotes[msg.id] = true
   try {
     const title = msg.content.substring(0, 80).replace(/[#*`\n]/g, '').trim() + (msg.content.length > 80 ? '…' : '')
-    await api.post('/creator/append-item', {
-      target: 'notes',
+    await api.post('/notes', {
       title,
       content: msg.content,
+      status: 'active',
+      in_context: true,
     })
     // Brief visual feedback — turn button into a check
     savingToNotes[msg.id] = 'done'
     setTimeout(() => { delete savingToNotes[msg.id] }, 1500)
+    // Trigger notes refresh on NotesView
+    dataRefreshSignal.type = 'notes'
+    dataRefreshSignal.timestamp = Date.now()
   } catch (e) {
     console.error('Failed to save note:', e)
     delete savingToNotes[msg.id]

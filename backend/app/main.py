@@ -51,6 +51,7 @@ from app.api.global_facts import router as global_facts_router
 from app.api.global_events import router as global_events_router
 from app.api.ideas import router as ideas_router
 from app.api.notes import router as notes_router
+from app.api.backups import router as backups_router
 
 from app.services.ollama_watchdog import start_watchdog, stop_watchdog
 
@@ -109,12 +110,19 @@ async def lifespan(app: FastAPI):
         await syslog_bg("info", f"Restored {restored} Telegram connection(s)", source="telegram")
     await start_telegram_watchdog()
 
+    # Start backup scheduler
+    from app.services.backup_scheduler import start_scheduler as start_backup_scheduler
+    await start_backup_scheduler()
+
     yield
 
     # Shutdown
     await stop_watchdog()
     await stop_telegram_watchdog()
     await stop_all_clients()
+
+    from app.services.backup_scheduler import stop_scheduler as stop_backup_scheduler
+    await stop_backup_scheduler()
     await syslog_bg("info", "Server shutting down", source="system")
 
 
@@ -200,6 +208,7 @@ app.include_router(global_facts_router)
 app.include_router(global_events_router)
 app.include_router(ideas_router)
 app.include_router(notes_router)
+app.include_router(backups_router)
 
 # Serve uploaded files (avatars, etc.) from data/agents/ directory
 _uploads_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "agents")
