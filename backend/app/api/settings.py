@@ -1,6 +1,8 @@
 from uuid import UUID
+import json
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database import get_mongodb
 from app.core.dependencies import get_current_user
@@ -385,6 +387,131 @@ async def test_akm_advisor_connection(
             raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")
 
 
+class AkmAccessUpdate(BaseModel):
+    full_access: bool = True
+    allowed_sections: list[str] = []
+    allowed_lead_boards: list[str] = []
+    allowed_deal_boards: list[str] = []
+
+
+@router.get("/akm-advisor/access")
+async def get_akm_access(
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Get current AKM Advisor access configuration."""
+    await _ensure_defaults(db)
+    full_access = (await get_setting_value(db, "akm_advisor_full_access") or "true") == "true"
+    try:
+        sections = json.loads(await get_setting_value(db, "akm_advisor_allowed_sections") or "[]")
+    except Exception:
+        sections = []
+    try:
+        lead_boards = json.loads(await get_setting_value(db, "akm_advisor_allowed_lead_boards") or "[]")
+    except Exception:
+        lead_boards = []
+    try:
+        deal_boards = json.loads(await get_setting_value(db, "akm_advisor_allowed_deal_boards") or "[]")
+    except Exception:
+        deal_boards = []
+    return {
+        "full_access": full_access,
+        "allowed_sections": sections,
+        "allowed_lead_boards": lead_boards,
+        "allowed_deal_boards": deal_boards,
+    }
+
+
+@router.put("/akm-advisor/access")
+async def update_akm_access(
+    body: AkmAccessUpdate,
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Update AKM Advisor access configuration."""
+    await _ensure_defaults(db)
+    setting_service = SystemSettingService(db)
+
+    for key, val in [
+        ("akm_advisor_full_access", "true" if body.full_access else "false"),
+        ("akm_advisor_allowed_sections", json.dumps(body.allowed_sections)),
+        ("akm_advisor_allowed_lead_boards", json.dumps(body.allowed_lead_boards)),
+        ("akm_advisor_allowed_deal_boards", json.dumps(body.allowed_deal_boards)),
+    ]:
+        setting = await setting_service.get_by_key(key)
+        if setting:
+            await setting_service.update(setting.id, {"value": val})
+    return {"status": "ok", "message": "Access settings saved"}
+
+
+@router.get("/akm-advisor/available-resources")
+async def get_akm_available_resources(
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Fetch available resources from AKM Advisor API (project info, lead boards, deal boards)."""
+    api_key = await get_setting_value(db, "akm_advisor_api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="AKM Advisor API key not configured")
+    base_url = (await get_setting_value(db, "akm_advisor_url") or "").rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=400, detail="AKM Advisor API URL not configured")
+
+    headers = {"X-Agent-Key": api_key}
+    from urllib.parse import urlparse
+    parsed = urlparse(base_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+
+    result = {"project": None, "lead_boards": [], "deal_boards": [], "statuses": []}
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Project context
+        try:
+            r = await client.get(f"{base_url}/context", headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                result["project"] = {
+                    "id": data.get("id"),
+                    "key": data.get("key"),
+                    "name": data.get("name"),
+                    "description": data.get("description"),
+                    "statuses": data.get("statuses", []),
+                    "team_members": data.get("team_members", []),
+                }
+                result["statuses"] = data.get("statuses", [])
+        except Exception:
+            pass
+
+        # Lead boards/pipelines
+        try:
+            r = await client.get(f"{origin}/api/v1/data/leads/stats", headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                boards = data if isinstance(data, list) else data.get("boards", data.get("pipelines", []))
+                if isinstance(boards, list):
+                    result["lead_boards"] = boards
+                elif isinstance(data, dict):
+                    # If it returns stats object, wrap it
+                    result["lead_boards"] = [{"id": "default", "name": "Leads", "stats": data}]
+        except Exception:
+            pass
+
+        # Deal boards/pipelines
+        try:
+            r = await client.get(f"{origin}/api/v1/data/deals/stats", headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                boards = data if isinstance(data, list) else data.get("boards", data.get("pipelines", []))
+                if isinstance(boards, list):
+                    result["deal_boards"] = boards
+                elif isinstance(data, dict):
+                    result["deal_boards"] = [{"id": "default", "name": "Deals", "stats": data}]
+        except Exception:
+            pass
+
+    return result
+
+
 # --- Model Roles ---
 @router.get("/model-roles/available")
 async def get_available_roles(
@@ -524,6 +651,11 @@ _DEFAULT_SETTINGS = {
     # AKM Advisor CRM
     "akm_advisor_api_key": {"value": "", "description": "AKM Advisor Agent API key (X-Agent-Key) for CRM access"},
     "akm_advisor_url": {"value": "", "description": "AKM Advisor Agent API URL (e.g. https://app.akm-advisor.com/api/v1/agent/PROJECT_ID)"},
+    # AKM Advisor access control
+    "akm_advisor_full_access": {"value": "true", "description": "Grant agent full access to all AKM Advisor resources"},
+    "akm_advisor_allowed_sections": {"value": "[\"projects\",\"leads\",\"deals\",\"contacts\",\"sprints\",\"epics\",\"goals\"]", "description": "JSON array of allowed AKM sections"},
+    "akm_advisor_allowed_lead_boards": {"value": "[]", "description": "JSON array of allowed lead board/pipeline IDs (empty = all)"},
+    "akm_advisor_allowed_deal_boards": {"value": "[]", "description": "JSON array of allowed deal board/pipeline IDs (empty = all)"},
 }
 
 

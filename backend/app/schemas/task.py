@@ -16,6 +16,8 @@ class TaskCreate(BaseModel):
     timeout: int = 300
     parent_task_id: UUID | None = None  # For subtasks
     ready_to_execute: bool = True  # False if needs decomposition
+    is_user_task: bool = False  # User-only task (agents can read but not execute)
+    tags: list[str] = []
 
 
 class TaskUpdate(BaseModel):
@@ -32,6 +34,8 @@ class TaskUpdate(BaseModel):
     status: str | None = None  # Allow status updates
     is_decomposed: bool | None = None
     ready_to_execute: bool | None = None
+    is_user_task: bool | None = None
+    tags: list[str] | None = None
 
 
 class TaskResponse(BaseModel):
@@ -54,6 +58,8 @@ class TaskResponse(BaseModel):
     parent_task_id: UUID | None
     is_decomposed: bool
     ready_to_execute: bool
+    is_user_task: bool
+    tags: list[str] = []
     result: dict | None
     error: str | None
     started_at: datetime | None

@@ -36,12 +36,24 @@
       </v-chip-group>
     </div>
 
+    <!-- Tag filter -->
+    <div v-if="allTags.length" class="d-flex align-center ga-1 mb-3 flex-wrap">
+      <v-icon size="18" class="mr-1 text-grey">mdi-tag-multiple</v-icon>
+      <v-chip
+        v-for="tag in allTags" :key="tag"
+        :color="selectedTags.includes(tag) ? 'cyan' : 'default'"
+        :variant="selectedTags.includes(tag) ? 'flat' : 'outlined'"
+        size="small" @click="toggleTag(tag)"
+      >{{ tag }}</v-chip>
+      <v-btn v-if="selectedTags.length" variant="text" size="x-small" color="grey" @click="selectedTags = []">Clear</v-btn>
+    </div>
+
     <!-- Resources Table -->
     <v-card>
       <v-card-text class="pa-0">
         <v-data-table
           :headers="headers"
-          :items="store.resources"
+          :items="tagFilteredResources"
           :loading="store.loading"
           hover
           @click:row="(_, { item }) => openEdit(item)"
@@ -101,6 +113,10 @@
               <v-icon start size="12">{{ item.added_by === 'agent' ? 'mdi-robot' : 'mdi-account' }}</v-icon>
               {{ item.added_by }}
             </v-chip>
+          </template>
+
+          <template #item.tags="{ item }">
+            <div class="d-flex ga-1 flex-wrap"><v-chip v-for="t in (item.tags || [])" :key="t" size="x-small" variant="tonal" color="cyan">{{ t }}</v-chip></div>
           </template>
 
           <template #item.actions="{ item }">
@@ -285,15 +301,18 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useResearchResourcesStore } from '../stores/researchResources'
 
 const store = useResearchResourcesStore()
+
+const selectedTags = ref([])
 
 // ── Table config ──
 const headers = [
   { title: 'Resource', key: 'name', sortable: true },
   { title: 'Trust', key: 'trust_level', width: 110, sortable: true },
+  { title: 'Tags', key: 'tags', width: 160, sortable: false },
   { title: 'User Rating', key: 'user_rating', width: 150, sortable: true },
   { title: 'Agent Rating', key: 'agent_rating', width: 100, sortable: true },
   { title: 'Active', key: 'is_active', width: 80 },
@@ -301,6 +320,23 @@ const headers = [
   { title: 'Added by', key: 'added_by', width: 100 },
   { title: '', key: 'actions', width: 100, sortable: false },
 ]
+
+const allTags = computed(() => {
+  const tags = new Set()
+  store.resources.forEach(i => (i.tags || []).forEach(t => tags.add(t)))
+  return [...tags].sort()
+})
+
+const tagFilteredResources = computed(() => {
+  if (!selectedTags.value.length) return store.resources
+  return store.resources.filter(i => (i.tags || []).some(t => selectedTags.value.includes(t)))
+})
+
+function toggleTag(tag) {
+  const idx = selectedTags.value.indexOf(tag)
+  if (idx >= 0) selectedTags.value.splice(idx, 1)
+  else selectedTags.value.push(tag)
+}
 
 const categories = [
   { value: 'general', label: 'General', icon: 'mdi-web', color: 'blue-grey' },

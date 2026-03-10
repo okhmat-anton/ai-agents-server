@@ -32,6 +32,7 @@ from app.mongodb.models.research_resource import MongoResearchResource
 from app.mongodb.models.watched_video import MongoWatchedVideo
 from app.mongodb.models.analysis_topic import MongoAnalysisTopic
 from app.mongodb.models.idea import MongoIdea
+from app.mongodb.models.note import MongoNote
 
 
 class UserService(BaseMongoService[MongoUser]):
@@ -575,6 +576,32 @@ class IdeaService(BaseMongoService[MongoIdea]):
             filt["$or"] = [
                 {"title": {"$regex": search, "$options": "i"}},
                 {"description": {"$regex": search, "$options": "i"}},
+            ]
+        cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self.model_class.from_mongo(doc) for doc in docs]
+
+
+class NoteService(BaseMongoService[MongoNote]):
+    """CRUD service for notes."""
+    def __init__(self, db: AsyncIOMotorDatabase):
+        super().__init__(db, "notes", MongoNote)
+
+    async def get_all_notes(self, status: str = None, category: str = None,
+                            search: str = None, in_context: bool = None,
+                            limit: int = 200, skip: int = 0):
+        """Get all notes with optional filters."""
+        filt = {}
+        if status:
+            filt["status"] = status
+        if category:
+            filt["category"] = category
+        if in_context is not None:
+            filt["in_context"] = in_context
+        if search:
+            filt["$or"] = [
+                {"title": {"$regex": search, "$options": "i"}},
+                {"content": {"$regex": search, "$options": "i"}},
             ]
         cursor = self.collection.find(filt).sort("created_at", -1).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)

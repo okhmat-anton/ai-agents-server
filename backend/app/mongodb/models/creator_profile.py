@@ -12,6 +12,7 @@ class GoalItem(BaseModel):
     description: str = ""
     target_date: Optional[str] = None          # target date (ISO or free-form text)
     priority: int = 1                          # 0=high, 1=medium, 2=low
+    scale: str = "medium"                      # big, medium, micro — helps agent understand scope
     completed: bool = False                    # marked as done
     in_context: bool = True                    # included in agent context
     children: List["GoalItem"] = Field(default_factory=list)  # sub-goals
@@ -82,9 +83,9 @@ class MongoCreatorProfile(BaseModel):
             doc["created_at"] = datetime.fromisoformat(doc["created_at"])
         if isinstance(doc.get("updated_at"), str):
             doc["updated_at"] = datetime.fromisoformat(doc["updated_at"])
-        # Backward compat: old string fields → empty lists
+        # Backward compat: old string fields or null → empty lists
         for field in ("goals", "dreams", "ideas", "notes"):
-            if isinstance(doc.get(field), str):
+            if not isinstance(doc.get(field), list):
                 doc[field] = []
         return cls(**doc)
 
@@ -96,6 +97,7 @@ class MongoCreatorProfile(BaseModel):
             sections.append(f"Name: {self.name}")
         if self.who:
             sections.append(f"Who they are: {self.who}")
+        scale_labels = {"big": "BIG", "medium": "MEDIUM", "micro": "MICRO"}
         if self.goals:
             active_goals = [g for g in self.goals if getattr(g, 'in_context', True) and not getattr(g, 'completed', False)]
             if active_goals:
@@ -103,14 +105,17 @@ class MongoCreatorProfile(BaseModel):
                 for g in active_goals:
                     date_part = f" (target: {g.target_date})" if g.target_date else ""
                     prio = f" [{priority_labels.get(g.priority, 'MEDIUM')}]"
-                    lines.append(f"  - {g.title}{prio}{date_part}")
+                    scale = f" ({scale_labels.get(getattr(g, 'scale', 'medium'), 'MEDIUM')} goal)"
+                    lines.append(f"  - {g.title}{prio}{scale}{date_part}")
                     if g.description:
                         lines.append(f"    {g.description}")
                     for sub in g.children:
                         if getattr(sub, 'completed', False) or not getattr(sub, 'in_context', True):
                             continue
                         sd = f" (target: {sub.target_date})" if sub.target_date else ""
-                        lines.append(f"    - {sub.title}{sd}")
+                        sub_prio = f" [{priority_labels.get(getattr(sub, 'priority', 1), 'MEDIUM')}]"
+                        sub_scale = f" ({scale_labels.get(getattr(sub, 'scale', 'medium'), 'MEDIUM')} goal)"
+                        lines.append(f"    - {sub.title}{sub_prio}{sub_scale}{sd}")
                         if sub.description:
                             lines.append(f"      {sub.description}")
                 sections.append("\n".join(lines))

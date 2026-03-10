@@ -31,6 +31,7 @@ const router = useRouter()
 
 const tabs = [
   { value: 'general', label: 'General', icon: 'mdi-tune', path: '/settings' },
+  { value: 'akm-advisor', label: 'AKM Advisor', icon: 'mdi-briefcase-outline', path: '/settings/akm-advisor' },
   { value: 'protocols', label: 'Protocols', icon: 'mdi-head-cog', path: '/settings/protocols' },
   { value: 'skills', label: 'Skills', icon: 'mdi-puzzle', path: '/settings/skills' },
   { value: 'agent-errors', label: 'Agent Errors', icon: 'mdi-alert-circle-outline', path: '/settings/agent-errors' },
@@ -42,6 +43,7 @@ const tabs = [
 
 const componentMap = {
   'general': defineAsyncComponent(() => import('./SettingsGeneralTab.vue')),
+  'akm-advisor': defineAsyncComponent(() => import('./AkmAdvisorSettingsTab.vue')),
   'protocols': defineAsyncComponent(() => import('./ProtocolsView.vue')),
   'skills': defineAsyncComponent(() => import('./SkillsView.vue')),
   'agent-errors': defineAsyncComponent(() => import('./AgentErrorsView.vue')),

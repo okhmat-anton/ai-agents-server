@@ -30,6 +30,7 @@ class MongoTask(BaseModel):
     parent_task_id: Optional[UUID] = None
     is_decomposed: bool = False  # True if task has been decomposed into subtasks
     ready_to_execute: bool = True  # False if needs decomposition first
+    is_user_task: bool = False  # True if this is a user-only task (agents can read but not execute)
     
     result: Optional[dict] = None
     error: Optional[str] = None

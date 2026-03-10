@@ -50,6 +50,7 @@ from app.api.analysis_topics import router as analysis_topics_router
 from app.api.global_facts import router as global_facts_router
 from app.api.global_events import router as global_events_router
 from app.api.ideas import router as ideas_router
+from app.api.notes import router as notes_router
 
 from app.services.ollama_watchdog import start_watchdog, stop_watchdog
 
@@ -198,6 +199,7 @@ app.include_router(analysis_topics_router)
 app.include_router(global_facts_router)
 app.include_router(global_events_router)
 app.include_router(ideas_router)
+app.include_router(notes_router)
 
 # Serve uploaded files (avatars, etc.) from data/agents/ directory
 _uploads_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "agents")

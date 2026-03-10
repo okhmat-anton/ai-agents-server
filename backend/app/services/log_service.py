@@ -15,12 +15,14 @@ from __future__ import annotations
 import uuid as _uuid
 import json
 import aiofiles
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-# Log directories
-LOG_DIR = Path("data/logs")
+# Log directories — resolve relative to project root (4 levels up from this file)
+_PROJECT_ROOT = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))).resolve()
+LOG_DIR = _PROJECT_ROOT / "data" / "logs"
 SYSTEM_LOG_FILE = LOG_DIR / "system.jsonl"
 AGENT_LOG_DIR = LOG_DIR / "agents"
 

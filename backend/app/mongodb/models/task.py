@@ -1,7 +1,7 @@
 """MongoDB Task and AutonomousRun models."""
 import uuid
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 
 
@@ -27,6 +27,7 @@ class MongoTask(BaseModel):
     ready_to_execute: bool = True
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

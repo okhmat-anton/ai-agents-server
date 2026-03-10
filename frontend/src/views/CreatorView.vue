@@ -43,16 +43,6 @@
         Dreams
         <v-badge v-if="form.dreams.length" :content="form.dreams.length" color="deep-purple" inline class="ml-1" />
       </v-tab>
-      <v-tab value="ideas" rounded="lg" @click="navigateTab('ideas')">
-        <v-icon start size="18" color="amber-lighten-1">mdi-lightbulb-on</v-icon>
-        Ideas
-        <v-badge v-if="form.ideas.length" :content="form.ideas.length" color="amber-darken-2" inline class="ml-1" />
-      </v-tab>
-      <v-tab value="notes" rounded="lg" @click="navigateTab('notes')">
-        <v-icon start size="18" color="teal">mdi-note-text</v-icon>
-        Notes
-        <v-badge v-if="form.notes.length" :content="form.notes.length" color="teal" inline class="ml-1" />
-      </v-tab>
     </v-tabs>
 
     <!-- Content -->
@@ -207,7 +197,7 @@
             </div>
             <div class="text-h6 mt-4">No goals yet</div>
             <div class="text-body-2 text-medium-emphasis mt-1 mb-5">Define your goals so agents understand what you're working toward</div>
-            <v-btn color="amber-darken-2" variant="flat" @click="addGoal" prepend-icon="mdi-plus">
+            <v-btn color="amber-darken-2" variant="flat" @click="openGoalDialog()" prepend-icon="mdi-plus">
               Add First Goal
             </v-btn>
           </div>
@@ -215,7 +205,7 @@
           <!-- Goals List -->
           <template v-else>
             <div class="d-flex justify-end mb-4">
-              <v-btn variant="tonal" color="amber-darken-2" size="small" @click="addGoal" prepend-icon="mdi-plus">
+              <v-btn variant="tonal" color="amber-darken-2" size="small" @click="openGoalDialog()" prepend-icon="mdi-plus">
                 Add Goal
               </v-btn>
             </div>
@@ -229,7 +219,7 @@
             >
               <template #item="{ element: goal, index: gi }">
                 <div class="mb-4">
-                  <v-card variant="flat" class="section-card goal-card" :class="{ 'item-completed': goal.completed, 'item-no-context': goal.in_context === false }">
+                  <v-card variant="flat" class="section-card goal-card" :class="{ 'item-completed': goal.completed, 'item-no-context': goal.in_context === false }" @click="openGoalDialog(gi)" style="cursor: pointer;">
                     <div class="card-accent card-accent--amber" />
                     <v-card-text class="pa-5 pl-7">
                       <div class="d-flex align-start">
@@ -240,126 +230,65 @@
                           color="success"
                           class="mr-1 mt-1 flex-shrink-0"
                           title="Mark as completed"
+                          @click.stop
                         />
-                        <div class="drag-handle mr-2 mt-2" title="Drag to reorder">
+                        <div class="drag-handle mr-2 mt-2" title="Drag to reorder" @click.stop>
                           <v-icon size="18" color="grey">mdi-drag-vertical</v-icon>
                         </div>
                         <div class="flex-grow-1">
-                          <div class="d-flex align-center mb-2 ga-2">
-                            <v-text-field
-                              v-model="goal.title"
-                              variant="plain"
-                              density="compact"
-                              hide-details
-                              placeholder="Goal title..."
-                              class="goal-title-field"
-                            />
+                          <div class="d-flex align-center mb-1 ga-2">
+                            <span class="text-subtitle-1 font-weight-medium">{{ goal.title || 'Untitled goal' }}</span>
                             <v-chip
                               :color="priorityColor(goal.priority)"
                               size="x-small"
                               variant="tonal"
-                              class="priority-chip"
-                              @click="cyclePriority(goal)"
                             >
                               {{ priorityOptions.find(o => o.value === goal.priority)?.title || 'Medium' }}
                             </v-chip>
+                            <v-chip
+                              :color="scaleColor(goal.scale)"
+                              size="x-small"
+                              variant="outlined"
+                            >
+                              <v-icon start size="10">{{ scaleOptions.find(o => o.value === (goal.scale || 'medium'))?.icon || 'mdi-circle-outline' }}</v-icon>
+                              {{ scaleOptions.find(o => o.value === (goal.scale || 'medium'))?.title || 'Medium' }}
+                            </v-chip>
+                            <v-chip v-if="goal.target_date" size="x-small" variant="tonal" color="blue-grey">
+                              <v-icon start size="10">mdi-calendar</v-icon>
+                              {{ goal.target_date }}
+                            </v-chip>
                           </div>
-                          <v-row dense>
-                            <v-col cols="12" sm="8">
-                              <v-textarea
-                                v-model="goal.description"
-                                variant="outlined"
-                                density="compact"
-                                rows="2"
-                                auto-grow
-                                hide-details
-                                placeholder="Description..."
-                              />
-                            </v-col>
-                            <v-col cols="12" sm="4">
-                              <v-text-field
-                                v-model="goal.target_date"
-                                label="Target date"
-                                type="date"
-                                variant="outlined"
+                          <div v-if="goal.description" class="text-body-2 text-medium-emphasis text-truncate" style="max-width: 600px;">{{ goal.description }}</div>
+                          <!-- Sub-goals summary -->
+                          <div v-if="goal.children && goal.children.length" class="mt-2">
+                            <div v-for="(sub, si) in goal.children" :key="sub.id" class="d-flex align-center ga-1 ml-2 mb-1">
+                              <v-icon size="12" color="grey">mdi-subdirectory-arrow-right</v-icon>
+                              <v-checkbox
+                                v-model="sub.completed"
                                 density="compact"
                                 hide-details
+                                color="success"
+                                class="flex-shrink-0"
+                                style="max-width: 24px;"
+                                @click.stop
                               />
-                            </v-col>
-                          </v-row>
+                              <span class="text-body-2" :class="{ 'text-decoration-line-through text-medium-emphasis': sub.completed }">{{ sub.title || 'Untitled' }}</span>
+                              <v-chip :color="priorityColor(sub.priority)" size="x-small" variant="tonal">{{ priorityOptions.find(o => o.value === sub.priority)?.title || 'Med' }}</v-chip>
+                              <v-chip :color="scaleColor(sub.scale)" size="x-small" variant="outlined">
+                                <v-icon start size="10">{{ scaleOptions.find(o => o.value === (sub.scale || 'medium'))?.icon || 'mdi-circle-outline' }}</v-icon>
+                                {{ scaleOptions.find(o => o.value === (sub.scale || 'medium'))?.title || 'Med' }}
+                              </v-chip>
+                            </div>
+                          </div>
                         </div>
                         <div class="d-flex flex-column ml-3 ga-1 mt-1">
-                          <v-btn icon size="x-small" variant="tonal" :color="goal.in_context !== false ? 'info' : 'grey'" @click="goal.in_context = !goal.in_context" :title="goal.in_context !== false ? 'In context — click to exclude' : 'Excluded from context — click to include'">
+                          <v-btn icon size="x-small" variant="tonal" :color="goal.in_context !== false ? 'info' : 'grey'" @click.stop="goal.in_context = !goal.in_context" :title="goal.in_context !== false ? 'In context — click to exclude' : 'Excluded from context — click to include'">
                             <v-icon size="14">{{ goal.in_context !== false ? 'mdi-brain' : 'mdi-brain-off' }}</v-icon>
                           </v-btn>
-                          <v-btn icon size="x-small" variant="tonal" color="primary" @click="addSubGoal(gi)" title="Add sub-goal">
-                            <v-icon size="14">mdi-plus</v-icon>
-                          </v-btn>
-                          <v-btn icon size="x-small" variant="text" color="grey" @click="removeGoal(gi)" title="Remove">
+                          <v-btn icon size="x-small" variant="text" color="grey" @click.stop="removeGoal(gi)" title="Remove">
                             <v-icon size="14">mdi-close</v-icon>
                           </v-btn>
                         </div>
-                      </div>
-
-                      <!-- Sub-goals -->
-                      <div v-if="goal.children && goal.children.length" class="mt-4 ml-6">
-                        <draggable
-                          v-model="goal.children"
-                          item-key="id"
-                          handle=".drag-handle"
-                          animation="200"
-                          ghost-class="drag-ghost"
-                        >
-                          <template #item="{ element: sub, index: si }">
-                            <div class="mb-3">
-                              <v-card variant="outlined" class="sub-card">
-                                <v-card-text class="pa-3">
-                                  <div class="d-flex align-start">
-                                    <div class="drag-handle mr-1 mt-2" title="Drag to reorder">
-                                      <v-icon size="14" color="grey">mdi-drag-vertical</v-icon>
-                                    </div>
-                                    <v-icon size="14" color="grey" class="mt-2 mr-2">mdi-subdirectory-arrow-right</v-icon>
-                                    <div class="flex-grow-1">
-                                      <v-text-field
-                                        v-model="sub.title"
-                                        variant="plain"
-                                        density="compact"
-                                        hide-details
-                                        placeholder="Sub-goal..."
-                                        class="sub-title-field mb-1"
-                                      />
-                                      <v-row dense>
-                                        <v-col cols="12" sm="8">
-                                          <v-textarea
-                                            v-model="sub.description"
-                                            variant="outlined"
-                                            density="compact"
-                                            rows="1"
-                                            auto-grow
-                                            hide-details
-                                            placeholder="Description..."
-                                          />
-                                        </v-col>
-                                        <v-col cols="12" sm="4">
-                                          <v-text-field
-                                            v-model="sub.target_date"
-                                            type="date"
-                                            variant="outlined"
-                                            density="compact"
-                                            hide-details
-                                          />
-                                        </v-col>
-                                      </v-row>
-                                    </div>
-                                    <v-btn icon size="x-small" variant="text" color="grey" class="ml-2" @click="removeSubGoal(gi, si)">
-                                      <v-icon size="14">mdi-close</v-icon>
-                                    </v-btn>
-                                  </div>
-                                </v-card-text>
-                              </v-card>
-                            </div>
-                          </template>
-                        </draggable>
                       </div>
                     </v-card-text>
                   </v-card>
@@ -461,180 +390,187 @@
           </template>
         </v-window-item>
 
-        <!-- ══════════ TAB: Ideas ══════════ -->
-        <v-window-item value="ideas">
-          <!-- Empty State -->
-          <div v-if="!form.ideas.length" class="empty-state">
-            <div class="empty-state-icon yellow">
-              <v-icon size="48" color="amber-lighten-1">mdi-lightbulb-on</v-icon>
-            </div>
-            <div class="text-h6 mt-4">No ideas yet</div>
-            <div class="text-body-2 text-medium-emphasis mt-1 mb-5">Capture your ideas so agents can help you develop them</div>
-            <v-btn color="amber-darken-2" variant="flat" @click="addIdea" prepend-icon="mdi-plus">
-              Add First Idea
-            </v-btn>
-          </div>
-
-          <template v-else>
-            <div class="d-flex justify-end mb-4">
-              <v-btn variant="tonal" color="amber-darken-2" size="small" @click="addIdea" prepend-icon="mdi-plus">
-                Add Idea
-              </v-btn>
-            </div>
-
-            <draggable
-              v-model="form.ideas"
-              item-key="id"
-              handle=".drag-handle"
-              animation="200"
-              ghost-class="drag-ghost"
-            >
-              <template #item="{ element: idea, index: ii }">
-                <div class="mb-4">
-                  <v-card variant="flat" class="section-card goal-card" :class="{ 'item-completed': idea.completed, 'item-no-context': idea.in_context === false }">
-                    <div class="card-accent card-accent--yellow" />
-                    <v-card-text class="pa-5 pl-7">
-                      <div class="d-flex align-start">
-                        <v-checkbox
-                          v-model="idea.completed"
-                          density="compact"
-                          hide-details
-                          color="success"
-                          class="mr-1 mt-1 flex-shrink-0"
-                          title="Mark as completed"
-                        />
-                        <div class="drag-handle mr-2 mt-2" title="Drag to reorder">
-                          <v-icon size="18" color="grey">mdi-drag-vertical</v-icon>
-                        </div>
-                        <div class="flex-grow-1">
-                          <div class="d-flex align-center mb-2 ga-2">
-                            <v-text-field
-                              v-model="idea.title"
-                              variant="plain"
-                              density="compact"
-                              hide-details
-                              placeholder="Idea title..."
-                              class="goal-title-field"
-                            />
-                            <v-chip
-                              :color="priorityColor(idea.priority)"
-                              size="x-small"
-                              variant="tonal"
-                              class="priority-chip"
-                              @click="cyclePriority(idea)"
-                            >
-                              {{ priorityOptions.find(o => o.value === idea.priority)?.title || 'Medium' }}
-                            </v-chip>
-                          </div>
-                          <v-textarea
-                            v-model="idea.description"
-                            variant="outlined"
-                            density="compact"
-                            rows="2"
-                            auto-grow
-                            hide-details
-                            placeholder="Describe your idea..."
-                          />
-                        </div>
-                        <div class="d-flex flex-column ml-3 ga-1 mt-1">
-                          <v-btn icon size="x-small" variant="tonal" :color="idea.in_context !== false ? 'info' : 'grey'" @click="idea.in_context = !idea.in_context" :title="idea.in_context !== false ? 'In context — click to exclude' : 'Excluded from context — click to include'">
-                            <v-icon size="14">{{ idea.in_context !== false ? 'mdi-brain' : 'mdi-brain-off' }}</v-icon>
-                          </v-btn>
-                          <v-btn icon size="x-small" variant="text" color="grey" @click="removeIdea(ii)">
-                            <v-icon size="14">mdi-close</v-icon>
-                          </v-btn>
-                        </div>
-                      </div>
-                    </v-card-text>
-                  </v-card>
-                </div>
-              </template>
-            </draggable>
-          </template>
-        </v-window-item>
-
-        <!-- ══════════ TAB: Notes ══════════ -->
-        <v-window-item value="notes">
-          <!-- Empty State -->
-          <div v-if="!form.notes.length" class="empty-state">
-            <div class="empty-state-icon teal">
-              <v-icon size="48" color="teal">mdi-note-text</v-icon>
-            </div>
-            <div class="text-h6 mt-4">No notes yet</div>
-            <div class="text-body-2 text-medium-emphasis mt-1 mb-5">Write down thoughts, reminders, or context for your agents</div>
-            <v-btn color="teal" variant="flat" @click="addNote" prepend-icon="mdi-plus">
-              Add First Note
-            </v-btn>
-          </div>
-
-          <template v-else>
-            <div class="d-flex justify-end mb-4">
-              <v-btn variant="tonal" color="teal" size="small" @click="addNote" prepend-icon="mdi-plus">
-                Add Note
-              </v-btn>
-            </div>
-
-            <div v-for="(note, ni) in form.notes" :key="note.id" class="mb-4">
-              <v-card variant="flat" class="section-card goal-card" :class="{ 'item-completed': note.completed, 'item-no-context': note.in_context === false }">
-                <div class="card-accent card-accent--teal" />
-                <v-card-text class="pa-5 pl-7">
-                  <div class="d-flex align-start">
-                    <v-checkbox
-                      v-model="note.completed"
-                      density="compact"
-                      hide-details
-                      color="success"
-                      class="mr-1 mt-1 flex-shrink-0"
-                      title="Mark as completed"
-                    />
-                    <div class="flex-grow-1">
-                      <v-text-field
-                        v-model="note.title"
-                        variant="plain"
-                        density="compact"
-                        hide-details
-                        placeholder="Note title..."
-                        class="goal-title-field mb-2"
-                      />
-                      <v-textarea
-                        v-model="note.content"
-                        variant="outlined"
-                        density="compact"
-                        rows="3"
-                        auto-grow
-                        hide-details
-                        placeholder="Write your note..."
-                      />
-                    </div>
-                    <div class="d-flex flex-column ml-3 ga-1 mt-1">
-                      <v-btn icon size="x-small" variant="tonal" :color="note.in_context !== false ? 'info' : 'grey'" @click="note.in_context = !note.in_context" :title="note.in_context !== false ? 'In context — click to exclude' : 'Excluded from context — click to include'">
-                        <v-icon size="14">{{ note.in_context !== false ? 'mdi-brain' : 'mdi-brain-off' }}</v-icon>
-                      </v-btn>
-                      <v-btn icon size="x-small" variant="text" color="grey" @click="removeNote(ni)" title="Remove">
-                        <v-icon size="14">mdi-close</v-icon>
-                      </v-btn>
-                    </div>
-                  </div>
-                </v-card-text>
-              </v-card>
-            </div>
-          </template>
-        </v-window-item>
-
       </v-window>
     </v-form>
 
     <v-snackbar v-model="snackbar" :color="snackColor" timeout="3000">
       {{ snackText }}
     </v-snackbar>
+
+    <!-- Goal Add/Edit Dialog -->
+    <v-dialog v-model="goalDialog" max-width="700" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center pa-4">
+          <v-icon class="mr-2" color="amber">mdi-flag-variant</v-icon>
+          {{ goalDialogIndex === null ? 'New Goal' : 'Edit Goal' }}
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="pa-4" style="max-height: 70vh; overflow-y: auto;">
+          <v-text-field
+            v-model="goalForm.title"
+            label="Goal title"
+            variant="outlined"
+            density="compact"
+            hide-details
+            class="mb-4"
+            autofocus
+          />
+          <v-textarea
+            v-model="goalForm.description"
+            label="Description"
+            variant="outlined"
+            density="compact"
+            rows="3"
+            auto-grow
+            hide-details
+            class="mb-4"
+          />
+          <v-row dense class="mb-4">
+            <v-col cols="4">
+              <v-select
+                v-model="goalForm.priority"
+                :items="priorityOptions"
+                item-title="title"
+                item-value="value"
+                label="Priority"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+            <v-col cols="4">
+              <v-select
+                v-model="goalForm.scale"
+                :items="scaleOptions"
+                item-title="title"
+                item-value="value"
+                label="Scale"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field
+                v-model="goalForm.target_date"
+                label="Target date"
+                type="date"
+                variant="outlined"
+                density="compact"
+                hide-details
+              />
+            </v-col>
+          </v-row>
+
+          <!-- Sub-goals -->
+          <div class="d-flex align-center mb-3">
+            <div class="text-subtitle-2 font-weight-medium">Sub-goals</div>
+            <v-spacer />
+            <v-btn variant="tonal" size="x-small" color="primary" prepend-icon="mdi-plus" @click="addSubGoalInDialog">Add Sub-goal</v-btn>
+          </div>
+          <draggable
+            v-model="goalForm.children"
+            item-key="id"
+            handle=".drag-handle"
+            animation="200"
+            ghost-class="drag-ghost"
+          >
+            <template #item="{ element: sub, index: si }">
+              <v-card variant="outlined" class="mb-3 sub-card">
+                <v-card-text class="pa-3">
+                  <div class="d-flex align-start">
+                    <div class="drag-handle mr-1 mt-2" title="Drag to reorder" @click.stop>
+                      <v-icon size="14" color="grey">mdi-drag-vertical</v-icon>
+                    </div>
+                    <v-icon size="14" color="grey" class="mt-2 mr-2">mdi-subdirectory-arrow-right</v-icon>
+                    <div class="flex-grow-1">
+                      <v-text-field
+                        v-model="sub.title"
+                        variant="outlined"
+                        density="compact"
+                        hide-details
+                        placeholder="Sub-goal title..."
+                        class="mb-2"
+                      />
+                      <v-textarea
+                        v-model="sub.description"
+                        variant="outlined"
+                        density="compact"
+                        rows="1"
+                        auto-grow
+                        hide-details
+                        placeholder="Description..."
+                        class="mb-2"
+                      />
+                      <v-row dense>
+                        <v-col cols="4">
+                          <v-select
+                            v-model="sub.priority"
+                            :items="priorityOptions"
+                            item-title="title"
+                            item-value="value"
+                            label="Priority"
+                            variant="outlined"
+                            density="compact"
+                            hide-details
+                          />
+                        </v-col>
+                        <v-col cols="4">
+                          <v-select
+                            v-model="sub.scale"
+                            :items="scaleOptions"
+                            item-title="title"
+                            item-value="value"
+                            label="Scale"
+                            variant="outlined"
+                            density="compact"
+                            hide-details
+                          />
+                        </v-col>
+                        <v-col cols="4">
+                          <v-text-field
+                            v-model="sub.target_date"
+                            type="date"
+                            variant="outlined"
+                            density="compact"
+                            hide-details
+                            label="Target date"
+                          />
+                        </v-col>
+                      </v-row>
+                    </div>
+                    <v-btn icon size="x-small" variant="text" color="grey" class="ml-2 mt-1" @click="goalForm.children.splice(si, 1)">
+                      <v-icon size="14">mdi-close</v-icon>
+                    </v-btn>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </template>
+          </draggable>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="pa-4">
+          <v-spacer />
+          <v-btn variant="text" @click="goalDialog = false">Cancel</v-btn>
+          <v-btn color="amber-darken-2" variant="flat" @click="saveGoalDialog" :disabled="!goalForm.title?.trim()">
+            {{ goalDialogIndex === null ? 'Add Goal' : 'Save' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, watch, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import draggable from 'vuedraggable'
 import api from '../api'
+
+const dataRefreshSignal = inject('dataRefreshSignal', reactive({ type: '', timestamp: 0 }))
+watch(() => dataRefreshSignal.timestamp, () => {
+  if (dataRefreshSignal.type === 'creator') load()
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -643,8 +579,6 @@ const tabFromRoute = () => {
   const path = route.path
   if (path.startsWith('/creator/goals')) return 'goals'
   if (path.startsWith('/creator/dreams')) return 'dreams'
-  if (path.startsWith('/creator/ideas')) return 'ideas'
-  if (path.startsWith('/creator/notes')) return 'notes'
   return 'profile'
 }
 
@@ -665,8 +599,24 @@ const priorityOptions = [
   { value: 2, title: 'Low', color: 'grey' },
 ]
 
+const scaleOptions = [
+  { value: 'big', title: 'Big', icon: 'mdi-arrow-up-bold-circle', color: 'deep-purple' },
+  { value: 'medium', title: 'Medium', icon: 'mdi-circle-outline', color: 'blue' },
+  { value: 'micro', title: 'Micro', icon: 'mdi-arrow-down-bold-circle', color: 'teal' },
+]
+
 function priorityColor(p) {
   return priorityOptions.find(o => o.value === p)?.color || 'warning'
+}
+
+function scaleColor(s) {
+  return scaleOptions.find(o => o.value === s)?.color || 'blue'
+}
+
+function cycleScale(item) {
+  const order = ['big', 'medium', 'micro']
+  const idx = order.indexOf(item.scale || 'medium')
+  item.scale = order[(idx + 1) % order.length]
 }
 
 const form = ref({
@@ -680,16 +630,12 @@ const form = ref({
   successes: '',
   failures: '',
   action_history: '',
-  ideas: [],
-  notes: [],
 })
 
 const tabPaths = {
   profile: '/creator',
   goals: '/creator/goals',
   dreams: '/creator/dreams',
-  ideas: '/creator/ideas',
-  notes: '/creator/notes',
 }
 
 function navigateTab(val) {
@@ -701,16 +647,61 @@ watch(() => route.path, () => {
   tab.value = tabFromRoute()
 })
 
-// ── Goal helpers ──
+// ── Goal dialog ──
+const goalDialog = ref(false)
+const goalDialogIndex = ref(null)
+const goalForm = ref({ id: '', title: '', description: '', target_date: null, priority: 1, scale: 'medium', children: [] })
+
+function openGoalDialog(index = null) {
+  if (index !== null && index !== undefined) {
+    // Edit existing goal
+    goalDialogIndex.value = index
+    const g = form.value.goals[index]
+    goalForm.value = JSON.parse(JSON.stringify({
+      ...g,
+      children: (g.children || []).map(c => ({
+        ...c,
+        priority: c.priority ?? 1,
+        scale: c.scale || 'medium',
+      })),
+    }))
+  } else {
+    // New goal
+    goalDialogIndex.value = null
+    goalForm.value = { id: uid(), title: '', description: '', target_date: null, priority: 1, scale: 'medium', children: [] }
+  }
+  goalDialog.value = true
+}
+
+function addSubGoalInDialog() {
+  if (!goalForm.value.children) goalForm.value.children = []
+  goalForm.value.children.push({ id: uid(), title: '', description: '', target_date: null, priority: 1, scale: 'medium', children: [] })
+}
+
+function saveGoalDialog() {
+  const data = JSON.parse(JSON.stringify(goalForm.value))
+  if (goalDialogIndex.value !== null) {
+    // Preserve completed / in_context state from original
+    const orig = form.value.goals[goalDialogIndex.value]
+    data.completed = orig.completed
+    data.in_context = orig.in_context
+    form.value.goals[goalDialogIndex.value] = data
+  } else {
+    data.completed = false
+    data.in_context = true
+    form.value.goals.push(data)
+  }
+  goalDialog.value = false
+}
+
 function addGoal() {
-  form.value.goals.push({ id: uid(), title: '', description: '', target_date: null, priority: 1, children: [] })
+  openGoalDialog()
 }
 function removeGoal(i) {
   form.value.goals.splice(i, 1)
 }
 function addSubGoal(gi) {
-  if (!form.value.goals[gi].children) form.value.goals[gi].children = []
-  form.value.goals[gi].children.push({ id: uid(), title: '', description: '', target_date: null, children: [] })
+  openGoalDialog(gi)
 }
 function removeSubGoal(gi, si) {
   form.value.goals[gi].children.splice(si, 1)
@@ -724,25 +715,9 @@ function removeDream(i) {
   form.value.dreams.splice(i, 1)
 }
 
-// ── Idea helpers ──
-function addIdea() {
-  form.value.ideas.push({ id: uid(), title: '', description: '', priority: 1 })
-}
-function removeIdea(i) {
-  form.value.ideas.splice(i, 1)
-}
-
 // ── Priority helper ──
 function cyclePriority(item) {
   item.priority = ((item.priority ?? 0) + 1) % 3
-}
-
-// ── Note helpers ──
-function addNote() {
-  form.value.notes.push({ id: uid(), title: '', content: '', created_at: new Date().toISOString() })
-}
-function removeNote(i) {
-  form.value.notes.splice(i, 1)
 }
 
 function showSnack(text, color = 'success') {
@@ -765,11 +740,17 @@ async function load() {
     form.value.successes = data.successes || ''
     form.value.failures = data.failures || ''
     form.value.action_history = data.action_history || ''
-    form.value.ideas = Array.isArray(data.ideas) ? data.ideas : []
-    form.value.notes = Array.isArray(data.notes) ? data.notes : []
-    form.value.goals.forEach((g, i) => { if (!g.children) g.children = []; if (g.priority == null) g.priority = 1 })
+    form.value.goals.forEach((g, i) => {
+      if (!g.children) g.children = []
+      if (g.priority == null) g.priority = 1
+      if (!g.scale) g.scale = 'medium'
+      g.children.forEach(c => {
+        if (c.priority == null) c.priority = 1
+        if (!c.scale) c.scale = 'medium'
+        if (!c.children) c.children = []
+      })
+    })
     form.value.dreams.forEach((d, i) => { if (d.priority == null) d.priority = 1 })
-    form.value.ideas.forEach((d, i) => { if (d.priority == null) d.priority = 1 })
   } catch (e) {
     console.error('Failed to load creator profile:', e)
   } finally {

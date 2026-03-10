@@ -88,9 +88,9 @@ async def _log_messenger_error(
     except Exception as e:
         logger.warning(f"Failed to write messenger error: {e}")
 
-# Session files directory
+# Session files directory (4 levels up from services/ to project root)
 _SESSION_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
     "data", "messengers", "sessions"
 )
 os.makedirs(_SESSION_DIR, exist_ok=True)

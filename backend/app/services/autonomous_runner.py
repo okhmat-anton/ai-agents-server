@@ -477,7 +477,7 @@ async def _execute_cycle(db, run: MongoAutonomousRun, agent) -> bool:
 
         # Load agent's persistent tasks from DB and populate cycle_state.todo_list
         agent_db_tasks = await task_svc.get_all(
-            filter={"agent_id": str(agent.id), "status": {"$in": ["pending", "running"]}},
+            filter={"agent_id": str(agent.id), "status": {"$in": ["pending", "running"]}, "is_user_task": {"$ne": True}},
             limit=500,
         )
         # Sort by created_at

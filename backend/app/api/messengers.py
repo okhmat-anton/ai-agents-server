@@ -307,7 +307,7 @@ async def delete_messenger_account(
 
     # Delete session file
     import os
-    session_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "messengers", "sessions")
+    session_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "data", "messengers", "sessions")
     for ext in ("", ".session"):
         path = os.path.join(session_dir, f"{messenger_id}{ext}")
         if os.path.exists(path):

@@ -33,6 +33,7 @@ const routes = [
 
       // Settings tabs
       { path: 'settings', name: 'Settings', component: () => import('../views/SettingsView.vue') },
+      { path: 'settings/akm-advisor', name: 'SettingsAkmAdvisor', component: () => import('../views/SettingsView.vue') },
       { path: 'settings/protocols', name: 'SettingsProtocols', component: () => import('../views/SettingsView.vue') },
       { path: 'settings/skills', name: 'SettingsSkills', component: () => import('../views/SettingsView.vue') },
       { path: 'settings/skills/new', name: 'SkillCreate', component: () => import('../views/SkillFormView.vue') },
@@ -60,13 +61,14 @@ const routes = [
       { path: 'facts', name: 'Facts', component: () => import('../views/FactsView.vue') },
       { path: 'events', name: 'Events', component: () => import('../views/EventsView.vue') },
       { path: 'ideas', name: 'Ideas', component: () => import('../views/IdeasView.vue') },
+      { path: 'notes', name: 'Notes', component: () => import('../views/NotesView.vue') },
       { path: 'projects', name: 'Projects', component: () => import('../views/ProjectsView.vue') },
       { path: 'projects/:slug', name: 'ProjectDetail', component: () => import('../views/ProjectDetailView.vue') },
       { path: 'creator', name: 'Creator', component: () => import('../views/CreatorView.vue') },
       { path: 'creator/goals', name: 'CreatorGoals', component: () => import('../views/CreatorView.vue') },
       { path: 'creator/dreams', name: 'CreatorDreams', component: () => import('../views/CreatorView.vue') },
-      { path: 'creator/ideas', name: 'CreatorIdeas', component: () => import('../views/CreatorView.vue') },
-      { path: 'creator/notes', name: 'CreatorNotes', component: () => import('../views/CreatorView.vue') },
+      { path: 'creator/ideas', redirect: '/ideas' },
+      { path: 'creator/notes', redirect: '/notes' },
     ],
   },
 ]

@@ -61,6 +61,18 @@
       />
     </div>
 
+    <!-- Tag filter -->
+    <div v-if="allTags.length" class="d-flex align-center ga-1 mb-3 flex-wrap">
+      <v-icon size="18" class="mr-1 text-grey">mdi-tag-multiple</v-icon>
+      <v-chip
+        v-for="tag in allTags" :key="tag"
+        :color="selectedTags.includes(tag) ? 'cyan' : 'default'"
+        :variant="selectedTags.includes(tag) ? 'flat' : 'outlined'"
+        size="small" @click="toggleTag(tag)"
+      >{{ tag }}</v-chip>
+      <v-btn v-if="selectedTags.length" variant="text" size="x-small" color="grey" @click="selectedTags = []">Clear</v-btn>
+    </div>
+
     <!-- Videos grouped by category -->
     <div v-if="filterCategory === null && groupedHistory.length > 1">
       <div v-for="group in groupedHistory" :key="group.category" class="mb-6">
@@ -104,6 +116,9 @@
               </template>
               <template #item.category="{ item }">
                 <v-chip v-if="item.category" size="small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
+              </template>
+              <template #item.tags="{ item }">
+                <div class="d-flex ga-1 flex-wrap"><v-chip v-for="t in (item.tags || [])" :key="t" size="x-small" variant="tonal" color="cyan">{{ t }}</v-chip></div>
               </template>
               <template #item.created_at="{ item }">
                 {{ formatDate(item.created_at) }}
@@ -164,6 +179,12 @@
 
           <template #item.category="{ item }">
             <v-chip v-if="item.category" size="small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
+          </template>
+
+          <template #item.tags="{ item }">
+            <div class="d-flex ga-1 flex-wrap">
+              <v-chip v-for="t in (item.tags || [])" :key="t" size="x-small" variant="tonal" color="cyan">{{ t }}</v-chip>
+            </div>
           </template>
 
           <template #item.created_at="{ item }">
@@ -445,18 +466,35 @@ const platforms = [
   { value: 'twitter', label: 'X/Twitter', color: 'cyan', icon: 'mdi-twitter' },
 ]
 
+const selectedTags = ref([])
+
 const headers = [
   { title: 'Platform', key: 'platform', width: 120 },
   { title: 'URL', key: 'url' },
+  { title: 'Tags', key: 'tags', width: 160, sortable: false },
   { title: 'Category', key: 'category', width: 140 },
   { title: 'Status', key: 'status', width: 100 },
   { title: 'Added', key: 'created_at', width: 140 },
   { title: 'Actions', key: 'actions', sortable: false, width: 120 },
 ]
 
+const allTags = computed(() => {
+  const tags = new Set()
+  history.value.forEach(i => (i.tags || []).forEach(t => tags.add(t)))
+  return [...tags].sort()
+})
+
+function toggleTag(tag) {
+  const idx = selectedTags.value.indexOf(tag)
+  if (idx >= 0) selectedTags.value.splice(idx, 1)
+  else selectedTags.value.push(tag)
+}
+
 const filteredHistory = computed(() => {
-  if (!filterPlatform.value) return history.value
-  return history.value.filter(v => v.platform === filterPlatform.value)
+  let items = history.value
+  if (filterPlatform.value) items = items.filter(v => v.platform === filterPlatform.value)
+  if (selectedTags.value.length) items = items.filter(v => (v.tags || []).some(t => selectedTags.value.includes(t)))
+  return items
 })
 
 const categoryOptions = computed(() => {

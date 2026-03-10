@@ -880,7 +880,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, reactive } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, reactive, inject } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useAgentsStore } from '../stores/agents'
 import { useSettingsStore } from '../stores/settings'
@@ -892,6 +892,7 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import TextSelectionPopup from './TextSelectionPopup.vue'
 
+const dataRefreshSignal = inject('dataRefreshSignal', reactive({ type: '', timestamp: 0 }))
 const chatStore = useChatStore()
 const agentsStore = useAgentsStore()
 const settingsStore = useSettingsStore()
@@ -911,6 +912,40 @@ const expandedResponses = reactive({})
 const ttsLoading = reactive({})
 const savingToNotes = reactive({})  // msgId -> loading state
 const selectionPopupRef = ref(null) // TextSelectionPopup ref
+
+// ── Draft persistence (AIS-64) ──────────────────────────────────────
+// Save unsent message text per session so it survives page reloads
+const DRAFT_PREFIX = 'chat_draft_'
+let _draftTimer = null
+
+function getDraftKey(sessionId) {
+  return DRAFT_PREFIX + (sessionId || '_new')
+}
+
+function saveDraft(text, sessionId) {
+  const key = getDraftKey(sessionId)
+  if (text?.trim()) {
+    localStorage.setItem(key, text)
+  } else {
+    localStorage.removeItem(key)
+  }
+}
+
+function loadDraft(sessionId) {
+  return localStorage.getItem(getDraftKey(sessionId)) || ''
+}
+
+function clearDraft(sessionId) {
+  localStorage.removeItem(getDraftKey(sessionId))
+}
+
+// Debounced draft save on input change
+watch(messageInput, (val) => {
+  clearTimeout(_draftTimer)
+  _draftTimer = setTimeout(() => {
+    saveDraft(val, chatStore.currentSession?.id)
+  }, 300)
+})
 
 // Thinking log state
 const thinkingLogs = reactive({})        // logId -> full log data with steps
@@ -1235,7 +1270,8 @@ async function saveMessageToNotes(msg) {
 // ── Save selected text to Creator / Agent ─────────────────────────
 async function saveSelectedTextTo(target, text, extra = {}) {
   /**
-   * target: 'notes' | 'goals' | 'ideas' | 'dreams'
+   * target: 'goals' | 'dreams'
+   *       | 'global_note' | 'global_idea' | 'global_fact' | 'global_analysis'
    *       | 'agent_fact' | 'agent_belief' | 'agent_aspiration' | 'agent_event' | 'agent_task'
    * text: the selected text
    * extra: { agentId } for agent_* targets
@@ -1243,6 +1279,25 @@ async function saveSelectedTextTo(target, text, extra = {}) {
   if (!text?.trim()) return
   const trimmed = text.trim()
   const titleSnippet = trimmed.substring(0, 80).replace(/[#*`\n]/g, '').trim() + (trimmed.length > 80 ? '…' : '')
+
+  // ── Global targets ──
+  if (target === 'global_note') {
+    await api.post('/notes', { title: titleSnippet, content: trimmed })
+    return
+  }
+  if (target === 'global_idea') {
+    await api.post('/ideas', { title: titleSnippet, description: trimmed, source: 'user' })
+    return
+  }
+  if (target === 'global_fact') {
+    const agentId = extra.agentId || null
+    await api.post('/facts', { type: 'fact', content: trimmed, source: 'chat_selection', agent_id: agentId })
+    return
+  }
+  if (target === 'global_analysis') {
+    await api.post('/analysis-topics', { title: titleSnippet, description: trimmed, status: 'active' })
+    return
+  }
 
   // ── Agent targets ──
   if (target.startsWith('agent_') && extra.agentId) {
@@ -1294,6 +1349,20 @@ async function handleSelectionSave(target, extra = {}) {
     selectionPopupRef.value?.showStatus('Saved!', 'success')
     // Clear browser selection after save
     window.getSelection()?.removeAllRanges()
+
+    // Notify current page to refresh its data
+    const refreshMap = {
+      global_fact: 'facts', global_analysis: 'analysis',
+      global_idea: 'ideas', global_note: 'notes',
+      agent_fact: 'facts', agent_belief: 'beliefs',
+      agent_aspiration: 'aspirations', agent_event: 'events',
+      agent_task: 'tasks', goals: 'creator', dreams: 'creator',
+    }
+    const entityType = refreshMap[target]
+    if (entityType) {
+      dataRefreshSignal.type = entityType
+      dataRefreshSignal.timestamp = Date.now()
+    }
   } catch (e) {
     console.error('Selection save failed:', e)
     selectionPopupRef.value?.showStatus('Error', 'error')
@@ -1511,6 +1580,7 @@ async function triggerSummarization() {
 }
 
 function newChat() {
+  clearDraft(chatStore.currentSession?.id)  // Clear old session draft (AIS-64)
   chatStore.newChat()
   selectedModels.value = []
   multiModel.value = false
@@ -1549,6 +1619,7 @@ async function handleSend() {
     if (msg) {
       // User typed new text → stop current generation and resend with edited message
       messageInput.value = ''
+      clearDraft(chatStore.currentSession?.id)  // AIS-64
       await chatStore.editAndRegenerate(msg)
       scrollToBottom()
     } else {
@@ -1564,6 +1635,7 @@ async function handleSend() {
   if (!models.length) return
 
   messageInput.value = ''
+  clearDraft(chatStore.currentSession?.id)  // AIS-64
 
   // If no active session, create one first
   if (!chatStore.currentSession) {
@@ -1607,6 +1679,9 @@ async function fetchProjects() {
 }
 
 async function loadSession(sessionId) {
+  // Save unsent draft of current session before switching (AIS-64)
+  saveDraft(messageInput.value, chatStore.currentSession?.id)
+  
   // Save current tab before opening session
   previousChatType.value = activeChatType.value
   
@@ -1697,6 +1772,7 @@ async function loadSession(sessionId) {
     }
     systemPrompt.value = chatStore.currentSession.system_prompt || ''
     temperature.value = chatStore.currentSession.temperature ?? 0.7
+    messageInput.value = loadDraft(sessionId)  // Restore unsent draft (AIS-64)
     sessionsExpanded.value = false
   }
   await nextTick()
@@ -1802,6 +1878,8 @@ onMounted(async () => {
     console.log('[ChatPanel] Session restored. Messages:', chatStore.messages.length, 'sessionsExpanded:', sessionsExpanded.value)
   } else {
     console.log('[ChatPanel] No saved session found, showing default view')
+    // Restore unsent draft for no-session state (AIS-64)
+    messageInput.value = loadDraft(null)
     // Pre-select first model if available
     if (chatStore.availableModels.length && !selectedModels.value.length) {
       selectedModels.value = multiModel.value ? [] : chatStore.availableModels[0].id
@@ -1811,6 +1889,8 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  // Save unsent draft before unmount (AIS-64)
+  saveDraft(messageInput.value, chatStore.currentSession?.id)
   stopModelPolling()
 })
 

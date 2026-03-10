@@ -22,6 +22,14 @@
             </v-col>
           </v-row>
 
+          <v-switch
+            v-model="form.is_user_task"
+            label="User task (agents can read but not execute)"
+            color="amber"
+            hide-details
+            class="mb-4"
+          />
+
           <!-- Schedule builder -->
           <v-card v-if="form.type !== 'one_time'" variant="outlined" class="mb-4">
             <v-card-title class="text-subtitle-1 pb-0">
@@ -206,7 +214,7 @@ const isEdit = computed(() => !!route.params.id)
 const agentId = computed(() => route.query.agent_id || null)
 
 const form = ref({
-  title: '', description: '', type: 'one_time', priority: 'normal', schedule: null, max_retries: 3, timeout: 300,
+  title: '', description: '', type: 'one_time', priority: 'normal', schedule: null, max_retries: 3, timeout: 300, is_user_task: false,
 })
 
 // ── Schedule builder ──────────────────────────────

@@ -24,6 +24,15 @@
             </v-col>
           </v-row>
 
+          <v-switch
+            v-model="form.is_user_task"
+            label="User task (agents can read but not execute)"
+            color="amber"
+            density="compact"
+            hide-details
+            class="mb-3"
+          />
+
           <!-- Agent select (only when not pre-set) -->
           <v-autocomplete
             v-if="!agentId"
@@ -238,7 +247,7 @@ const isEdit = computed(() => !!props.taskId)
 const selectedAgentId = ref(null)
 
 const form = ref({
-  title: '', description: '', type: 'one_time', priority: 'normal', schedule: null, max_retries: 3, timeout: 300,
+  title: '', description: '', type: 'one_time', priority: 'normal', schedule: null, max_retries: 3, timeout: 300, is_user_task: false,
 })
 
 // ── Schedule builder ──────────────────────────────
@@ -419,7 +428,7 @@ watch(() => props.modelValue, async (open) => {
 
 const resetForm = () => {
   form.value = {
-    title: '', description: '', type: 'one_time', priority: 'normal', schedule: null, max_retries: 3, timeout: 300,
+    title: '', description: '', type: 'one_time', priority: 'normal', schedule: null, max_retries: 3, timeout: 300, is_user_task: false,
   }
   sched.value = {
     frequency: 'every_n_min', interval: 5, hourInterval: 2, minute: 0, hour: 9, weekday: 1, dayOfMonth: 1,
