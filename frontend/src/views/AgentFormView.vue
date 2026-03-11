@@ -52,6 +52,19 @@
             <v-col cols="12">
               <v-textarea v-model="form.system_prompt" label="System Prompt" rows="4" />
             </v-col>
+            <v-col cols="12">
+              <v-combobox
+                v-model="form.expert_questions"
+                label="Expert Questions"
+                multiple
+                chips
+                closable-chips
+                clearable
+                hint="Top questions that other agents can ask this agent. Press Enter to add."
+                persistent-hint
+                prepend-inner-icon="mdi-frequently-asked-questions"
+              />
+            </v-col>
             <v-col cols="12" md="4">
               <div class="d-flex align-center ga-2">
                 <v-select
@@ -397,6 +410,7 @@ const form = ref({
   description: '',
   mission: '',
   system_prompt: '',
+  expert_questions: [],
   voice: null,
   temperature: 0.7,
   top_p: 0.9,
@@ -449,6 +463,10 @@ onMounted(async () => {
     scalarKeys.forEach((key) => {
       if (agent[key] !== undefined && agent[key] !== null) form.value[key] = agent[key]
     })
+    // Load expert questions
+    if (agent.expert_questions && agent.expert_questions.length) {
+      form.value.expert_questions = [...agent.expert_questions]
+    }
     // Load thinking_protocol_id
     form.value.thinking_protocol_id = agent.thinking_protocol_id || null
     // Load protocol_ids from multi-protocol

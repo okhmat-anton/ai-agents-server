@@ -78,6 +78,8 @@ class AgentCreate(BaseModel):
     self_thinking: bool = False
     # Enabled flag
     enabled: bool = True
+    # Expert questions — top questions other agents can ask this agent
+    expert_questions: list[str] = []
     # Multi-model support
     models: list[AgentModelEntry] = []
     # Thinking protocols (multi-protocol)
@@ -113,6 +115,8 @@ class AgentUpdate(BaseModel):
     self_thinking: bool | None = None
     # Enabled flag
     enabled: bool | None = None
+    # Expert questions — top questions other agents can ask this agent
+    expert_questions: list[str] | None = None
     # Multi-model support (if provided, replaces all)
     models: list[AgentModelEntry] | None = None
     # Thinking protocols (multi-protocol)
@@ -147,6 +151,7 @@ class AgentResponse(BaseModel):
     self_thinking: bool = False
     enabled: bool = True
     avatar_url: str | None = None
+    expert_questions: list[str] = []   # top questions other agents can ask
     beliefs: dict = {}                 # from beliefs.json (filesystem)
     aspirations: dict = {}             # from aspirations.json (filesystem)
     thinking_protocol_id: str | None = None

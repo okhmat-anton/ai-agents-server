@@ -1,0 +1,23 @@
+{
+  "name": "ask_agent",
+  "display_name": "Ask Agent",
+  "description": "Consult another agent based on their expertise. Can also list available agents and their expert questions.",
+  "description_for_agent": "Ask another agent a question based on their expertise and principles, or list available agents. Parameters: agent_name (string, optional — name of the agent to consult), question (string, optional — the question to ask). If agent_name is omitted or empty, returns a list of all available agents with their expert questions. If both agent_name and question are provided, sends the question to that agent and returns their answer. Use this to get expert opinions from specialized agents (e.g. ask a lawyer about legal issues, a marketer about strategy, a psychologist about behavioral patterns, etc.).",
+  "category": "general",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "agent_name": {
+        "type": "string",
+        "description": "Name of the agent to ask (omit to list all agents)"
+      },
+      "question": {
+        "type": "string",
+        "description": "Question to ask the agent"
+      }
+    }
+  },
+  "output_schema": {}
+}

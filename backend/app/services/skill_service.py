@@ -1452,6 +1452,115 @@ SYSTEM_SKILLS = [
         ),
         "input_schema": {"type": "object", "properties": {}},
     },
+    # --- Ask Agent skill ---
+    {
+        "name": "ask_agent",
+        "display_name": "Ask Agent",
+        "description": "Consult another agent based on their expertise. Can also list available agents and their expert questions.",
+        "description_for_agent": (
+            "Ask another agent a question based on their expertise and principles, or list available agents. "
+            "Parameters: agent_name (string, optional — name of the agent to consult), "
+            "question (string, optional — the question to ask). "
+            "If agent_name is omitted or empty, returns a list of all available agents with their expert questions. "
+            "If both agent_name and question are provided, sends the question to that agent and returns their answer. "
+            "Use this to get expert opinions from specialized agents (e.g. ask a lawyer about legal issues, "
+            "a marketer about strategy, a psychologist about behavioral patterns, etc.)."
+        ),
+        "category": "general",
+        "code": (
+            "import httpx\n"
+            "import json\n"
+            "async def execute(agent_name=None, question=None):\n"
+            "    from app.database import get_mongodb\n"
+            "    from app.mongodb.services import AgentService, AgentModelService, ModelConfigService\n"
+            "    from app.api.agent_files import read_agent_config\n"
+            "    from app.config import get_settings\n"
+            "    db = get_mongodb()\n"
+            "    svc = AgentService(db)\n"
+            "    # List mode: return all agents with expert questions\n"
+            "    if not agent_name or not question:\n"
+            "        agents = await svc.get_all(filter={'enabled': True}, limit=200)\n"
+            "        result = []\n"
+            "        for a in agents:\n"
+            "            config = read_agent_config(a.name)\n"
+            "            desc = config.get('description', a.description or '') if config else (a.description or '')\n"
+            "            mission = config.get('mission', '') if config else ''\n"
+            "            result.append({\n"
+            "                'name': a.name,\n"
+            "                'description': desc,\n"
+            "                'mission': mission,\n"
+            "                'expert_questions': a.expert_questions or [],\n"
+            "            })\n"
+            "        return {'agents': result, 'total': len(result)}\n"
+            "    # Ask mode: consult a specific agent\n"
+            "    agents = await svc.get_all(filter={'name': agent_name}, limit=1)\n"
+            "    if not agents:\n"
+            "        return {'error': f\"Agent '{agent_name}' not found\"}\n"
+            "    agent = agents[0]\n"
+            "    config = read_agent_config(agent.name)\n"
+            "    sys_prompt = config.get('system_prompt', agent.system_prompt) if config else agent.system_prompt\n"
+            "    mission = config.get('mission', '') if config else ''\n"
+            "    desc = config.get('description', agent.description or '') if config else (agent.description or '')\n"
+            "    eq = agent.expert_questions or []\n"
+            "    ctx = f'You are {agent.name}'\n"
+            "    if desc:\n"
+            "        ctx += f' — {desc}'\n"
+            "    ctx += '.\\n'\n"
+            "    if mission:\n"
+            "        ctx += f'Your core mission: {mission}\\n'\n"
+            "    if sys_prompt:\n"
+            "        ctx += f'\\n{sys_prompt}\\n'\n"
+            "    if eq:\n"
+            "        ctx += '\\nYour areas of expertise:\\n'\n"
+            "        for q in eq:\n"
+            "            ctx += f'- {q}\\n'\n"
+            "    ctx += '\\nAnother agent is consulting you. Answer based on your expertise, principles, and knowledge. Be concise and actionable.'\n"
+            "    # Resolve model for this agent\n"
+            "    settings = get_settings()\n"
+            "    am_svc = AgentModelService(db)\n"
+            "    agent_models = await am_svc.get_by_agent(agent.id)\n"
+            "    model_id = None\n"
+            "    if agent_models:\n"
+            "        mc_svc = ModelConfigService(db)\n"
+            "        for am in sorted(agent_models, key=lambda x: x.priority):\n"
+            "            mid = am.model_config_id\n"
+            "            if mid.startswith('role:'):\n"
+            "                role = mid[5:]\n"
+            "                mc = await mc_svc.find_one({'role': role})\n"
+            "                if mc:\n"
+            "                    model_id = mc.model_id\n"
+            "                    break\n"
+            "            else:\n"
+            "                mc = await mc_svc.get_by_id(mid)\n"
+            "                if mc:\n"
+            "                    model_id = mc.model_id\n"
+            "                    break\n"
+            "    if not model_id:\n"
+            "        model_id = 'llama3.1:8b'\n"
+            "    # Call Ollama\n"
+            "    ollama_url = settings.OLLAMA_BASE_URL\n"
+            "    async with httpx.AsyncClient(timeout=120) as client:\n"
+            "        resp = await client.post(\n"
+            "            f'{ollama_url}/api/chat',\n"
+            "            json={'model': model_id, 'messages': [\n"
+            "                {'role': 'system', 'content': ctx},\n"
+            "                {'role': 'user', 'content': question},\n"
+            "            ], 'stream': False},\n"
+            "        )\n"
+            "        if resp.status_code != 200:\n"
+            "            return {'error': f'LLM error {resp.status_code}: {resp.text[:500]}'}\n"
+            "        data = resp.json()\n"
+            "        answer = data.get('message', {}).get('content', '')\n"
+            "    return {'agent': agent.name, 'question': question, 'answer': answer, 'expert_questions': eq}\n"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "agent_name": {"type": "string", "description": "Name of the agent to ask (omit to list all agents)"},
+                "question": {"type": "string", "description": "Question to ask the agent"},
+            },
+        },
+    },
 ]
 
 

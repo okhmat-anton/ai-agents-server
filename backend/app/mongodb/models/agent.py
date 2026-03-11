@@ -50,6 +50,9 @@ class MongoAgent(BaseModel):
     # Whether to include creator/owner context in agent responses
     use_creator_context: bool = True
 
+    # Expert questions — top questions other agents can ask this agent
+    expert_questions: List[str] = Field(default_factory=list)
+
     # Thinking protocol
     thinking_protocol_id: Optional[str] = None
 

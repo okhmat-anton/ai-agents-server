@@ -700,6 +700,1247 @@ DEFAULT_PROTOCOLS = [
             },
         ],
     },
+
+    # ═══════════════════════════════════════════════════════════
+    # SALES ORCHESTRATOR (AIS-70)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Sales Expert",
+        "description": "Orchestrator for sales strategy: lead qualification, objection handling, deal closing, and relationship management",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "sales_0_assess",
+                "type": "action",
+                "name": "Assess Sales Situation",
+                "category": "analysis",
+                "instruction": (
+                    "Analyze the sales scenario:\n"
+                    "- What product/service is being sold?\n"
+                    "- Who is the target customer (demographics, needs, pain points)?\n"
+                    "- What stage of the sales funnel are we at (awareness, interest, decision, action)?\n"
+                    "- What is the competitive landscape?\n"
+                    "- What previous interactions or objections have occurred?"
+                ),
+            },
+            {
+                "id": "sales_1_plan",
+                "type": "todo",
+                "name": "Create Sales Strategy",
+                "category": "planning",
+                "instruction": (
+                    "Build a sales action plan:\n"
+                    "1. Define the value proposition for this specific customer\n"
+                    "2. Identify key objections and prepare responses\n"
+                    "3. Plan the conversation flow and closing strategy\n"
+                    "4. Set follow-up milestones\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "sales_2_qualify",
+                "type": "action",
+                "name": "Qualify & Engage",
+                "category": "execution",
+                "instruction": (
+                    "Execute the sales engagement:\n"
+                    "- Qualify the lead (BANT: Budget, Authority, Need, Timeline)\n"
+                    "- Present the value proposition tailored to their pain points\n"
+                    "- Handle objections with empathy and evidence\n"
+                    "- Use social proof and case studies where applicable\n"
+                    "- Guide toward a decision with clear next steps"
+                ),
+            },
+            {
+                "id": "sales_3_evaluate",
+                "type": "loop",
+                "name": "Evaluate & Iterate",
+                "category": "verification",
+                "instruction": "Review the sales interaction and refine the approach.",
+                "max_iterations": 2,
+                "exit_condition": "Customer is satisfied, deal is progressing, or final answer delivered",
+                "steps": [
+                    {
+                        "id": "sales_3_0_check",
+                        "type": "decision",
+                        "name": "Outcome Check",
+                        "instruction": "Is the customer engaged? Are there unresolved objections? Should we pivot strategy?",
+                        "exit_condition": "If customer is engaged → deliver. If not → refine approach.",
+                    },
+                ],
+            },
+            {
+                "id": "sales_4_deliver",
+                "type": "action",
+                "name": "Deliver Sales Recommendation",
+                "category": "output",
+                "instruction": (
+                    "Summarize the sales strategy and outcomes:\n"
+                    "- Key value propositions presented\n"
+                    "- Objections handled and how\n"
+                    "- Recommended next steps\n"
+                    "- Follow-up timeline\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Sales engagement complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # TECH SUPPORT ORCHESTRATOR (AIS-71)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Tech Support Expert",
+        "description": "Orchestrator for technical support: problem diagnosis, troubleshooting, escalation, and resolution tracking",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "ts_0_diagnose",
+                "type": "action",
+                "name": "Diagnose Problem",
+                "category": "analysis",
+                "instruction": (
+                    "Analyze the technical issue:\n"
+                    "- What is the user experiencing? (symptoms, error messages)\n"
+                    "- What system/product/service is affected?\n"
+                    "- When did the issue start? Any recent changes?\n"
+                    "- What has the user already tried?\n"
+                    "- What is the severity/impact level?"
+                ),
+            },
+            {
+                "id": "ts_1_plan",
+                "type": "todo",
+                "name": "Create Troubleshooting Plan",
+                "category": "planning",
+                "instruction": (
+                    "Build a troubleshooting strategy:\n"
+                    "1. List most likely root causes (ordered by probability)\n"
+                    "2. Define diagnostic checks for each cause\n"
+                    "3. Plan step-by-step resolution attempts\n"
+                    "4. Identify escalation criteria if basic troubleshooting fails\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "ts_2_resolve",
+                "type": "action",
+                "name": "Execute Resolution",
+                "category": "execution",
+                "instruction": (
+                    "Walk through the troubleshooting steps:\n"
+                    "- Try solutions starting from most likely cause\n"
+                    "- Provide clear, step-by-step instructions\n"
+                    "- Verify each step before moving to the next\n"
+                    "- Document what works and what doesn't\n"
+                    "- If applicable, use skills to check logs, run commands, etc."
+                ),
+            },
+            {
+                "id": "ts_3_evaluate",
+                "type": "loop",
+                "name": "Verify & Iterate",
+                "category": "verification",
+                "instruction": "Check if the issue is resolved and iterate if needed.",
+                "max_iterations": 3,
+                "exit_condition": "Issue resolved or escalation needed",
+                "steps": [
+                    {
+                        "id": "ts_3_0_check",
+                        "type": "decision",
+                        "name": "Resolution Check",
+                        "instruction": "Is the problem resolved? If not, try the next troubleshooting step. If all options exhausted, recommend escalation.",
+                        "exit_condition": "If resolved → deliver. If not → next troubleshooting step.",
+                    },
+                ],
+            },
+            {
+                "id": "ts_4_deliver",
+                "type": "action",
+                "name": "Deliver Resolution Summary",
+                "category": "output",
+                "instruction": (
+                    "Summarize the support interaction:\n"
+                    "- Problem description\n"
+                    "- Root cause identified\n"
+                    "- Steps taken to resolve\n"
+                    "- Preventive recommendations\n"
+                    "- Follow-up actions if needed\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Technical support complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # PROJECT MANAGER ORCHESTRATOR (AIS-77)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Project Manager Expert",
+        "description": "Orchestrator for project management: planning, resource allocation, risk management, and delivery tracking",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "pm_0_assess",
+                "type": "action",
+                "name": "Assess Project Context",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the project landscape:\n"
+                    "- What is the project scope and key objectives?\n"
+                    "- What are the constraints (time, budget, resources)?\n"
+                    "- Who are the stakeholders and their expectations?\n"
+                    "- What risks and dependencies exist?\n"
+                    "- What is the current project status (if ongoing)?"
+                ),
+            },
+            {
+                "id": "pm_1_plan",
+                "type": "todo",
+                "name": "Create Project Plan",
+                "category": "planning",
+                "instruction": (
+                    "Build a comprehensive project plan:\n"
+                    "1. Define milestones and deliverables\n"
+                    "2. Break down work into manageable tasks\n"
+                    "3. Estimate timelines and assign priorities\n"
+                    "4. Identify resource needs\n"
+                    "5. Create risk mitigation strategies\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "pm_2_execute",
+                "type": "action",
+                "name": "Manage Execution",
+                "category": "execution",
+                "instruction": (
+                    "Coordinate project execution:\n"
+                    "- Track progress against milestones\n"
+                    "- Identify blockers and resolve them\n"
+                    "- Adjust priorities and plans as needed\n"
+                    "- Communicate status updates to stakeholders\n"
+                    "- Manage scope changes through change control"
+                ),
+            },
+            {
+                "id": "pm_3_evaluate",
+                "type": "loop",
+                "name": "Monitor & Adjust",
+                "category": "verification",
+                "instruction": "Review project status and adjust the plan if needed.",
+                "max_iterations": 3,
+                "exit_condition": "Project deliverables are on track or plan is adjusted",
+                "steps": [
+                    {
+                        "id": "pm_3_0_check",
+                        "type": "decision",
+                        "name": "Status Check",
+                        "instruction": "Are we on track? Are there new risks? Should we re-prioritize? If yes → adjust plan. If all good → proceed to delivery.",
+                        "exit_condition": "Project is on track → deliver status report.",
+                    },
+                ],
+            },
+            {
+                "id": "pm_4_deliver",
+                "type": "action",
+                "name": "Deliver Project Summary",
+                "category": "output",
+                "instruction": (
+                    "Provide a project management deliverable:\n"
+                    "- Executive summary\n"
+                    "- Current status vs plan\n"
+                    "- Key risks and mitigations\n"
+                    "- Action items and ownership\n"
+                    "- Recommendations for next phase\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Project management complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # MARKETER ORCHESTRATOR (AIS-79)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Marketing Expert",
+        "description": "Orchestrator for marketing strategy: market analysis, campaign planning, content strategy, and performance optimization",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "mkt_0_analyze",
+                "type": "action",
+                "name": "Analyze Market Context",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the marketing landscape:\n"
+                    "- What product/service/brand are we marketing?\n"
+                    "- Who is the target audience (demographics, psychographics, behavior)?\n"
+                    "- What is the competitive positioning?\n"
+                    "- What channels are available (digital, social, email, content, paid)?\n"
+                    "- What is the marketing budget and timeline?"
+                ),
+            },
+            {
+                "id": "mkt_1_plan",
+                "type": "todo",
+                "name": "Create Marketing Strategy",
+                "category": "planning",
+                "instruction": (
+                    "Build a marketing action plan:\n"
+                    "1. Define marketing objectives and KPIs\n"
+                    "2. Develop messaging and positioning strategy\n"
+                    "3. Select channels and tactics\n"
+                    "4. Plan content calendar and campaign timeline\n"
+                    "5. Set budget allocation per channel\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "mkt_2_execute",
+                "type": "action",
+                "name": "Develop Campaign Assets",
+                "category": "execution",
+                "instruction": (
+                    "Create marketing deliverables:\n"
+                    "- Write copy for selected channels (ads, social posts, emails, landing pages)\n"
+                    "- Develop content strategy and key messages\n"
+                    "- Define A/B testing hypotheses\n"
+                    "- Create performance tracking framework\n"
+                    "- Plan customer journey touchpoints"
+                ),
+            },
+            {
+                "id": "mkt_3_evaluate",
+                "type": "loop",
+                "name": "Optimize & Iterate",
+                "category": "verification",
+                "instruction": "Review marketing strategy and optimize based on insights.",
+                "max_iterations": 2,
+                "exit_condition": "Marketing strategy is comprehensive and actionable",
+                "steps": [
+                    {
+                        "id": "mkt_3_0_check",
+                        "type": "decision",
+                        "name": "Quality Check",
+                        "instruction": "Is the strategy covering all key channels? Is messaging consistent? Are KPIs measurable? Refine if needed.",
+                        "exit_condition": "Strategy is complete → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "mkt_4_deliver",
+                "type": "action",
+                "name": "Deliver Marketing Plan",
+                "category": "output",
+                "instruction": (
+                    "Compile the marketing deliverable:\n"
+                    "- Marketing strategy overview\n"
+                    "- Campaign assets and content\n"
+                    "- Channel-specific tactics\n"
+                    "- KPIs and measurement plan\n"
+                    "- Timeline and budget breakdown\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Marketing strategy complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # PHYSICIST ORCHESTRATOR (AIS-80)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Physics Expert",
+        "description": "Orchestrator for physics consulting: problem analysis, theoretical modeling, calculations, and experimental design",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "phys_0_analyze",
+                "type": "action",
+                "name": "Analyze Physics Problem",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the physics problem:\n"
+                    "- What physical phenomenon or system is involved?\n"
+                    "- What branch of physics applies (mechanics, thermodynamics, electrodynamics, quantum, optics, etc.)?\n"
+                    "- What are the given parameters and constraints?\n"
+                    "- What assumptions can reasonably be made?\n"
+                    "- What level of rigor is needed (qualitative explanation vs precise calculation)?"
+                ),
+            },
+            {
+                "id": "phys_1_model",
+                "type": "todo",
+                "name": "Build Physical Model",
+                "category": "planning",
+                "instruction": (
+                    "Construct the theoretical framework:\n"
+                    "1. Identify relevant physical laws and equations\n"
+                    "2. Define the system boundaries and state variables\n"
+                    "3. List assumptions and their validity ranges\n"
+                    "4. Plan the calculation approach (analytical, numerical, dimensional analysis)\n"
+                    "5. Identify what experimental data is needed (if any)\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "phys_2_solve",
+                "type": "action",
+                "name": "Solve & Calculate",
+                "category": "execution",
+                "instruction": (
+                    "Execute the physics solution:\n"
+                    "- Apply the selected equations and methods\n"
+                    "- Show derivations step-by-step\n"
+                    "- Perform numerical calculations with units\n"
+                    "- Check dimensional consistency\n"
+                    "- Verify results against limiting cases and physical intuition"
+                ),
+            },
+            {
+                "id": "phys_3_evaluate",
+                "type": "loop",
+                "name": "Verify & Refine",
+                "category": "verification",
+                "instruction": "Verify the solution for correctness and physical plausibility.",
+                "max_iterations": 2,
+                "exit_condition": "Solution is verified and physically consistent",
+                "steps": [
+                    {
+                        "id": "phys_3_0_check",
+                        "type": "decision",
+                        "name": "Sanity Check",
+                        "instruction": "Do the results make physical sense? Are units correct? Do limiting cases work? If issues found → refine the model.",
+                        "exit_condition": "Results are physically plausible → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "phys_4_deliver",
+                "type": "action",
+                "name": "Deliver Physics Analysis",
+                "category": "output",
+                "instruction": (
+                    "Present the physics analysis:\n"
+                    "- Problem statement and assumptions\n"
+                    "- Theoretical framework used\n"
+                    "- Step-by-step solution with explanations\n"
+                    "- Numerical results with units\n"
+                    "- Physical interpretation and implications\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Physics analysis complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # CHEMIST ORCHESTRATOR (AIS-81)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Chemistry Expert",
+        "description": "Orchestrator for chemistry consulting: reaction analysis, molecular design, safety assessment, and lab procedures",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "chem_0_analyze",
+                "type": "action",
+                "name": "Analyze Chemistry Problem",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the chemistry problem:\n"
+                    "- What chemical system or reaction is involved?\n"
+                    "- What branch applies (organic, inorganic, physical, analytical, biochemistry)?\n"
+                    "- What substances, concentrations, and conditions are given?\n"
+                    "- What is the desired outcome (synthesis, analysis, explanation)?\n"
+                    "- Are there safety considerations?"
+                ),
+            },
+            {
+                "id": "chem_1_plan",
+                "type": "todo",
+                "name": "Plan Chemical Approach",
+                "category": "planning",
+                "instruction": (
+                    "Build the chemistry strategy:\n"
+                    "1. Identify relevant reactions and mechanisms\n"
+                    "2. Consider thermodynamic and kinetic factors\n"
+                    "3. Plan synthesis routes or analytical methods\n"
+                    "4. Assess safety and environmental considerations\n"
+                    "5. Identify required reagents, equipment, and conditions\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "chem_2_solve",
+                "type": "action",
+                "name": "Execute Chemical Analysis",
+                "category": "execution",
+                "instruction": (
+                    "Perform the chemistry work:\n"
+                    "- Write balanced equations with mechanisms if needed\n"
+                    "- Calculate stoichiometry, yields, and concentrations\n"
+                    "- Design or explain synthetic routes\n"
+                    "- Predict products and byproducts\n"
+                    "- Consider reaction conditions (temperature, pressure, catalysts, solvents)"
+                ),
+            },
+            {
+                "id": "chem_3_evaluate",
+                "type": "loop",
+                "name": "Verify & Refine",
+                "category": "verification",
+                "instruction": "Check the chemical solution for correctness and practicality.",
+                "max_iterations": 2,
+                "exit_condition": "Solution is chemically sound and practical",
+                "steps": [
+                    {
+                        "id": "chem_3_0_check",
+                        "type": "decision",
+                        "name": "Validation Check",
+                        "instruction": "Are the equations balanced? Are conditions realistic? Are safety hazards addressed? If issues → refine.",
+                        "exit_condition": "Chemistry is correct and practical → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "chem_4_deliver",
+                "type": "action",
+                "name": "Deliver Chemistry Analysis",
+                "category": "output",
+                "instruction": (
+                    "Present the chemistry analysis:\n"
+                    "- Problem statement and context\n"
+                    "- Reaction equations and mechanisms\n"
+                    "- Calculations and predicted results\n"
+                    "- Safety notes and handling precautions\n"
+                    "- Practical recommendations\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Chemistry analysis complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # ENGINEER ORCHESTRATOR (AIS-82)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Engineering Expert",
+        "description": "Orchestrator for engineering consulting: design analysis, feasibility studies, technical calculations, and system optimization",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "eng_0_analyze",
+                "type": "action",
+                "name": "Analyze Engineering Challenge",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the engineering problem:\n"
+                    "- What engineering discipline applies (mechanical, electrical, civil, aerospace, etc.)?\n"
+                    "- What are the design requirements and specifications?\n"
+                    "- What are the constraints (material, cost, weight, power, environment)?\n"
+                    "- What standards and regulations apply?\n"
+                    "- What is the current state of the system (existing design, failure analysis)?"
+                ),
+            },
+            {
+                "id": "eng_1_design",
+                "type": "todo",
+                "name": "Create Engineering Design",
+                "category": "planning",
+                "instruction": (
+                    "Build the engineering approach:\n"
+                    "1. Define functional requirements and performance criteria\n"
+                    "2. Propose design concepts and trade-off analysis\n"
+                    "3. Plan calculations and simulations needed\n"
+                    "4. Identify materials and components\n"
+                    "5. Create verification and validation plan\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "eng_2_calculate",
+                "type": "action",
+                "name": "Execute Engineering Analysis",
+                "category": "execution",
+                "instruction": (
+                    "Perform engineering calculations and analysis:\n"
+                    "- Apply relevant engineering formulas and standards\n"
+                    "- Perform sizing, stress, thermal, or electrical calculations\n"
+                    "- Evaluate safety factors and margins\n"
+                    "- Optimize design parameters\n"
+                    "- Create specifications and design documentation"
+                ),
+            },
+            {
+                "id": "eng_3_evaluate",
+                "type": "loop",
+                "name": "Review & Optimize",
+                "category": "verification",
+                "instruction": "Verify the engineering solution meets all requirements.",
+                "max_iterations": 2,
+                "exit_condition": "Design meets requirements with adequate safety margins",
+                "steps": [
+                    {
+                        "id": "eng_3_0_check",
+                        "type": "decision",
+                        "name": "Design Review",
+                        "instruction": "Does the design meet all specs? Are safety margins adequate? Are there manufacturing concerns? If issues → iterate on design.",
+                        "exit_condition": "Design passes review → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "eng_4_deliver",
+                "type": "action",
+                "name": "Deliver Engineering Solution",
+                "category": "output",
+                "instruction": (
+                    "Present the engineering deliverable:\n"
+                    "- Design overview and specifications\n"
+                    "- Calculations and analysis results\n"
+                    "- Material and component selections\n"
+                    "- Safety factors and compliance notes\n"
+                    "- Recommendations and next steps\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Engineering analysis complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # INVENTOR ORCHESTRATOR (AIS-83)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Inventor Expert",
+        "description": "Orchestrator for invention and innovation: ideation, feasibility analysis, prototyping strategy, and patent considerations",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "inv_0_analyze",
+                "type": "action",
+                "name": "Understand the Challenge",
+                "category": "analysis",
+                "instruction": (
+                    "Deeply understand the problem to solve:\n"
+                    "- What is the core problem or unmet need?\n"
+                    "- Who experiences this problem and in what context?\n"
+                    "- What existing solutions exist and why are they insufficient?\n"
+                    "- What are the key constraints (physics, cost, technology, regulations)?\n"
+                    "- What would an ideal solution look like?"
+                ),
+            },
+            {
+                "id": "inv_1_ideate",
+                "type": "todo",
+                "name": "Generate & Evaluate Ideas",
+                "category": "planning",
+                "instruction": (
+                    "Creative ideation phase:\n"
+                    "1. Generate multiple solution concepts (aim for 5+ diverse approaches)\n"
+                    "2. Use lateral thinking, biomimicry, TRIZ, or first-principles reasoning\n"
+                    "3. Evaluate each concept against criteria (feasibility, novelty, impact)\n"
+                    "4. Select the most promising concept(s) for development\n"
+                    "5. Identify what needs to be proven or tested\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "inv_2_develop",
+                "type": "action",
+                "name": "Develop the Invention",
+                "category": "execution",
+                "instruction": (
+                    "Flesh out the selected concept:\n"
+                    "- Define how the invention works in detail\n"
+                    "- Identify key technical challenges and how to address them\n"
+                    "- Propose a proof-of-concept or prototype approach\n"
+                    "- Consider manufacturing/production feasibility\n"
+                    "- Assess patentability and prior art briefly"
+                ),
+            },
+            {
+                "id": "inv_3_evaluate",
+                "type": "loop",
+                "name": "Refine & Validate",
+                "category": "verification",
+                "instruction": "Stress-test the invention concept and refine it.",
+                "max_iterations": 2,
+                "exit_condition": "Invention concept is robust and well-defined",
+                "steps": [
+                    {
+                        "id": "inv_3_0_check",
+                        "type": "decision",
+                        "name": "Feasibility Check",
+                        "instruction": "Does the invention work in theory? Are there fatal flaws? Is it novel? If concerns → iterate on the concept.",
+                        "exit_condition": "Concept is solid → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "inv_4_deliver",
+                "type": "action",
+                "name": "Deliver Invention Brief",
+                "category": "output",
+                "instruction": (
+                    "Present the invention:\n"
+                    "- Problem statement\n"
+                    "- Invention description and how it works\n"
+                    "- Key innovations and advantages\n"
+                    "- Technical challenges and mitigations\n"
+                    "- Prototype/next steps roadmap\n"
+                    "- Patent considerations\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Invention brief complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # LAWYER ORCHESTRATOR (AIS-84)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Legal Expert",
+        "description": "Orchestrator for legal consulting: legal analysis, risk assessment, contract review, and compliance guidance",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "law_0_analyze",
+                "type": "action",
+                "name": "Analyze Legal Situation",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the legal question:\n"
+                    "- What area of law applies (contract, corporate, IP, employment, regulatory, etc.)?\n"
+                    "- What jurisdiction is relevant?\n"
+                    "- What are the key facts and circumstances?\n"
+                    "- Who are the parties involved and their interests?\n"
+                    "- What is the desired legal outcome?\n"
+                    "DISCLAIMER: Always note that this is informational analysis, not legal advice."
+                ),
+            },
+            {
+                "id": "law_1_research",
+                "type": "todo",
+                "name": "Legal Research & Framework",
+                "category": "planning",
+                "instruction": (
+                    "Build the legal analysis framework:\n"
+                    "1. Identify applicable laws, regulations, and precedents\n"
+                    "2. Analyze how the law applies to the specific facts\n"
+                    "3. Identify legal risks and exposure\n"
+                    "4. Consider counter-arguments and opposing positions\n"
+                    "5. Develop strategic recommendations\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "law_2_analyze",
+                "type": "action",
+                "name": "Perform Legal Analysis",
+                "category": "execution",
+                "instruction": (
+                    "Execute the legal analysis:\n"
+                    "- Apply relevant legal principles to the facts\n"
+                    "- Assess strengths and weaknesses of each position\n"
+                    "- Review contracts or documents if applicable\n"
+                    "- Identify compliance gaps or risks\n"
+                    "- Propose risk mitigation strategies"
+                ),
+            },
+            {
+                "id": "law_3_evaluate",
+                "type": "loop",
+                "name": "Review & Strengthen",
+                "category": "verification",
+                "instruction": "Review the legal analysis for completeness and accuracy.",
+                "max_iterations": 2,
+                "exit_condition": "Legal analysis is comprehensive and balanced",
+                "steps": [
+                    {
+                        "id": "law_3_0_check",
+                        "type": "decision",
+                        "name": "Analysis Review",
+                        "instruction": "Have all relevant legal areas been covered? Are risks properly identified? Is the advice balanced? If gaps → supplement analysis.",
+                        "exit_condition": "Analysis is complete → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "law_4_deliver",
+                "type": "action",
+                "name": "Deliver Legal Opinion",
+                "category": "output",
+                "instruction": (
+                    "Present the legal analysis:\n"
+                    "- Issue summary\n"
+                    "- Applicable legal framework\n"
+                    "- Analysis and conclusions\n"
+                    "- Risk assessment (high/medium/low)\n"
+                    "- Recommended actions\n"
+                    "- DISCLAIMER: This is an AI analysis, not professional legal advice\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Legal analysis complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # PSYCHOLOGIST ORCHESTRATOR (AIS-86)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Psychology Expert",
+        "description": "Orchestrator for psychology consulting: behavioral analysis, cognitive patterns, emotional intelligence, and well-being strategies",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "psy_0_assess",
+                "type": "action",
+                "name": "Assess Psychological Context",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the psychological question:\n"
+                    "- What domain applies (cognitive, behavioral, social, developmental, organizational, etc.)?\n"
+                    "- What is the specific issue or question?\n"
+                    "- What is the context (personal development, team dynamics, decision-making, etc.)?\n"
+                    "- What patterns or behaviors are being observed?\n"
+                    "- DISCLAIMER: Note that this is educational/informational, not therapy or clinical diagnosis."
+                ),
+            },
+            {
+                "id": "psy_1_framework",
+                "type": "todo",
+                "name": "Build Psychological Framework",
+                "category": "planning",
+                "instruction": (
+                    "Develop the psychological approach:\n"
+                    "1. Identify relevant psychological theories and models\n"
+                    "2. Analyze the situation through appropriate lenses (CBT, behavioral, humanistic, etc.)\n"
+                    "3. Consider contributing factors (cognitive biases, environmental, social)\n"
+                    "4. Plan evidence-based recommendations\n"
+                    "5. Design actionable strategies for change\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "psy_2_analyze",
+                "type": "action",
+                "name": "Provide Psychological Analysis",
+                "category": "execution",
+                "instruction": (
+                    "Apply psychological knowledge:\n"
+                    "- Explain relevant psychological mechanisms\n"
+                    "- Identify cognitive patterns and biases at play\n"
+                    "- Offer evidence-based insights\n"
+                    "- Suggest practical strategies and techniques\n"
+                    "- Consider cultural and individual differences"
+                ),
+            },
+            {
+                "id": "psy_3_evaluate",
+                "type": "loop",
+                "name": "Refine & Validate",
+                "category": "verification",
+                "instruction": "Review the psychological analysis for depth and practical applicability.",
+                "max_iterations": 2,
+                "exit_condition": "Analysis is thorough and recommendations are actionable",
+                "steps": [
+                    {
+                        "id": "psy_3_0_check",
+                        "type": "decision",
+                        "name": "Quality Check",
+                        "instruction": "Is the analysis grounded in evidence? Are recommendations practical? Is it empathetic and non-judgmental? If not → refine.",
+                        "exit_condition": "Analysis is solid → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "psy_4_deliver",
+                "type": "action",
+                "name": "Deliver Psychological Insights",
+                "category": "output",
+                "instruction": (
+                    "Present the psychological analysis:\n"
+                    "- Understanding of the situation\n"
+                    "- Relevant psychological principles\n"
+                    "- Key insights and patterns identified\n"
+                    "- Practical strategies and action steps\n"
+                    "- Resources for further exploration\n"
+                    "- DISCLAIMER: This is educational, not clinical advice\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Psychological analysis complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # GYM TRAINER ORCHESTRATOR (AIS-88)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Fitness Trainer Expert",
+        "description": "Orchestrator for fitness consulting: training program design, nutrition guidance, injury prevention, and progress tracking",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "fit_0_assess",
+                "type": "action",
+                "name": "Assess Fitness Profile",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the fitness context:\n"
+                    "- What are the fitness goals (strength, muscle gain, weight loss, endurance, flexibility)?\n"
+                    "- What is the current fitness level and experience?\n"
+                    "- Are there any injuries, limitations, or medical conditions?\n"
+                    "- What equipment/gym access is available?\n"
+                    "- How much time per week can be dedicated to training?\n"
+                    "DISCLAIMER: Note that this is general fitness guidance, not medical advice."
+                ),
+            },
+            {
+                "id": "fit_1_program",
+                "type": "todo",
+                "name": "Design Training Program",
+                "category": "planning",
+                "instruction": (
+                    "Build a personalized training program:\n"
+                    "1. Set realistic short-term and long-term goals\n"
+                    "2. Design weekly training split (muscle groups, rest days)\n"
+                    "3. Select exercises with sets, reps, and rest periods\n"
+                    "4. Plan progressive overload strategy\n"
+                    "5. Include warm-up and mobility work\n"
+                    "6. Outline basic nutrition guidelines\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "fit_2_detail",
+                "type": "action",
+                "name": "Detail Workout Plan",
+                "category": "execution",
+                "instruction": (
+                    "Flesh out the training program:\n"
+                    "- Write out each workout day with specific exercises\n"
+                    "- Include proper form cues and common mistakes\n"
+                    "- Add progression targets for each week\n"
+                    "- Provide alternative exercises for equipment limitations\n"
+                    "- Include stretching and recovery recommendations"
+                ),
+            },
+            {
+                "id": "fit_3_evaluate",
+                "type": "loop",
+                "name": "Review & Adjust",
+                "category": "verification",
+                "instruction": "Review the program for balance and safety.",
+                "max_iterations": 2,
+                "exit_condition": "Program is balanced, safe, and aligned with goals",
+                "steps": [
+                    {
+                        "id": "fit_3_0_check",
+                        "type": "decision",
+                        "name": "Program Review",
+                        "instruction": "Is volume appropriate for the experience level? Are muscle groups balanced? Is recovery adequate? If not → adjust program.",
+                        "exit_condition": "Program is balanced → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "fit_4_deliver",
+                "type": "action",
+                "name": "Deliver Fitness Plan",
+                "category": "output",
+                "instruction": (
+                    "Present the fitness plan:\n"
+                    "- Goals and timeline\n"
+                    "- Weekly training schedule\n"
+                    "- Detailed workouts with exercises, sets, reps\n"
+                    "- Nutrition guidelines\n"
+                    "- Progress tracking recommendations\n"
+                    "- DISCLAIMER: Consult a doctor before starting a new program\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Fitness plan complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # MEDIC ORCHESTRATOR (AIS-89)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Medical Expert",
+        "description": "Orchestrator for medical consulting: symptom analysis, health information, prevention strategies, and wellness guidance",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "med_0_assess",
+                "type": "action",
+                "name": "Assess Health Context",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the health question:\n"
+                    "- What symptoms or health concerns are described?\n"
+                    "- What is the patient's general health context?\n"
+                    "- What is the timeline and severity?\n"
+                    "- What medications or treatments are currently used?\n"
+                    "- Are there risk factors (age, conditions, family history)?\n"
+                    "CRITICAL DISCLAIMER: This is educational health information only. It is NOT a diagnosis or treatment plan. Always advise consulting a qualified healthcare professional."
+                ),
+            },
+            {
+                "id": "med_1_research",
+                "type": "todo",
+                "name": "Research Health Topic",
+                "category": "planning",
+                "instruction": (
+                    "Build the medical information framework:\n"
+                    "1. Identify potentially relevant conditions or mechanisms\n"
+                    "2. Review evidence-based information on the topic\n"
+                    "3. Consider differential factors that a doctor would explore\n"
+                    "4. Identify when to seek emergency care vs routine care\n"
+                    "5. Prepare prevention and wellness recommendations\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "med_2_inform",
+                "type": "action",
+                "name": "Provide Health Information",
+                "category": "execution",
+                "instruction": (
+                    "Share evidence-based health information:\n"
+                    "- Explain relevant medical concepts in accessible language\n"
+                    "- Describe what symptoms might indicate (without diagnosing)\n"
+                    "- Outline general prevention and wellness strategies\n"
+                    "- Highlight red flags that warrant immediate medical attention\n"
+                    "- Suggest questions to ask a healthcare provider"
+                ),
+            },
+            {
+                "id": "med_3_evaluate",
+                "type": "loop",
+                "name": "Review & Validate",
+                "category": "verification",
+                "instruction": "Ensure information is accurate, balanced, and safe.",
+                "max_iterations": 2,
+                "exit_condition": "Information is accurate and appropriately caveated",
+                "steps": [
+                    {
+                        "id": "med_3_0_check",
+                        "type": "decision",
+                        "name": "Safety Check",
+                        "instruction": "Is the information evidence-based? Are disclaimers present? Does it avoid making diagnoses? Are emergency signs mentioned if relevant? If not → improve.",
+                        "exit_condition": "Information is safe and accurate → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "med_4_deliver",
+                "type": "action",
+                "name": "Deliver Health Information",
+                "category": "output",
+                "instruction": (
+                    "Present the health information:\n"
+                    "- Topic overview\n"
+                    "- Evidence-based explanations\n"
+                    "- Prevention and wellness tips\n"
+                    "- When to see a doctor (red flags)\n"
+                    "- Questions to ask your healthcare provider\n"
+                    "- CRITICAL DISCLAIMER: This is NOT medical advice. Consult a healthcare professional.\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Health information complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # VETERINARIAN ORCHESTRATOR (AIS-90)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Veterinary Expert",
+        "description": "Orchestrator for veterinary consulting: animal health assessment, care guidance, nutrition, and behavior analysis",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "vet_0_assess",
+                "type": "action",
+                "name": "Assess Animal Health Context",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the veterinary question:\n"
+                    "- What animal species and breed is involved?\n"
+                    "- What symptoms or concerns are described?\n"
+                    "- What is the animal's age, weight, and health history?\n"
+                    "- What is the environment (indoor/outdoor, diet, exercise)?\n"
+                    "- What urgency level (emergency vs routine care)?\n"
+                    "DISCLAIMER: This is general pet health information. Always consult a licensed veterinarian for proper diagnosis and treatment."
+                ),
+            },
+            {
+                "id": "vet_1_research",
+                "type": "todo",
+                "name": "Research Veterinary Topic",
+                "category": "planning",
+                "instruction": (
+                    "Build the veterinary knowledge framework:\n"
+                    "1. Identify common conditions matching the description\n"
+                    "2. Consider species-specific factors\n"
+                    "3. Review standard veterinary care practices\n"
+                    "4. Identify emergency signs requiring immediate vet visit\n"
+                    "5. Prepare care and prevention recommendations\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "vet_2_advise",
+                "type": "action",
+                "name": "Provide Veterinary Guidance",
+                "category": "execution",
+                "instruction": (
+                    "Share veterinary care information:\n"
+                    "- Explain possible causes and what they mean\n"
+                    "- Provide first-aid or home care tips (if safe)\n"
+                    "- Recommend nutrition and lifestyle adjustments\n"
+                    "- Explain what a vet would likely do (tests, treatments)\n"
+                    "- Highlight emergency indicators requiring immediate vet visit"
+                ),
+            },
+            {
+                "id": "vet_3_evaluate",
+                "type": "loop",
+                "name": "Review & Validate",
+                "category": "verification",
+                "instruction": "Ensure advice is safe and species-appropriate.",
+                "max_iterations": 2,
+                "exit_condition": "Guidance is safe, species-appropriate, and well-caveated",
+                "steps": [
+                    {
+                        "id": "vet_3_0_check",
+                        "type": "decision",
+                        "name": "Safety Check",
+                        "instruction": "Is the advice safe for the specific species? Are disclaimers present? Are emergency signs mentioned? If issues → refine.",
+                        "exit_condition": "Guidance is safe → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "vet_4_deliver",
+                "type": "action",
+                "name": "Deliver Veterinary Advice",
+                "category": "output",
+                "instruction": (
+                    "Present veterinary guidance:\n"
+                    "- Animal profile and concern summary\n"
+                    "- Possible explanations (without diagnosing)\n"
+                    "- Home care and prevention tips\n"
+                    "- When to visit the vet (red flags)\n"
+                    "- Questions to ask your veterinarian\n"
+                    "- DISCLAIMER: Consult a licensed veterinarian for proper care\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Veterinary guidance complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # PRODUCER ORCHESTRATOR (AIS-91)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Producer Expert",
+        "description": "Orchestrator for content/media production: concept development, production planning, creative direction, and launch strategy",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "prod_0_analyze",
+                "type": "action",
+                "name": "Analyze Production Brief",
+                "category": "analysis",
+                "instruction": (
+                    "Understand the production context:\n"
+                    "- What type of production (video, audio, event, digital content, music, film)?\n"
+                    "- What is the creative vision and target audience?\n"
+                    "- What are the budget and resource constraints?\n"
+                    "- What is the timeline and key milestones?\n"
+                    "- What platforms/channels will be used for distribution?"
+                ),
+            },
+            {
+                "id": "prod_1_plan",
+                "type": "todo",
+                "name": "Create Production Plan",
+                "category": "planning",
+                "instruction": (
+                    "Build a comprehensive production plan:\n"
+                    "1. Define creative concept and narrative structure\n"
+                    "2. Break down into pre-production, production, and post-production phases\n"
+                    "3. Identify required talent, equipment, and locations\n"
+                    "4. Create production schedule with milestones\n"
+                    "5. Plan distribution and promotion strategy\n"
+                    "6. Budget allocation across phases\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "prod_2_develop",
+                "type": "action",
+                "name": "Develop Production Assets",
+                "category": "execution",
+                "instruction": (
+                    "Create production deliverables:\n"
+                    "- Write scripts, outlines, or storyboards\n"
+                    "- Plan shot lists or content schedules\n"
+                    "- Define creative direction (style, tone, mood)\n"
+                    "- Develop brand guidelines or creative briefs\n"
+                    "- Create distribution and marketing strategy"
+                ),
+            },
+            {
+                "id": "prod_3_evaluate",
+                "type": "loop",
+                "name": "Review & Polish",
+                "category": "verification",
+                "instruction": "Review production plan for quality and feasibility.",
+                "max_iterations": 2,
+                "exit_condition": "Production plan is comprehensive and achievable",
+                "steps": [
+                    {
+                        "id": "prod_3_0_check",
+                        "type": "decision",
+                        "name": "Production Review",
+                        "instruction": "Is the creative vision clear? Is the timeline realistic? Is the budget covered? Are all phases planned? If gaps → refine.",
+                        "exit_condition": "Plan is complete → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "prod_4_deliver",
+                "type": "action",
+                "name": "Deliver Production Package",
+                "category": "output",
+                "instruction": (
+                    "Present the production package:\n"
+                    "- Creative concept and vision\n"
+                    "- Production timeline and milestones\n"
+                    "- Scripts, outlines, or storyboards\n"
+                    "- Resource and budget breakdown\n"
+                    "- Distribution and marketing plan\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Production plan complete>>>"
+                ),
+            },
+        ],
+    },
 ]
 
 
