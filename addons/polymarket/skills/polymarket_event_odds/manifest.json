@@ -1,0 +1,16 @@
+{
+  "name": "polymarket_event_odds",
+  "display_name": "Polymarket: Event Odds",
+  "description": "Get detailed odds, orderbook and pricing for a specific Polymarket market.",
+  "description_for_agent": "Get detailed orderbook and pricing for a specific Polymarket market token. Parameters: token_id (string, required — the CLOB token ID from event listing). Returns current bid/ask prices, spread, orderbook depth. Use this when user wants to see detailed odds or pricing for a specific market before placing a bet.",
+  "category": "polymarket",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "token_id": { "type": "string", "description": "CLOB token ID of the market outcome" }
+    },
+    "required": ["token_id"]
+  }
+}

@@ -148,6 +148,16 @@ frontend/
 - Task schedule: human-friendly dropdowns that generate cron expressions
 - API calls via Axios instance at `frontend/src/api/index.js` with auto token refresh
 
+### Addons
+- All addons live in `addons/<addon_id>/` at the project root (backend, frontend, skills, protocols in one folder)
+- Each addon has `manifest.json` defining id, name, icon, settings, skills, protocols, route
+- `backend/app/services/addon_loader.py` auto-discovers addons: registers routers, seeds settings/protocols/skills on startup
+- Addon Vue pages import from frontend via `@src/` alias (e.g., `import api from '@src/api'`)
+- **Every addon page MUST have a "Settings" tab** (not a dialog) as the last tab — this is the standard pattern for addon settings. The tab loads addon-specific settings from `settingsStore.systemSettings` and saves via `settingsStore.updateSystemSetting(key, value)`
+- Addon list pages should support both card and table view modes (persisted in localStorage)
+- Addons management page is a tab inside Settings (`/settings/addons`) — not a standalone page
+- Sidebar ADDONS section only shows enabled addons; the section is hidden when no addons are enabled
+
 ## Environment
 
 - `.env.example` is the template (committed to git)

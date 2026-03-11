@@ -1,0 +1,13 @@
+{
+  "name": "polymarket_positions",
+  "display_name": "Polymarket: Positions",
+  "description": "Get current open positions and balances on Polymarket.",
+  "description_for_agent": "Get current open positions on Polymarket. REQUIRES API KEY. No parameters needed. Returns list of current holdings with token IDs, sizes, and current values. Use this when user asks about their current bets or portfolio.",
+  "category": "polymarket",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  }
+}

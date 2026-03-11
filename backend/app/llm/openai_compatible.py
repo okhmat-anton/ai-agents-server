@@ -29,7 +29,7 @@ class OpenAICompatibleProvider:
         if params.stop:
             payload["stop"] = params.stop
 
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=600) as client:
             resp = await client.post(
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
@@ -60,7 +60,7 @@ class OpenAICompatibleProvider:
         if params.stop:
             payload["stop"] = params.stop
 
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=600) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/v1/chat/completions",

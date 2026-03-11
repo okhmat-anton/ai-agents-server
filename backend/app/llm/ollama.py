@@ -41,7 +41,7 @@ class OllamaProvider:
 
         async with _ollama_semaphore:
             logger.debug(f"Ollama chat: model={model}, messages={len(messages)}")
-            async with httpx.AsyncClient(timeout=300) as client:
+            async with httpx.AsyncClient(timeout=600) as client:
                 resp = await client.post(f"{self.base_url}/api/chat", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
@@ -73,7 +73,7 @@ class OllamaProvider:
         if params.stop:
             payload["options"]["stop"] = params.stop
 
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=600) as client:
             async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as resp:
                 async for line in resp.aiter_lines():
                     if line:

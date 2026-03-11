@@ -52,8 +52,10 @@ from app.api.global_events import router as global_events_router
 from app.api.ideas import router as ideas_router
 from app.api.notes import router as notes_router
 from app.api.backups import router as backups_router
+from app.api.addons import router as addons_api_router
 
 from app.services.ollama_watchdog import start_watchdog, stop_watchdog
+from app.services.addon_loader import register_addon_routers, seed_addon_settings, seed_addon_protocols, seed_addon_skills
 
 settings = get_settings()
 
@@ -113,6 +115,11 @@ async def lifespan(app: FastAPI):
     # Start backup scheduler
     from app.services.backup_scheduler import start_scheduler as start_backup_scheduler
     await start_backup_scheduler()
+
+    # Load addons (settings, protocols, skills)
+    await seed_addon_settings(mongodb)
+    await seed_addon_protocols(mongodb)
+    await seed_addon_skills(mongodb)
 
     yield
 
@@ -209,6 +216,10 @@ app.include_router(global_events_router)
 app.include_router(ideas_router)
 app.include_router(notes_router)
 app.include_router(backups_router)
+app.include_router(addons_api_router)
+
+# Register addon routers (from addons/ directory)
+register_addon_routers(app)
 
 # Serve uploaded files (avatars, etc.) from data/agents/ directory
 _uploads_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "agents")

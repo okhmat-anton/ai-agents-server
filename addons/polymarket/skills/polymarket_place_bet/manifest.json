@@ -1,0 +1,19 @@
+{
+  "name": "polymarket_place_bet",
+  "display_name": "Polymarket: Place Bet",
+  "description": "Place a bet (limit order) on Polymarket prediction market.",
+  "description_for_agent": "Place a bet on Polymarket. REQUIRES API KEY. Parameters: token_id (string, required — CLOB token ID), side (string, BUY or SELL, default BUY), price (float, 0.01-0.99 — the probability/price to buy at), size (float, amount in USDC). IMPORTANT: Always confirm with user before placing a bet. Show them the event, odds, and amount first. Returns order confirmation with order ID.",
+  "category": "polymarket",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "token_id": { "type": "string", "description": "CLOB token ID of the outcome" },
+      "side": { "type": "string", "description": "BUY or SELL (default: BUY)" },
+      "price": { "type": "number", "description": "Price/probability (0.01-0.99)" },
+      "size": { "type": "number", "description": "Amount in USDC" }
+    },
+    "required": ["token_id", "price", "size"]
+  }
+}

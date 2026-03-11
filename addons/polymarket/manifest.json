@@ -1,0 +1,39 @@
+{
+  "id": "polymarket",
+  "name": "Polymarket",
+  "description": "Prediction market integration — view events, odds, place bets and track betting history via Polymarket API",
+  "icon": "mdi-chart-timeline-variant",
+  "version": "1.0.0",
+  "author": "system",
+  "route": {
+    "path": "/addons/polymarket",
+    "name": "Polymarket",
+    "title": "Polymarket"
+  },
+  "settings": [
+    {
+      "key": "polymarket_api_key",
+      "description": "Polymarket API key for placing bets and accessing account data",
+      "default": ""
+    },
+    {
+      "key": "polymarket_api_secret",
+      "description": "Polymarket API secret",
+      "default": ""
+    },
+    {
+      "key": "polymarket_passphrase",
+      "description": "Polymarket API passphrase",
+      "default": ""
+    }
+  ],
+  "protocols": ["gambling_addict"],
+  "skills": [
+    "polymarket_events",
+    "polymarket_event_odds",
+    "polymarket_place_bet",
+    "polymarket_positions",
+    "polymarket_history",
+    "polymarket_balance"
+  ]
+}

@@ -345,9 +345,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '../api'
 import ProtocolFlow from '../components/ProtocolFlow.vue'
+
+const route = useRoute()
 
 const protocols = ref([])
 const loading = ref(false)
@@ -524,7 +527,21 @@ const doDelete = async () => {
   await load()
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  // Handle ?edit=<id> query param (used by addon pages to open edit dialog)
+  if (route.query.edit) {
+    const proto = protocols.value.find(p => p.id === route.query.edit)
+    if (proto) openEdit(proto)
+  }
+})
+
+watch(() => route.query.edit, (editId) => {
+  if (editId) {
+    const proto = protocols.value.find(p => p.id === editId)
+    if (proto) openEdit(proto)
+  }
+})
 </script>
 
 <style scoped>

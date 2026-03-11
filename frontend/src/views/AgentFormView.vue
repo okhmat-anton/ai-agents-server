@@ -453,6 +453,21 @@ onMounted(async () => {
     protocolsList.value = data
   } catch { protocolsList.value = [] }
 
+  // Pre-select protocols from query params (e.g. ?protocol=Gambling+Addict)
+  if (!isEdit.value && route.query.protocol) {
+    const names = Array.isArray(route.query.protocol) ? route.query.protocol : [route.query.protocol]
+    const matchedIds = protocolsList.value
+      .filter(p => names.includes(p.name))
+      .map(p => p.id)
+    if (matchedIds.length) {
+      form.value.protocol_ids = matchedIds
+      // Auto-set main protocol if only one
+      if (matchedIds.length === 1) {
+        form.value.thinking_protocol_id = matchedIds[0]
+      }
+    }
+  }
+
   if (isEdit.value) {
     const agent = await agentsStore.fetchAgent(route.params.id)
     // Copy scalar fields

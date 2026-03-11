@@ -52,6 +52,20 @@
           :value="item.path"
           rounded="xl"
         />
+        <!-- Addons -->
+        <template v-if="addonsNav.length">
+          <v-divider class="my-2" />
+          <v-list-subheader v-if="!rail">ADDONS</v-list-subheader>
+          <v-list-item
+            v-for="item in addonsNav"
+            :key="item.path"
+            :to="item.path"
+            :prepend-icon="item.icon"
+            :title="item.title"
+            :value="item.path"
+            rounded="xl"
+          />
+        </template>
       </v-list>
       <template #append>
         <v-list density="compact" nav>
@@ -206,7 +220,7 @@ const navItems = [
     icon: 'mdi-account-heart',
     title: 'Creator',
     children: [
-      { path: '/creator', icon: 'mdi-account', title: 'Context' },
+      { path: '/creator/context', icon: 'mdi-account', title: 'Context' },
       { path: '/creator/goals', icon: 'mdi-flag-variant', title: 'Goals' },
       { path: '/creator/dreams', icon: 'mdi-creation', title: 'Dreams' },
       { path: '/creator/ideas', icon: 'mdi-lightbulb-on', title: 'Ideas' },
@@ -225,6 +239,8 @@ const navItems = [
   { path: '/models', icon: 'mdi-brain', title: 'Models' },
 ]
 
+const addonsNav = ref([])
+
 const settingsNav = [
   { path: '/settings', icon: 'mdi-cog', title: 'Settings' },
   { path: '/backups', icon: 'mdi-backup-restore', title: 'Backups' },
@@ -235,6 +251,12 @@ onMounted(() => {
   // Load agents for global text selection popup
   agentsStore.fetchAgents().then(() => {
     globalAgents.value = agentsStore.agents || []
+  }).catch(() => {})
+  // Load enabled addons for nav
+  api.get('/addons').then(({ data }) => {
+    addonsNav.value = data
+      .filter(a => a.enabled && a.route)
+      .map(a => ({ path: a.route.path, icon: a.icon || 'mdi-puzzle', title: a.route.title || a.name }))
   }).catch(() => {})
 })
 

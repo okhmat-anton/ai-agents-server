@@ -1,0 +1,15 @@
+{
+  "name": "polymarket_history",
+  "display_name": "Polymarket: Bet History",
+  "description": "Get order/bet history from Polymarket.",
+  "description_for_agent": "Get bet/order history from Polymarket. REQUIRES API KEY. Parameters: status (string, optional — 'all', 'live', 'matched'). Returns list of orders with prices, sizes, dates. Use this when user asks about their betting history, past orders, or track record.",
+  "category": "polymarket",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "status": { "type": "string", "description": "Order status filter: all, live, matched (default: all)" }
+    }
+  }
+}

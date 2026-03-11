@@ -1,0 +1,13 @@
+{
+  "name": "polymarket_balance",
+  "display_name": "Polymarket: Balance",
+  "description": "Get current USDC balance on Polymarket.",
+  "description_for_agent": "Get current USDC balance on Polymarket. REQUIRES API KEY. No parameters needed. Returns available balance for betting. Use this when user asks about their balance or available funds.",
+  "category": "polymarket",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  }
+}

@@ -43,6 +43,7 @@ const routes = [
       { path: 'settings/terminal', name: 'SettingsTerminal', component: () => import('../views/SettingsView.vue') },
       { path: 'settings/system', name: 'SettingsSystem', component: () => import('../views/SettingsView.vue') },
       { path: 'settings/system-logs', name: 'SettingsSystemLogs', component: () => import('../views/SettingsView.vue') },
+      { path: 'settings/addons', name: 'SettingsAddons', component: () => import('../views/SettingsView.vue') },
       { path: 'settings/models', redirect: '/models' },
       { path: 'settings/api-keys', name: 'ApiKeys', component: () => import('../views/ApiKeysView.vue') },
 
@@ -64,12 +65,17 @@ const routes = [
       { path: 'notes', name: 'Notes', component: () => import('../views/NotesView.vue') },
       { path: 'projects', name: 'Projects', component: () => import('../views/ProjectsView.vue') },
       { path: 'projects/:slug', name: 'ProjectDetail', component: () => import('../views/ProjectDetailView.vue') },
-      { path: 'creator', name: 'Creator', component: () => import('../views/CreatorView.vue') },
+      { path: 'creator', redirect: '/creator/context' },
+      { path: 'creator/context', name: 'Creator', component: () => import('../views/CreatorView.vue') },
       { path: 'creator/goals', name: 'CreatorGoals', component: () => import('../views/CreatorView.vue') },
       { path: 'creator/dreams', name: 'CreatorDreams', component: () => import('../views/CreatorView.vue') },
       { path: 'creator/ideas', redirect: '/ideas' },
       { path: 'creator/notes', redirect: '/notes' },
       { path: 'backups', name: 'Backups', component: () => import('../views/BackupsView.vue') },
+
+      // Addons
+      { path: 'addons', redirect: '/settings/addons' },
+      { path: 'addons/polymarket', name: 'Polymarket', component: () => import('@addons/polymarket/frontend/PolymarketView.vue') },
     ],
   },
 ]
