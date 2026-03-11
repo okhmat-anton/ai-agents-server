@@ -14,6 +14,15 @@
       >
         Discuss ({{ selectedItems.length }})
       </v-btn>
+      <v-btn
+        color="deep-purple-accent-2"
+        variant="tonal"
+        prepend-icon="mdi-lightbulb-on"
+        class="mr-3"
+        @click="openSuggestDialog"
+      >
+        Suggest Ideas
+      </v-btn>
       <v-btn color="amber-darken-2" prepend-icon="mdi-plus" @click="openCreateDialog">
         New Idea
       </v-btn>
@@ -325,6 +334,163 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Suggest Ideas Dialog -->
+    <v-dialog v-model="suggestDialog" max-width="700" scrollable>
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2" color="deep-purple-accent-2">mdi-lightbulb-on</v-icon>
+          Suggest Ideas
+        </v-card-title>
+        <v-card-text>
+          <v-select
+            v-model="suggestAgent"
+            :items="agentOptions"
+            item-title="name"
+            item-value="id"
+            label="Select Agent"
+            variant="outlined"
+            density="compact"
+            prepend-inner-icon="mdi-robot"
+            class="mb-3"
+            :rules="[v => !!v || 'Agent is required']"
+          />
+
+          <v-textarea
+            v-model="suggestTopic"
+            label="Topic (optional)"
+            placeholder="What should the agent think about?"
+            variant="outlined"
+            density="compact"
+            rows="2"
+            class="mb-3"
+          />
+
+          <div class="text-subtitle-2 mb-2">System Context:</div>
+          <div class="d-flex flex-wrap ga-1 mb-3">
+            <v-checkbox
+              v-for="ctx in contextOptions"
+              :key="ctx.value"
+              v-model="suggestContextTypes"
+              :label="ctx.label"
+              :value="ctx.value"
+              density="compact"
+              hide-details
+              class="mr-1"
+              color="deep-purple-accent-2"
+            />
+          </div>
+
+          <!-- AKM Advisor section -->
+          <div v-if="akmConnected" class="mb-3">
+            <div class="text-subtitle-2 mb-2 d-flex align-center">
+              <v-icon size="18" class="mr-1" color="cyan">mdi-cloud-outline</v-icon>
+              AKM Advisor:
+            </div>
+            <div class="d-flex flex-wrap ga-1 mb-2">
+              <v-checkbox
+                v-for="akm in akmContextOptions"
+                :key="akm.value"
+                v-model="suggestAkmTypes"
+                :label="akm.label"
+                :value="akm.value"
+                density="compact"
+                hide-details
+                class="mr-1"
+                color="cyan"
+              />
+            </div>
+          </div>
+
+          <!-- URLs to fetch -->
+          <v-textarea
+            v-model="suggestUrls"
+            label="URLs to fetch (one per line)"
+            placeholder="https://example.com/article&#10;https://another-site.com/page"
+            variant="outlined"
+            density="compact"
+            rows="3"
+            class="mb-1"
+            prepend-inner-icon="mdi-link-variant"
+            hint="Enter URLs separated by Enter — content will be fetched and added to context"
+            persistent-hint
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="suggestDialog = false">Cancel</v-btn>
+          <v-btn
+            color="deep-purple-accent-2"
+            :loading="suggestLoading"
+            :disabled="!suggestAgent"
+            prepend-icon="mdi-head-lightbulb"
+            @click="generateSuggestions"
+          >
+            Think
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Suggest Results Dialog -->
+    <v-dialog v-model="suggestResultsDialog" max-width="750">
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon class="mr-2" color="amber-darken-2">mdi-lightbulb-group</v-icon>
+          Generated Ideas ({{ suggestions.length }})
+        </v-card-title>
+        <v-card-text style="max-height: 500px; overflow-y: auto;">
+          <v-list lines="three">
+            <v-list-item
+              v-for="(s, idx) in suggestions"
+              :key="idx"
+              :class="{ 'bg-green-darken-4': s._accepted }"
+              class="mb-2 rounded"
+              style="border: 1px solid rgba(255,255,255,0.1);"
+            >
+              <template #prepend>
+                <v-chip :color="priorityColor(s.priority)" size="small" variant="tonal" class="mr-2">
+                  <v-icon start size="14">{{ priorityIcon(s.priority) }}</v-icon>
+                  {{ s.priority }}
+                </v-chip>
+              </template>
+              <v-list-item-title class="font-weight-bold text-wrap">{{ s.title }}</v-list-item-title>
+              <v-list-item-subtitle class="text-wrap mt-1">{{ s.description }}</v-list-item-subtitle>
+              <div v-if="s.category" class="mt-1">
+                <v-chip size="x-small" variant="tonal" color="indigo">{{ s.category }}</v-chip>
+              </div>
+              <template #append>
+                <v-btn
+                  v-if="!s._accepted"
+                  icon
+                  size="small"
+                  color="success"
+                  variant="tonal"
+                  :loading="s._saving"
+                  @click="acceptSuggestion(s)"
+                >
+                  <v-icon>mdi-check</v-icon>
+                  <v-tooltip activator="parent" location="top">Accept</v-tooltip>
+                </v-btn>
+                <v-icon v-else color="success" class="ml-2">mdi-check-circle</v-icon>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions>
+          <v-btn
+            variant="tonal"
+            color="success"
+            :disabled="suggestions.every(s => s._accepted)"
+            @click="acceptAllSuggestions"
+          >
+            Accept All
+          </v-btn>
+          <v-spacer />
+          <v-btn @click="suggestResultsDialog = false">Close</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -333,10 +499,12 @@ import { ref, computed, onMounted, inject } from 'vue'
 import api from '../api'
 import { useAgentsStore } from '../stores/agents'
 import { useChatStore } from '../stores/chat'
+import { useSettingsStore } from '../stores/settings'
 
 const showSnackbar = inject('showSnackbar')
 const agentsStore = useAgentsStore()
 const chatStore = useChatStore()
+const settingsStore = useSettingsStore()
 
 // State
 const ideas = ref([])
@@ -363,6 +531,53 @@ const selectedItems = ref([])
 
 const agents = ref([])
 const agentOptions = computed(() => agents.value)
+
+// Suggest ideas state
+const suggestDialog = ref(false)
+const suggestAgent = ref(null)
+const suggestTopic = ref('')
+const suggestLoading = ref(false)
+const suggestResultsDialog = ref(false)
+const suggestions = ref([])
+
+const contextOptions = [
+  { value: 'ideas', label: 'Ideas' },
+  { value: 'notes', label: 'Notes' },
+  { value: 'facts', label: 'Facts' },
+  { value: 'beliefs', label: 'Beliefs' },
+  { value: 'aspirations', label: 'Aspirations' },
+  { value: 'events', label: 'Events' },
+  { value: 'videos', label: 'Videos' },
+  { value: 'projects', label: 'Projects' },
+  { value: 'tasks', label: 'Tasks' },
+  { value: 'analysis', label: 'Analysis' },
+  { value: 'resources', label: 'Resources' },
+]
+
+const akmContextOptions = [
+  { value: 'issues', label: 'Issues' },
+  { value: 'epics', label: 'Epics' },
+  { value: 'sprints', label: 'Sprints' },
+]
+
+// Restore remembered checkbox selections
+const SUGGEST_CTX_KEY = 'ideas_suggest_context_types'
+const SUGGEST_AKM_KEY = 'ideas_suggest_akm_types'
+const savedCtx = localStorage.getItem(SUGGEST_CTX_KEY)
+const savedAkm = localStorage.getItem(SUGGEST_AKM_KEY)
+const suggestContextTypes = ref(
+  savedCtx ? JSON.parse(savedCtx) : ['ideas', 'notes', 'facts']
+)
+const suggestAkmTypes = ref(
+  savedAkm ? JSON.parse(savedAkm) : []
+)
+const suggestUrls = ref('')
+
+// AKM connectivity check
+const akmConnected = computed(() => {
+  const s = settingsStore.systemSettings
+  return !!(s.akm_advisor_api_key?.value && s.akm_advisor_url?.value)
+})
 
 const statuses = [
   { value: 'new', label: 'New', color: 'blue', icon: 'mdi-lightbulb-on-outline' },
@@ -401,7 +616,7 @@ const groupedIdeas = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadIdeas(), loadAgents()])
+  await Promise.all([loadIdeas(), loadAgents(), settingsStore.fetchSystemSettings()])
 })
 
 async function loadAgents() {
@@ -555,5 +770,83 @@ async function discussSelected() {
   } catch (e) {
     showSnackbar?.('Failed to create discussion', 'error')
   }
+}
+
+// ── Suggest Ideas ──────────────────────────────────
+
+function openSuggestDialog() {
+  suggestTopic.value = ''
+  suggestUrls.value = ''
+  suggestDialog.value = true
+}
+
+async function generateSuggestions() {
+  if (!suggestAgent.value) return
+  suggestLoading.value = true
+
+  // Persist checkbox selections
+  localStorage.setItem(SUGGEST_CTX_KEY, JSON.stringify(suggestContextTypes.value))
+  localStorage.setItem(SUGGEST_AKM_KEY, JSON.stringify(suggestAkmTypes.value))
+
+  // Parse URLs from textarea
+  const urls = suggestUrls.value
+    .split('\n')
+    .map(u => u.trim())
+    .filter(u => u && (u.startsWith('http://') || u.startsWith('https://')))
+
+  try {
+    const { data } = await api.post('/ideas/suggest', {
+      agent_id: suggestAgent.value,
+      topic: suggestTopic.value,
+      context_types: suggestContextTypes.value,
+      akm_context_types: suggestAkmTypes.value,
+      urls,
+    })
+    suggestions.value = (data.suggestions || []).map(s => ({
+      ...s,
+      _accepted: false,
+      _saving: false,
+    }))
+    suggestDialog.value = false
+    suggestResultsDialog.value = true
+  } catch (e) {
+    showSnackbar?.(e.response?.data?.detail || 'Failed to generate ideas', 'error')
+  } finally {
+    suggestLoading.value = false
+  }
+}
+
+async function acceptSuggestion(s) {
+  s._saving = true
+  try {
+    const payload = {
+      title: s.title,
+      description: s.description || '',
+      source: 'agent',
+      priority: s.priority || 'medium',
+      status: 'new',
+      category: s.category || null,
+      tags: [],
+    }
+    if (suggestAgent.value) {
+      await api.post(`/agents/${suggestAgent.value}/ideas`, payload)
+    } else {
+      await api.post('/ideas', payload)
+    }
+    s._accepted = true
+    showSnackbar?.('Idea saved', 'success')
+  } catch (e) {
+    showSnackbar?.('Failed to save idea', 'error')
+  } finally {
+    s._saving = false
+  }
+}
+
+async function acceptAllSuggestions() {
+  const pending = suggestions.value.filter(s => !s._accepted)
+  for (const s of pending) {
+    await acceptSuggestion(s)
+  }
+  await loadIdeas()
 }
 </script>

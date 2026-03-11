@@ -1941,6 +1941,188 @@ DEFAULT_PROTOCOLS = [
             },
         ],
     },
+
+    # ═══════════════════════════════════════════════════════════
+    # ACCOUNTANT ORCHESTRATOR (AIS-85)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "Accountant Expert",
+        "description": "Orchestrator for accounting and finance: bookkeeping analysis, tax planning, financial reporting, compliance, and budgeting",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "acct_0_assess",
+                "type": "action",
+                "name": "Assess Financial Situation",
+                "category": "analysis",
+                "instruction": (
+                    "Analyze the financial/accounting context:\n"
+                    "- What is the entity type (individual, LLC, corporation, non-profit)?\n"
+                    "- What is the accounting question (bookkeeping, taxes, reporting, compliance, budgeting)?\n"
+                    "- What jurisdiction and tax regime applies?\n"
+                    "- What accounting standards are relevant (GAAP, IFRS, local statutory)?\n"
+                    "- What is the fiscal period and any upcoming deadlines?\n"
+                    "- What financial data or documents are available?"
+                ),
+            },
+            {
+                "id": "acct_1_plan",
+                "type": "todo",
+                "name": "Create Accounting Plan",
+                "category": "planning",
+                "instruction": (
+                    "Build an accounting action plan:\n"
+                    "1. Identify applicable accounting standards and regulations\n"
+                    "2. Determine required financial statements or reports\n"
+                    "3. List journal entries, adjustments, or calculations needed\n"
+                    "4. Plan tax implications and optimization strategies\n"
+                    "5. Identify compliance requirements and deadlines\n"
+                    "6. Outline verification and reconciliation steps\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "acct_2_execute",
+                "type": "action",
+                "name": "Perform Accounting Work",
+                "category": "execution",
+                "instruction": (
+                    "Execute the accounting tasks:\n"
+                    "- Prepare journal entries with proper debit/credit classification\n"
+                    "- Calculate tax liabilities, deductions, and credits\n"
+                    "- Build financial statements (income statement, balance sheet, cash flow)\n"
+                    "- Perform ratio analysis and financial health assessment\n"
+                    "- Draft budget forecasts or variance analysis\n"
+                    "- Document assumptions and accounting policies applied"
+                ),
+            },
+            {
+                "id": "acct_3_verify",
+                "type": "loop",
+                "name": "Verify & Reconcile",
+                "category": "verification",
+                "instruction": "Review accounting work for accuracy, compliance, and completeness.",
+                "max_iterations": 2,
+                "exit_condition": "All figures reconcile, standards are met, and compliance is verified",
+                "steps": [
+                    {
+                        "id": "acct_3_0_check",
+                        "type": "decision",
+                        "name": "Accuracy Check",
+                        "instruction": "Do debits equal credits? Do totals reconcile? Are tax calculations correct? Are all regulatory requirements addressed? If discrepancies → fix.",
+                        "exit_condition": "All reconciled and compliant → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "acct_4_deliver",
+                "type": "action",
+                "name": "Deliver Financial Report",
+                "category": "output",
+                "instruction": (
+                    "Present the accounting deliverables:\n"
+                    "- Financial statements or reports with clear formatting\n"
+                    "- Tax calculations with supporting schedules\n"
+                    "- Key findings, risks, and recommendations\n"
+                    "- Compliance status and upcoming deadlines\n"
+                    "- Assumptions, limitations, and professional caveats\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:Accounting analysis complete>>>"
+                ),
+            },
+        ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # HR ORCHESTRATOR (AIS-78)
+    # ═══════════════════════════════════════════════════════════
+    {
+        "name": "HR Expert",
+        "description": "Orchestrator for human resources: recruitment, employee relations, policies, compensation, training, and organizational development",
+        "type": "orchestrator",
+        "is_default": False,
+        "steps": [
+            {
+                "id": "hr_0_assess",
+                "type": "action",
+                "name": "Assess HR Situation",
+                "category": "analysis",
+                "instruction": (
+                    "Analyze the HR context:\n"
+                    "- What area of HR is involved (recruitment, onboarding, performance, compensation, policies, training, offboarding)?\n"
+                    "- What is the organizational context (company size, industry, culture)?\n"
+                    "- What are the applicable labor laws and regulations?\n"
+                    "- What is the current team structure and headcount?\n"
+                    "- Are there any urgent issues (conflict, compliance risk, turnover)?\n"
+                    "- What HR systems, processes, or policies already exist?"
+                ),
+            },
+            {
+                "id": "hr_1_plan",
+                "type": "todo",
+                "name": "Create HR Action Plan",
+                "category": "planning",
+                "instruction": (
+                    "Build an HR action plan:\n"
+                    "1. Identify applicable labor laws and compliance requirements\n"
+                    "2. Define success criteria and KPIs for the HR initiative\n"
+                    "3. Outline process steps (recruitment funnel, policy rollout, training program, etc.)\n"
+                    "4. Identify stakeholders and approval processes\n"
+                    "5. Plan timeline and resource allocation\n"
+                    "6. Prepare risk mitigation for legal or cultural issues\n"
+                    "Create a structured todo list for tracking."
+                ),
+            },
+            {
+                "id": "hr_2_execute",
+                "type": "action",
+                "name": "Develop HR Deliverables",
+                "category": "execution",
+                "instruction": (
+                    "Execute the HR work:\n"
+                    "- Draft job descriptions, interview guides, or evaluation rubrics\n"
+                    "- Create or update HR policies and employee handbooks\n"
+                    "- Design compensation and benefits packages\n"
+                    "- Build training programs or development plans\n"
+                    "- Draft employee communications or performance review templates\n"
+                    "- Prepare onboarding/offboarding checklists"
+                ),
+            },
+            {
+                "id": "hr_3_review",
+                "type": "loop",
+                "name": "Review & Compliance Check",
+                "category": "verification",
+                "instruction": "Review HR deliverables for legal compliance, fairness, and organizational fit.",
+                "max_iterations": 2,
+                "exit_condition": "Deliverables are legally compliant, fair, and aligned with organizational values",
+                "steps": [
+                    {
+                        "id": "hr_3_0_check",
+                        "type": "decision",
+                        "name": "Compliance & Fairness Check",
+                        "instruction": "Are all deliverables legally compliant? Are policies fair and nondiscriminatory? Do they align with company culture and values? Are there potential liabilities? If issues → revise.",
+                        "exit_condition": "All compliant and aligned → deliver.",
+                    },
+                ],
+            },
+            {
+                "id": "hr_4_deliver",
+                "type": "action",
+                "name": "Deliver HR Package",
+                "category": "output",
+                "instruction": (
+                    "Present the HR deliverables:\n"
+                    "- Policies, documents, or templates ready for implementation\n"
+                    "- Compliance notes and legal considerations\n"
+                    "- Implementation timeline and rollout plan\n"
+                    "- Key metrics to track success\n"
+                    "- Recommendations for ongoing HR management\n\n"
+                    "Signal completion: <<<DELEGATE_DONE:HR deliverables complete>>>"
+                ),
+            },
+        ],
+    },
 ]
 
 
