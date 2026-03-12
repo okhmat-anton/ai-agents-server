@@ -15,30 +15,72 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// Refresh token deduplication — prevents race condition when multiple
+// requests get 401 simultaneously and all try to refresh at once.
+let isRefreshing = false
+let refreshSubscribers = []
+
+function onRefreshed(newToken) {
+  refreshSubscribers.forEach((cb) => cb(newToken))
+  refreshSubscribers = []
+}
+
+function onRefreshFailed() {
+  refreshSubscribers.forEach((cb) => cb(null))
+  refreshSubscribers = []
+}
+
+function subscribeTokenRefresh(cb) {
+  refreshSubscribers.push(cb)
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    if (error.response?.status === 401) {
+    const originalRequest = error.config
+    if (error.response?.status === 401 && !originalRequest._retry) {
       const refreshToken = localStorage.getItem('refresh_token')
-      if (refreshToken && !error.config._retry) {
-        error.config._retry = true
-        try {
-          const { data } = await axios.post('/api/auth/refresh', {
-            refresh_token: refreshToken,
-          })
-          localStorage.setItem('access_token', data.access_token)
-          localStorage.setItem('refresh_token', data.refresh_token)
-          error.config.headers.Authorization = `Bearer ${data.access_token}`
-          return api(error.config)
-        } catch {
-          localStorage.removeItem('access_token')
-          localStorage.removeItem('refresh_token')
-          router.push('/login')
-        }
-      } else {
+      if (!refreshToken) {
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
         router.push('/login')
+        return Promise.reject(error)
+      }
+
+      if (isRefreshing) {
+        // Another request is already refreshing — wait for it
+        return new Promise((resolve, reject) => {
+          subscribeTokenRefresh((newToken) => {
+            if (newToken) {
+              originalRequest.headers.Authorization = `Bearer ${newToken}`
+              resolve(api(originalRequest))
+            } else {
+              reject(error)
+            }
+          })
+        })
+      }
+
+      originalRequest._retry = true
+      isRefreshing = true
+
+      try {
+        const { data } = await axios.post('/api/auth/refresh', {
+          refresh_token: refreshToken,
+        })
+        localStorage.setItem('access_token', data.access_token)
+        localStorage.setItem('refresh_token', data.refresh_token)
+        originalRequest.headers.Authorization = `Bearer ${data.access_token}`
+        onRefreshed(data.access_token)
+        return api(originalRequest)
+      } catch {
+        onRefreshFailed()
+        localStorage.removeItem('access_token')
+        localStorage.removeItem('refresh_token')
+        router.push('/login')
+        return Promise.reject(error)
+      } finally {
+        isRefreshing = false
       }
     }
     return Promise.reject(error)

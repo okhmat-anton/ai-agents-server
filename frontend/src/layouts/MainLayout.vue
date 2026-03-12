@@ -223,8 +223,6 @@ const navItems = [
       { path: '/creator/context', icon: 'mdi-account', title: 'Context' },
       { path: '/creator/goals', icon: 'mdi-flag-variant', title: 'Goals' },
       { path: '/creator/dreams', icon: 'mdi-creation', title: 'Dreams' },
-      { path: '/creator/ideas', icon: 'mdi-lightbulb-on', title: 'Ideas' },
-      { path: '/creator/notes', icon: 'mdi-note-text', title: 'Notes' },
     ],
   },
   { path: '/agents', icon: 'mdi-robot', title: 'Agents' },
@@ -235,6 +233,7 @@ const navItems = [
   { path: '/facts', icon: 'mdi-check-decagram', title: 'Facts' },
   { path: '/events', icon: 'mdi-calendar-clock', title: 'Events' },
   { path: '/ideas', icon: 'mdi-lightbulb-on', title: 'Ideas' },
+  { path: '/notes', icon: 'mdi-note-text', title: 'Notes' },
   { path: '/projects', icon: 'mdi-folder-wrench', title: 'Projects' },
   { path: '/models', icon: 'mdi-brain', title: 'Models' },
 ]
