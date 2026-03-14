@@ -219,6 +219,57 @@
             Clear All Data
           </v-btn>
         </v-card>
+
+        <!-- Available Skills -->
+        <v-card variant="outlined" class="pa-4 mt-4" style="max-width: 600px">
+          <div class="text-h6 mb-4">Available Skills</div>
+          <p class="text-medium-emphasis mb-4">
+            Skills that agents can use to interact with DARPA Monitor data.
+            Assign them to your agents so they can search and analyze DARPA information.
+          </p>
+
+          <v-card variant="tonal" class="pa-3 mb-3">
+            <div class="d-flex align-center mb-2">
+              <v-icon color="blue" size="20" class="mr-2">mdi-magnify</v-icon>
+              <span class="text-subtitle-1 font-weight-bold">darpa_search</span>
+              <v-chip size="x-small" variant="outlined" color="blue" class="ml-2">research</v-chip>
+            </div>
+            <div class="text-body-2 mb-2">
+              Search DARPA opportunities, programs, news, and events stored from darpa.mil monitoring.
+            </div>
+            <div class="text-caption text-medium-emphasis mb-1">Parameters:</div>
+            <v-table density="compact" class="text-body-2">
+              <thead>
+                <tr>
+                  <th class="text-left" style="width: 120px">Name</th>
+                  <th class="text-left" style="width: 80px">Type</th>
+                  <th class="text-left">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>query</code></td>
+                  <td>string</td>
+                  <td>Search text to find in DARPA items (titles, body, summary)</td>
+                </tr>
+                <tr>
+                  <td><code>category</code></td>
+                  <td>string</td>
+                  <td>Filter by category: opportunities, programs, news, or events. Leave empty for all</td>
+                </tr>
+                <tr>
+                  <td><code>limit</code></td>
+                  <td>integer</td>
+                  <td>Maximum number of results to return (default: 20)</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </v-card>
+
+          <v-alert type="info" variant="tonal" density="compact">
+            To use this skill, add <strong>darpa_search</strong> to an agent's skill list in the Agents settings page.
+          </v-alert>
+        </v-card>
       </v-window-item>
     </v-window>
 
@@ -560,7 +611,7 @@ export default {
     // Load settings
     const settingsStore = useSettingsStore()
     await settingsStore.fetchSystemSettings()
-    this.scrapeFrequency = settingsStore.systemSettings?.darpa_scrape_frequency || 'daily'
+    this.scrapeFrequency = settingsStore.systemSettings?.darpa_scrape_frequency?.value || 'daily'
 
     await Promise.all([
       this.loadStats(),

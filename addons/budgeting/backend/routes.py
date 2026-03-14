@@ -41,7 +41,10 @@ class BudgetEntryCreate(BaseModel):
     category: str = ""
     is_recurring: bool = True
     is_paid: bool = False
+    is_credit_card: bool = False
+    is_daily: bool = False
     month_key: str = Field("", description="YYYY-MM format, auto-set if empty")
+    day_of_month: Optional[int] = Field(None, ge=1, le=31, description="Day of month for this payment/income")
     notes: str = ""
 
 
@@ -51,13 +54,16 @@ class BudgetEntryUpdate(BaseModel):
     category: Optional[str] = None
     is_recurring: Optional[bool] = None
     is_paid: Optional[bool] = None
+    is_credit_card: Optional[bool] = None
+    is_daily: Optional[bool] = None
+    day_of_month: Optional[int] = Field(None, ge=1, le=31)
     notes: Optional[str] = None
 
 
 class BudgetAccountCreate(BaseModel):
     name: str
+    purpose: str = ""  # What the account is for
     balance: float = 0.0
-    is_credit_card: bool = False
     payment_date: Optional[int] = None  # Day of month
     notes: str = ""
     sort_order: int = 0
@@ -65,8 +71,8 @@ class BudgetAccountCreate(BaseModel):
 
 class BudgetAccountUpdate(BaseModel):
     name: Optional[str] = None
+    purpose: Optional[str] = None
     balance: Optional[float] = None
-    is_credit_card: Optional[bool] = None
     payment_date: Optional[int] = None
     notes: Optional[str] = None
     sort_order: Optional[int] = None
@@ -74,8 +80,10 @@ class BudgetAccountUpdate(BaseModel):
 
 class BudgetLoanCreate(BaseModel):
     bank: str
+    purpose: str = ""  # What the loan is for
     original_debt: float = 0.0
     remaining_debt: float
+    credit_limit: float = 0.0  # Credit limit (for credit lines)
     monthly_payment: float
     payment_date: Optional[int] = None  # Day of month
     notes: str = ""
@@ -84,8 +92,10 @@ class BudgetLoanCreate(BaseModel):
 
 class BudgetLoanUpdate(BaseModel):
     bank: Optional[str] = None
+    purpose: Optional[str] = None
     original_debt: Optional[float] = None
     remaining_debt: Optional[float] = None
+    credit_limit: Optional[float] = None
     monthly_payment: Optional[float] = None
     payment_date: Optional[int] = None
     notes: Optional[str] = None
@@ -181,7 +191,7 @@ async def list_entries(
     query: dict = {"month_key": mk}
     if type:
         query["type"] = type
-    items = await db[ENTRIES_COL].find(query, {"_id": 0}).sort("sort_order", 1).to_list(1000)
+    items = await db[ENTRIES_COL].find(query, {"_id": 0}).sort([("is_daily", 1), ("day_of_month", 1), ("sort_order", 1)]).to_list(1000)
     return {"items": items, "month_key": mk}
 
 
@@ -198,22 +208,56 @@ async def create_entry(
     )
     next_order = (last.get("sort_order", 0) + 1) if last else 0
 
-    doc = {
-        "id": _make_id(),
-        "type": body.type,
-        "name": body.name,
-        "amount": body.amount,
-        "category": body.category,
-        "is_recurring": body.is_recurring,
-        "is_paid": body.is_paid,
-        "month_key": mk,
-        "notes": body.notes,
-        "sort_order": next_order,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db[ENTRIES_COL].insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    if body.is_daily:
+        # Create one entry per day of the month
+        import calendar as cal_mod
+        year, month = map(int, mk.split("-"))
+        days_in_month = cal_mod.monthrange(year, month)[1]
+        daily_group = _make_id()
+        docs = []
+        for day in range(1, days_in_month + 1):
+            doc = {
+                "id": _make_id(),
+                "type": body.type,
+                "name": body.name,
+                "amount": body.amount,
+                "category": body.category,
+                "is_recurring": body.is_recurring,
+                "is_paid": False,
+                "is_credit_card": body.is_credit_card,
+                "is_daily": True,
+                "daily_group": daily_group,
+                "month_key": mk,
+                "day_of_month": day,
+                "notes": body.notes,
+                "sort_order": next_order,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            docs.append(doc)
+        await db[ENTRIES_COL].insert_many(docs)
+        for d in docs:
+            d.pop("_id", None)
+        return {"daily_group": daily_group, "entries_created": len(docs), "first_entry": docs[0]}
+    else:
+        doc = {
+            "id": _make_id(),
+            "type": body.type,
+            "name": body.name,
+            "amount": body.amount,
+            "category": body.category,
+            "is_recurring": body.is_recurring,
+            "is_paid": body.is_paid,
+            "is_credit_card": body.is_credit_card,
+            "is_daily": False,
+            "month_key": mk,
+            "day_of_month": body.day_of_month,
+            "notes": body.notes,
+            "sort_order": next_order,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db[ENTRIES_COL].insert_one(doc)
+        doc.pop("_id", None)
+        return doc
 
 
 @router.patch("/entries/{entry_id}")
@@ -222,7 +266,7 @@ async def update_entry(
     body: BudgetEntryUpdate,
     db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    updates = body.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(400, "No fields to update")
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -261,6 +305,44 @@ async def delete_entry(
     return {"ok": True}
 
 
+# ── Daily Group Operations ──────────────────────────────────────────
+
+@router.delete("/entries/daily-group/{group_id}")
+async def delete_daily_group(
+    group_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Delete all entries in a daily group."""
+    result = await db[ENTRIES_COL].delete_many({"daily_group": group_id})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Daily group not found")
+    return {"ok": True, "deleted": result.deleted_count}
+
+
+@router.patch("/entries/daily-group/{group_id}")
+async def update_daily_group(
+    group_id: str,
+    body: BudgetEntryUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Update shared fields for all entries in a daily group."""
+    updates = body.model_dump(exclude_unset=True)
+    group_fields = {}
+    for k in ("name", "category", "notes", "is_recurring", "is_credit_card"):
+        if k in updates:
+            group_fields[k] = updates[k]
+    if not group_fields:
+        raise HTTPException(400, "No group-level fields to update")
+    group_fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+    result = await db[ENTRIES_COL].update_many(
+        {"daily_group": group_id},
+        {"$set": group_fields},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Daily group not found")
+    return {"ok": True, "updated": result.matched_count}
+
+
 # ── Month Transition ────────────────────────────────────────────────
 
 @router.post("/months/transition")
@@ -295,8 +377,16 @@ async def transition_month(
     if not source_entries:
         return {"message": f"No recurring entries in {source_month}", "created": 0}
 
+    import calendar as cal_mod
+    t_year, t_month = map(int, target_month.split("-"))
+    t_days = cal_mod.monthrange(t_year, t_month)[1]
+
     new_entries = []
+    daily_group_map = {}  # Map old daily_group IDs to new ones
     for entry in source_entries:
+        # Skip daily entries for days that don't exist in target month
+        if entry.get("is_daily") and entry.get("day_of_month") and entry["day_of_month"] > t_days:
+            continue
         new_entry = {
             **entry,
             "id": _make_id(),
@@ -305,8 +395,16 @@ async def transition_month(
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         new_entry.pop("updated_at", None)
+        # Re-map daily group IDs so each month has its own groups
+        if entry.get("daily_group"):
+            old_group = entry["daily_group"]
+            if old_group not in daily_group_map:
+                daily_group_map[old_group] = _make_id()
+            new_entry["daily_group"] = daily_group_map[old_group]
         new_entries.append(new_entry)
 
+    if not new_entries:
+        return {"message": "No entries to create", "created": 0}
     await db[ENTRIES_COL].insert_many(new_entries)
     return {"message": f"Created {len(new_entries)} entries for {target_month}", "created": len(new_entries)}
 
@@ -455,7 +553,7 @@ async def delete_account(
 async def list_loans(
     db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    items = await db[LOANS_COL].find({}, {"_id": 0}).sort("sort_order", 1).to_list(100)
+    items = await db[LOANS_COL].find({}, {"_id": 0}).sort([("payment_date", 1), ("sort_order", 1)]).to_list(100)
     return items
 
 
@@ -497,7 +595,131 @@ async def delete_loan(
     return {"ok": True}
 
 
+@router.patch("/loans/{loan_id}/toggle-paid")
+async def toggle_loan_paid(
+    loan_id: str,
+    month_key: Optional[str] = Query(None, description="YYYY-MM"),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Toggle loan payment paid status for a specific month."""
+    mk = month_key or _current_month_key()
+    doc = await db[LOANS_COL].find_one({"id": loan_id})
+    if not doc:
+        raise HTTPException(404, "Loan not found")
+    paid_months = doc.get("paid_months", [])
+    if mk in paid_months:
+        paid_months.remove(mk)
+        is_paid = False
+    else:
+        paid_months.append(mk)
+        is_paid = True
+    await db[LOANS_COL].update_one(
+        {"id": loan_id},
+        {"$set": {"paid_months": paid_months, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"id": loan_id, "month_key": mk, "is_paid": is_paid}
+
+
 # ── Agent-Readable Summary ──────────────────────────────────────────
+
+@router.get("/calendar")
+async def get_calendar(
+    month_key: Optional[str] = Query(None),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """
+    Get calendar data for a month: all entries and loan payments organized by day,
+    with running balance calculation.
+    """
+    import calendar as cal
+
+    mk = month_key or _current_month_key()
+    year, month = map(int, mk.split("-"))
+    days_in_month = cal.monthrange(year, month)[1]
+
+    entries = await db[ENTRIES_COL].find(
+        {"month_key": mk}, {"_id": 0}
+    ).to_list(1000)
+    loans = await db[LOANS_COL].find({}, {"_id": 0}).to_list(100)
+    accounts = await db[ACCOUNTS_COL].find({}, {"_id": 0}).to_list(100)
+
+    # Starting balance = sum of all account balances
+    starting_balance = sum(a.get("balance", 0) for a in accounts)
+
+    # Build day map: {day: [events]}
+    day_map: dict[int, list] = {d: [] for d in range(1, days_in_month + 1)}
+    # Unscheduled items (no day_of_month)
+    unscheduled = []
+
+    for e in entries:
+        day = e.get("day_of_month")
+        item = {
+            "id": e.get("id"),
+            "name": e.get("name", ""),
+            "amount": e.get("amount", 0),
+            "type": e.get("type", "expense"),
+            "category": e.get("category", ""),
+            "is_paid": e.get("is_paid", False),
+            "is_recurring": e.get("is_recurring", False),
+            "is_daily": e.get("is_daily", False),
+            "daily_group": e.get("daily_group"),
+            "source": "entry",
+        }
+        if day and 1 <= day <= days_in_month:
+            day_map[day].append(item)
+        else:
+            unscheduled.append(item)
+
+    # Auto-add loan payments to calendar
+    for loan in loans:
+        day = loan.get("payment_date")
+        paid_months = loan.get("paid_months", [])
+        item = {
+            "id": f"loan_{loan.get('id', '')}",
+            "name": f"Loan: {loan.get('bank', '')}",
+            "amount": loan.get("monthly_payment", 0),
+            "type": "expense",
+            "category": "Loan Payment",
+            "is_paid": mk in paid_months,
+            "is_recurring": True,
+            "source": "loan",
+            "purpose": loan.get("purpose", ""),
+        }
+        if day and 1 <= day <= days_in_month:
+            day_map[day].append(item)
+        else:
+            unscheduled.append(item)
+
+    # Calculate running balance per day
+    running = starting_balance
+    # First, subtract unscheduled expenses and add unscheduled income
+    # (treat them as already applied to balance)
+    calendar_days = []
+    # Compute daily projected balance
+    running = starting_balance
+    for d in range(1, days_in_month + 1):
+        day_income = sum(i["amount"] for i in day_map[d] if i["type"] == "income")
+        day_expense = sum(i["amount"] for i in day_map[d] if i["type"] == "expense")
+        running = running + day_income - day_expense
+        calendar_days.append({
+            "day": d,
+            "items": day_map[d],
+            "income": round(day_income, 2),
+            "expense": round(day_expense, 2),
+            "balance": round(running, 2),
+        })
+
+    return {
+        "month_key": mk,
+        "year": year,
+        "month": month,
+        "days_in_month": days_in_month,
+        "first_weekday": cal.monthrange(year, month)[0],  # 0=Mon, 6=Sun
+        "starting_balance": round(starting_balance, 2),
+        "days": calendar_days,
+        "unscheduled": unscheduled,
+    }
+
 
 @router.get("/agent-summary")
 async def agent_summary(
@@ -530,7 +752,8 @@ async def agent_summary(
         for e in income_entries:
             paid = "PAID" if e.get("is_paid") else "UNPAID"
             rec = "recurring" if e.get("is_recurring") else "one-time"
-            lines.append(f"  [{paid}] {e['name']}: ${e['amount']:,.2f} ({e.get('category', '')}, {rec})")
+            day = f" (day {e['day_of_month']})" if e.get("day_of_month") else ""
+            lines.append(f"  [{paid}] {e['name']}: ${e['amount']:,.2f} ({e.get('category', '')}, {rec}){day}")
 
     # Expense breakdown
     expense_entries = [e for e in entries if e.get("type") == "expense"]
@@ -538,8 +761,10 @@ async def agent_summary(
         lines.append("--- Expenses ---")
         for e in expense_entries:
             paid = "PAID" if e.get("is_paid") else "UNPAID"
-            rec = "recurring" if e.get("is_recurring") else "one-time"
-            lines.append(f"  [{paid}] {e['name']}: ${e['amount']:,.2f} ({e.get('category', '')}, {rec})")
+            rec = "daily" if e.get("is_daily") else ("recurring" if e.get("is_recurring") else "one-time")
+            day = f" (day {e['day_of_month']})" if e.get("day_of_month") else ""
+            daily_tag = " [DAILY]" if e.get("is_daily") else ""
+            lines.append(f"  [{paid}] {e['name']}: ${e['amount']:,.2f} ({e.get('category', '')}, {rec}){day}{daily_tag}")
 
     # Category summary
     if summary["expense_by_category"]:
@@ -553,9 +778,9 @@ async def agent_summary(
         lines.append("")
         lines.append("--- Accounts ---")
         for a in accounts:
-            cc = " [Credit Card]" if a.get("is_credit_card") else ""
             pd = f" (payment day: {a['payment_date']})" if a.get("payment_date") else ""
-            lines.append(f"  {a['name']}: ${a.get('balance', 0):,.2f}{cc}{pd}")
+            purpose = f" — {a['purpose']}" if a.get("purpose") else ""
+            lines.append(f"  {a['name']}: ${a.get('balance', 0):,.2f}{pd}{purpose}")
 
     # Loans
     if loans:
@@ -563,6 +788,10 @@ async def agent_summary(
         lines.append("--- Loans ---")
         for l in loans:
             pd = f" (payment day: {l['payment_date']})" if l.get("payment_date") else ""
-            lines.append(f"  {l['bank']}: debt ${l.get('remaining_debt', 0):,.2f}, monthly ${l.get('monthly_payment', 0):,.2f}{pd}")
+            purpose = f" — {l['purpose']}" if l.get("purpose") else ""
+            limit_str = f", limit ${l['credit_limit']:,.2f}" if l.get("credit_limit") else ""
+            mp = l.get("monthly_payment", 0)
+            remaining_payments = f", ~{int(l['remaining_debt'] / mp)} payments left" if mp > 0 else ""
+            lines.append(f"  {l['bank']}: debt ${l.get('remaining_debt', 0):,.2f}, monthly ${mp:,.2f}{limit_str}{remaining_payments}{pd}{purpose}")
 
     return {"summary": "\n".join(lines)}

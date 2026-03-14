@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div style="padding-bottom: 80px;">
     <!-- Header -->
     <div class="d-flex align-center mb-4">
       <v-icon size="32" color="teal-accent-3" class="mr-3">mdi-wallet-outline</v-icon>
@@ -51,6 +51,10 @@
         <v-icon start>mdi-cash-register</v-icon>
         Budget
       </v-tab>
+      <v-tab value="calendar">
+        <v-icon start>mdi-calendar-month</v-icon>
+        Calendar
+      </v-tab>
       <v-tab value="settings">
         <v-icon start>mdi-cog</v-icon>
         Settings
@@ -92,6 +96,7 @@
                   </template>
                   <v-list-item-title :class="item.is_paid ? 'text-decoration-line-through text-medium-emphasis' : ''">
                     {{ item.name }}
+                    <v-chip v-if="item.day_of_month" size="x-small" color="teal" variant="tonal" class="ml-1">{{ item.day_of_month }}th</v-chip>
                   </v-list-item-title>
                   <v-list-item-subtitle>
                     <v-chip size="x-small" variant="text" class="px-0">{{ item.category || 'No category' }}</v-chip>
@@ -118,7 +123,7 @@
                 <v-icon color="red" class="mr-2">mdi-arrow-up-bold</v-icon>
                 <span class="text-h6">Expenses</span>
                 <v-spacer />
-                <span class="text-h6 text-red">${{ fmt(totalExpense) }}</span>
+                <span class="text-h6 text-red">${{ fmt(totalExpenseWithLoans) }}</span>
               </div>
 
               <div v-if="expenseEntries.length === 0" class="text-center text-medium-emphasis py-4">
@@ -142,10 +147,12 @@
                   </template>
                   <v-list-item-title :class="item.is_paid ? 'text-decoration-line-through text-medium-emphasis' : ''">
                     {{ item.name }}
+                    <v-chip v-if="item.day_of_month" size="x-small" color="teal" variant="tonal" class="ml-1">{{ item.day_of_month }}th</v-chip>
                   </v-list-item-title>
                   <v-list-item-subtitle>
                     <v-chip size="x-small" variant="text" class="px-0">{{ item.category || 'No category' }}</v-chip>
                     <v-icon v-if="item.is_recurring" size="12" class="ml-1" title="Recurring">mdi-repeat</v-icon>
+                    <v-chip v-if="item.is_credit_card" size="x-small" color="orange" variant="tonal" class="ml-1">CC</v-chip>
                   </v-list-item-subtitle>
                   <template #append>
                     <span class="text-red font-weight-bold mr-2">${{ fmt(item.amount) }}</span>
@@ -158,6 +165,43 @@
               <v-btn block variant="tonal" color="red" class="mt-2" prepend-icon="mdi-plus" @click="openAddEntry('expense')">
                 Add Expense
               </v-btn>
+
+              <!-- Auto loan payments -->
+              <div v-if="loans.length" class="mt-3">
+                <v-divider class="mb-2" />
+                <div class="text-caption text-medium-emphasis mb-1">
+                  <v-icon size="14" class="mr-1">mdi-bank</v-icon>
+                  Loan Payments (auto)
+                </div>
+                <v-list density="compact" class="bg-transparent">
+                  <v-list-item
+                    v-for="loan in sortedLoans"
+                    :key="'loan-' + loan.id"
+                    class="px-0 rounded mb-1"
+                    :class="isLoanPaid(loan) ? 'bg-purple-darken-4' : ''"
+                    style="opacity: 0.85"
+                  >
+                    <template #prepend>
+                      <v-checkbox-btn
+                        :model-value="isLoanPaid(loan)"
+                        color="purple"
+                        density="compact"
+                        @update:model-value="toggleLoanPaid(loan)"
+                      />
+                    </template>
+                    <v-list-item-title :class="isLoanPaid(loan) ? 'text-decoration-line-through text-medium-emphasis' : ''">
+                      {{ loan.bank }}
+                    </v-list-item-title>
+                    <v-list-item-subtitle>
+                      <v-chip size="x-small" variant="text" class="px-0">Loan Payment</v-chip>
+                      <v-chip v-if="loan.payment_date" size="x-small" color="teal" variant="tonal" class="ml-1">{{ loan.payment_date }}th</v-chip>
+                    </v-list-item-subtitle>
+                    <template #append>
+                      <span class="text-purple font-weight-bold">${{ fmt(loan.monthly_payment) }}</span>
+                    </template>
+                  </v-list-item>
+                </v-list>
+              </div>
             </v-card>
           </v-col>
 
@@ -258,8 +302,8 @@
                 <thead>
                   <tr>
                     <th>Name</th>
+                    <th>Purpose</th>
                     <th>Balance</th>
-                    <th>Type</th>
                     <th>Pay Day</th>
                     <th style="width: 80px"></th>
                   </tr>
@@ -267,12 +311,9 @@
                 <tbody>
                   <tr v-for="acc in accounts" :key="acc.id">
                     <td class="font-weight-bold">{{ acc.name }}</td>
+                    <td class="text-medium-emphasis">{{ acc.purpose || '—' }}</td>
                     <td :class="acc.balance >= 0 ? 'text-green' : 'text-red'" class="font-weight-bold">
                       ${{ fmt(acc.balance) }}
-                    </td>
-                    <td>
-                      <v-chip v-if="acc.is_credit_card" size="x-small" color="orange" variant="tonal">CC</v-chip>
-                      <v-chip v-else size="x-small" color="blue" variant="tonal">Debit</v-chip>
                     </td>
                     <td>{{ acc.payment_date ? acc.payment_date : '—' }}</td>
                     <td>
@@ -305,17 +346,28 @@
                 <thead>
                   <tr>
                     <th>Bank / Lender</th>
+                    <th>Purpose</th>
                     <th>Debt</th>
+                    <th>Limit</th>
                     <th>Monthly</th>
+                    <th>Remaining</th>
                     <th>Pay Day</th>
                     <th style="width: 80px"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="loan in loans" :key="loan.id">
+                  <tr v-for="loan in sortedLoans" :key="loan.id">
                     <td class="font-weight-bold">{{ loan.bank }}</td>
+                    <td class="text-medium-emphasis">{{ loan.purpose || '—' }}</td>
                     <td class="text-red font-weight-bold">${{ fmt(loan.remaining_debt) }}</td>
+                    <td>{{ loan.credit_limit ? '$' + fmt(loan.credit_limit) : '—' }}</td>
                     <td class="text-orange font-weight-bold">${{ fmt(loan.monthly_payment) }}</td>
+                    <td>
+                      <v-chip v-if="loan.monthly_payment > 0" size="x-small" color="teal" variant="tonal">
+                        {{ Math.ceil(loan.remaining_debt / loan.monthly_payment) }} mo
+                      </v-chip>
+                      <span v-else>—</span>
+                    </td>
                     <td>{{ loan.payment_date ? loan.payment_date : '—' }}</td>
                     <td>
                       <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEditLoan(loan)" />
@@ -330,6 +382,138 @@
             </v-card>
           </v-col>
         </v-row>
+      </v-window-item>
+
+      <!-- ═══════ CALENDAR TAB ═══════ -->
+      <v-window-item value="calendar">
+        <v-card variant="outlined" class="pa-4">
+          <div class="d-flex align-center mb-3">
+            <v-icon color="teal" class="mr-2">mdi-calendar-month</v-icon>
+            <span class="text-h6">{{ formatMonthLabel(currentMonth) }} Calendar</span>
+            <v-spacer />
+            <v-chip variant="tonal" color="blue" size="small" class="mr-2">
+              Starting Balance: ${{ fmt(calendarData?.starting_balance || 0) }}
+            </v-chip>
+            <v-btn icon="mdi-minus" size="x-small" variant="tonal" class="mr-1" @click="calendarZoom = Math.max(0.6, calendarZoom - 0.15)" />
+            <span class="text-caption mx-1">{{ Math.round(calendarZoom * 100) }}%</span>
+            <v-btn icon="mdi-plus" size="x-small" variant="tonal" class="mr-3" @click="calendarZoom = Math.min(2, calendarZoom + 0.15)" />
+            <v-btn variant="tonal" color="teal" size="small" prepend-icon="mdi-refresh" @click="loadCalendar" :loading="calendarLoading">
+              Refresh
+            </v-btn>
+          </div>
+
+          <!-- Weekday header -->
+          <div class="calendar-grid mb-1">
+            <div v-for="wd in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']" :key="wd"
+              class="text-center text-caption font-weight-bold text-medium-emphasis pa-1">
+              {{ wd }}
+            </div>
+          </div>
+
+          <!-- Calendar grid -->
+          <div class="calendar-grid" v-if="calendarData" :style="{ '--cal-zoom': calendarZoom }">
+            <!-- Empty cells for offset -->
+            <div v-for="n in calendarData.first_weekday" :key="'empty-' + n" class="calendar-cell empty"></div>
+
+            <!-- Day cells -->
+            <div
+              v-for="dayInfo in calendarData.days"
+              :key="dayInfo.day"
+              class="calendar-cell"
+              :class="{
+                'today-cell': isToday(dayInfo.day),
+                'has-items': dayInfo.items.length > 0,
+              }"
+            >
+              <div class="d-flex justify-space-between align-center mb-1">
+                <span class="text-caption font-weight-bold" :class="isToday(dayInfo.day) ? 'text-teal' : ''">
+                  {{ dayInfo.day }}
+                </span>
+                <v-chip
+                  v-if="dayInfo.income > 0 || dayInfo.expense > 0"
+                  size="x-small"
+                  :color="dayInfo.balance >= 0 ? 'green' : 'red'"
+                  variant="tonal"
+                  class="px-1"
+                  style="height: calc(16px * var(--cal-zoom)); font-size: calc(9px * var(--cal-zoom));"
+                >
+                  ${{ fmtShort(dayInfo.balance) }}
+                </v-chip>
+              </div>
+
+              <!-- Items in this day -->
+              <div
+                v-for="item in dayInfo.items"
+                :key="item.id"
+                class="calendar-item mb-0"
+                :class="{ 'calendar-item-paid': item.is_paid }"
+              >
+                <div class="d-flex align-center" :style="{ fontSize: (10 * calendarZoom) + 'px', lineHeight: '1.2' }">
+                  <v-icon
+                    v-if="item.is_paid"
+                    :size="Math.round(10 * calendarZoom)"
+                    color="grey"
+                    class="mr-1 flex-shrink-0"
+                  >
+                    mdi-check
+                  </v-icon>
+                  <v-icon
+                    v-else
+                    :size="Math.round(10 * calendarZoom)"
+                    :color="item.type === 'income' ? 'green' : (item.source === 'loan' ? 'purple' : 'red')"
+                    class="mr-1 flex-shrink-0"
+                  >
+                    {{ item.type === 'income' ? 'mdi-arrow-down' : (item.source === 'loan' ? 'mdi-bank-outline' : 'mdi-arrow-up') }}
+                  </v-icon>
+                  <span class="text-truncate" :class="item.is_paid ? 'text-decoration-line-through text-medium-emphasis' : ''" :style="{ maxWidth: (80 * calendarZoom) + 'px' }">{{ item.name }}</span>
+                  <v-spacer />
+                  <span
+                    class="font-weight-bold flex-shrink-0"
+                    :class="item.is_paid ? 'text-medium-emphasis text-decoration-line-through' : (item.type === 'income' ? 'text-green' : 'text-red')"
+                    :style="{ fontSize: (9 * calendarZoom) + 'px' }"
+                  >
+                    ${{ fmtShort(item.amount) }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Day totals -->
+              <div v-if="dayInfo.income > 0 || dayInfo.expense > 0" class="mt-1 pt-1" :style="{ borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: (9 * calendarZoom) + 'px' }">
+                <span v-if="dayInfo.income > 0" class="text-green mr-1">+${{ fmtShort(dayInfo.income) }}</span>
+                <span v-if="dayInfo.expense > 0" class="text-red">-${{ fmtShort(dayInfo.expense) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="text-center text-medium-emphasis py-8">
+            <v-progress-circular v-if="calendarLoading" indeterminate color="teal" />
+            <span v-else>No calendar data. Click Refresh to load.</span>
+          </div>
+
+          <!-- Unscheduled items -->
+          <div v-if="calendarData?.unscheduled?.length" class="mt-4">
+            <v-divider class="mb-3" />
+            <div class="text-subtitle-2 mb-2">
+              <v-icon size="16" class="mr-1">mdi-calendar-question</v-icon>
+              Unscheduled Items (no day set)
+            </div>
+            <v-row>
+              <v-col v-for="item in calendarData.unscheduled" :key="item.id" cols="12" sm="6" md="4" lg="3">
+                <v-chip
+                  :color="item.type === 'income' ? 'green' : (item.source === 'loan' ? 'purple' : 'red')"
+                  variant="tonal"
+                  size="small"
+                  class="mr-1 mb-1"
+                >
+                  <v-icon start size="14">
+                    {{ item.type === 'income' ? 'mdi-arrow-down' : 'mdi-arrow-up' }}
+                  </v-icon>
+                  {{ item.name }}: ${{ fmt(item.amount) }}
+                </v-chip>
+              </v-col>
+            </v-row>
+          </div>
+        </v-card>
       </v-window-item>
 
       <!-- ═══════ SETTINGS TAB ═══════ -->
@@ -371,8 +555,22 @@
             clearable
             prepend-inner-icon="mdi-tag-outline"
           />
+          <v-text-field
+            v-model.number="entryForm.day_of_month"
+            label="Day of month (1-31, optional)"
+            type="number"
+            :min="1"
+            :max="31"
+            variant="outlined"
+            density="compact"
+            class="mb-2"
+            clearable
+            hint="Which day this payment/income is expected"
+            persistent-hint
+          />
           <v-switch v-model="entryForm.is_recurring" label="Recurring (monthly)" color="teal" density="compact" class="mb-2" />
           <v-switch v-model="entryForm.is_paid" :label="entryForm.type === 'income' ? 'Received' : 'Paid'" color="teal" density="compact" class="mb-2" />
+          <v-switch v-if="entryForm.type === 'expense'" v-model="entryForm.is_credit_card" label="Credit Card payment" color="orange" density="compact" class="mb-2" />
           <v-textarea v-model="entryForm.notes" label="Notes" variant="outlined" density="compact" rows="2" />
         </v-card-text>
         <v-card-actions>
@@ -391,8 +589,8 @@
         <v-card-title>{{ editingAccount ? 'Edit Account' : 'Add Account' }}</v-card-title>
         <v-card-text>
           <v-text-field v-model="accountForm.name" label="Account Name" variant="outlined" density="compact" class="mb-2" />
+          <v-text-field v-model="accountForm.purpose" label="Purpose (what it's for)" variant="outlined" density="compact" class="mb-2" placeholder="e.g. Everyday spending, Savings, Emergency fund" />
           <v-text-field v-model.number="accountForm.balance" label="Balance" type="number" prefix="$" variant="outlined" density="compact" class="mb-2" />
-          <v-switch v-model="accountForm.is_credit_card" label="Credit Card" color="orange" density="compact" class="mb-2" />
           <v-text-field
             v-model.number="accountForm.payment_date"
             label="Payment Date (day of month)"
@@ -421,6 +619,8 @@
         <v-card-title>{{ editingLoan ? 'Edit Loan' : 'Add Loan' }}</v-card-title>
         <v-card-text>
           <v-text-field v-model="loanForm.bank" label="Bank / Lender" variant="outlined" density="compact" class="mb-2" />
+          <v-text-field v-model="loanForm.purpose" label="Purpose (what it's for)" variant="outlined" density="compact" class="mb-2" placeholder="e.g. Car loan, Mortgage, Student loan" />
+          <v-text-field v-model.number="loanForm.credit_limit" label="Credit Limit" type="number" prefix="$" variant="outlined" density="compact" class="mb-2" />
           <v-text-field v-model.number="loanForm.remaining_debt" label="Remaining Debt" type="number" prefix="$" variant="outlined" density="compact" class="mb-2" />
           <v-text-field v-model.number="loanForm.monthly_payment" label="Monthly Payment" type="number" prefix="$" variant="outlined" density="compact" class="mb-2" />
           <v-text-field
@@ -500,13 +700,26 @@ const entries = ref([])
 const summary = ref(null)
 const accounts = ref([])
 const loans = ref([])
+// Sort helper: by day_of_month ascending, daily items at bottom, no-day items before daily
+function sortByDay(a, b) {
+  const aDaily = a.is_daily || false
+  const bDaily = b.is_daily || false
+  if (aDaily !== bDaily) return aDaily ? 1 : -1
+  const aDay = a.day_of_month || 999
+  const bDay = b.day_of_month || 999
+  return aDay - bDay
+}
+
 // Computed
-const incomeEntries = computed(() => entries.value.filter(e => e.type === 'income'))
-const expenseEntries = computed(() => entries.value.filter(e => e.type === 'expense'))
+const incomeEntries = computed(() => entries.value.filter(e => e.type === 'income').sort(sortByDay))
+const expenseEntries = computed(() => entries.value.filter(e => e.type === 'expense').sort(sortByDay))
+const sortedLoans = computed(() => [...loans.value].sort((a, b) => (a.payment_date || 999) - (b.payment_date || 999)))
 const totalIncome = computed(() => incomeEntries.value.reduce((s, e) => s + (e.amount || 0), 0))
 const totalExpense = computed(() => expenseEntries.value.reduce((s, e) => s + (e.amount || 0), 0))
 const totalAccountBalance = computed(() => accounts.value.reduce((s, a) => s + (a.balance || 0), 0))
 const totalDebt = computed(() => loans.value.reduce((s, l) => s + (l.remaining_debt || 0), 0))
+const totalLoanPayments = computed(() => loans.value.reduce((s, l) => s + (l.monthly_payment || 0), 0))
+const totalExpenseWithLoans = computed(() => totalExpense.value + totalLoanPayments.value)
 const hasEntriesForMonth = computed(() => entries.value.length > 0)
 
 const expenseCategoryOptions = computed(() => {
@@ -522,19 +735,19 @@ const incomeCategoryOptions = computed(() => {
 const entryDialog = ref(false)
 const editingEntry = ref(null)
 const entrySaving = ref(false)
-const entryForm = ref({ type: 'expense', name: '', amount: 0, category: '', is_recurring: true, is_paid: false, notes: '' })
+const entryForm = ref({ type: 'expense', name: '', amount: 0, category: '', is_recurring: true, is_paid: false, is_credit_card: false, day_of_month: null, notes: '' })
 
 // Account dialog
 const accountDialog = ref(false)
 const editingAccount = ref(null)
 const accountSaving = ref(false)
-const accountForm = ref({ name: '', balance: 0, is_credit_card: false, payment_date: null, notes: '' })
+const accountForm = ref({ name: '', purpose: '', balance: 0, payment_date: null, notes: '' })
 
 // Loan dialog
 const loanDialog = ref(false)
 const editingLoan = ref(null)
 const loanSaving = ref(false)
-const loanForm = ref({ bank: '', remaining_debt: 0, monthly_payment: 0, payment_date: null, notes: '' })
+const loanForm = ref({ bank: '', purpose: '', credit_limit: 0, remaining_debt: 0, monthly_payment: 0, payment_date: null, notes: '' })
 
 // Delete dialog
 const deleteDialog = ref(false)
@@ -545,6 +758,11 @@ const deleteLoading = ref(false)
 
 // Month transition
 const transitionLoading = ref(false)
+
+// Calendar
+const calendarData = ref(null)
+const calendarLoading = ref(false)
+const calendarZoom = ref(1.0)
 
 // Snackbar
 const snack = ref(false)
@@ -560,6 +778,19 @@ function showSnack(msg, color = 'success') {
 function fmt(n) {
   if (n == null) return '0.00'
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function fmtShort(n) {
+  if (n == null) return '0'
+  const num = Number(n)
+  if (Math.abs(num) >= 1000) return (num / 1000).toFixed(1) + 'k'
+  return num.toFixed(0)
+}
+
+function isToday(day) {
+  const today = new Date()
+  const [y, m] = currentMonth.value.split('-').map(Number)
+  return today.getFullYear() === y && today.getMonth() + 1 === m && today.getDate() === day
 }
 
 function formatMonthLabel(mk) {
@@ -610,10 +841,19 @@ async function loadLoans() {
   } catch { loans.value = [] }
 }
 
+async function loadCalendar() {
+  calendarLoading.value = true
+  try {
+    const { data } = await api.get('/addons/budgeting/calendar', { params: { month_key: currentMonth.value } })
+    calendarData.value = data
+  } catch { calendarData.value = null }
+  finally { calendarLoading.value = false }
+}
+
 async function refreshAll() {
   loading.value = true
   try {
-    await Promise.all([loadEntries(), loadSummary(), loadAccounts(), loadLoans()])
+    await Promise.all([loadEntries(), loadSummary(), loadAccounts(), loadLoans(), loadCalendar()])
   } finally {
     loading.value = false
   }
@@ -622,13 +862,14 @@ async function refreshAll() {
 watch(currentMonth, () => {
   loadEntries()
   loadSummary()
+  loadCalendar()
 })
 
 // ── Entry CRUD ──────────────────────────────────────────────────────
 
 function openAddEntry(type) {
   editingEntry.value = null
-  entryForm.value = { type, name: '', amount: 0, category: '', is_recurring: true, is_paid: false, notes: '' }
+  entryForm.value = { type, name: '', amount: 0, category: '', is_recurring: true, is_paid: false, is_credit_card: false, day_of_month: null, notes: '' }
   entryDialog.value = true
 }
 
@@ -648,6 +889,8 @@ async function saveEntry() {
         category: entryForm.value.category,
         is_recurring: entryForm.value.is_recurring,
         is_paid: entryForm.value.is_paid,
+        is_credit_card: entryForm.value.is_credit_card,
+        day_of_month: entryForm.value.day_of_month || null,
         notes: entryForm.value.notes,
       })
       showSnack('Entry updated')
@@ -659,7 +902,7 @@ async function saveEntry() {
       showSnack('Entry added')
     }
     entryDialog.value = false
-    await Promise.all([loadEntries(), loadSummary()])
+    await Promise.all([loadEntries(), loadSummary(), loadCalendar()])
   } catch (e) {
     showSnack(e.response?.data?.detail || 'Failed to save entry', 'error')
   } finally {
@@ -670,9 +913,24 @@ async function saveEntry() {
 async function togglePaid(item) {
   try {
     await api.patch(`/addons/budgeting/entries/${item.id}/toggle-paid`)
-    await Promise.all([loadEntries(), loadSummary()])
+    await Promise.all([loadEntries(), loadSummary(), loadCalendar()])
   } catch (e) {
     showSnack('Failed to update', 'error')
+  }
+}
+
+function isLoanPaid(loan) {
+  return (loan.paid_months || []).includes(currentMonth.value)
+}
+
+async function toggleLoanPaid(loan) {
+  try {
+    await api.patch(`/addons/budgeting/loans/${loan.id}/toggle-paid`, null, {
+      params: { month_key: currentMonth.value },
+    })
+    await Promise.all([loadLoans(), loadSummary(), loadCalendar()])
+  } catch (e) {
+    showSnack('Failed to update loan payment', 'error')
   }
 }
 
@@ -687,7 +945,7 @@ function confirmDeleteEntry(item) {
 
 function openAddAccount() {
   editingAccount.value = null
-  accountForm.value = { name: '', balance: 0, is_credit_card: false, payment_date: null, notes: '' }
+  accountForm.value = { name: '', purpose: '', balance: 0, payment_date: null, notes: '' }
   accountDialog.value = true
 }
 
@@ -727,7 +985,7 @@ function confirmDeleteAccount(acc) {
 
 function openAddLoan() {
   editingLoan.value = null
-  loanForm.value = { bank: '', remaining_debt: 0, monthly_payment: 0, payment_date: null, notes: '' }
+  loanForm.value = { bank: '', purpose: '', credit_limit: 0, remaining_debt: 0, monthly_payment: 0, payment_date: null, notes: '' }
   loanDialog.value = true
 }
 
@@ -748,7 +1006,7 @@ async function saveLoan() {
       showSnack('Loan added')
     }
     loanDialog.value = false
-    await loadLoans()
+    await Promise.all([loadLoans(), loadCalendar()])
   } catch (e) {
     showSnack(e.response?.data?.detail || 'Failed to save loan', 'error')
   } finally {
@@ -771,7 +1029,7 @@ async function executeDelete() {
     const id = deleteTarget.value?.id
     if (deleteType.value === 'entry') {
       await api.delete(`/addons/budgeting/entries/${id}`)
-      await Promise.all([loadEntries(), loadSummary()])
+      await Promise.all([loadEntries(), loadSummary(), loadCalendar()])
     } else if (deleteType.value === 'account') {
       await api.delete(`/addons/budgeting/accounts/${id}`)
       await loadAccounts()
@@ -797,7 +1055,7 @@ async function transitionMonth() {
       params: { target_month: currentMonth.value },
     })
     showSnack(data.message || `Created ${data.created} entries`)
-    await Promise.all([loadEntries(), loadSummary()])
+    await Promise.all([loadEntries(), loadSummary(), loadCalendar()])
   } catch (e) {
     showSnack(e.response?.data?.detail || 'Failed to transition month', 'error')
   } finally {
@@ -811,3 +1069,48 @@ onMounted(() => {
   refreshAll()
 })
 </script>
+
+<style scoped>
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.calendar-cell {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-height: calc(160px * var(--cal-zoom, 1));
+  font-size: calc(11px * var(--cal-zoom, 1));
+  overflow: hidden;
+  transition: background-color 0.15s;
+}
+
+.calendar-cell:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.calendar-cell.empty {
+  border-color: transparent;
+  min-height: auto;
+}
+
+.calendar-cell.today-cell {
+  border-color: rgb(var(--v-theme-teal-accent-3, 29, 233, 182));
+  background-color: rgba(29, 233, 182, 0.05);
+}
+
+.calendar-cell.has-items {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.calendar-item {
+  border-radius: 2px;
+  padding: 1px 0;
+}
+
+.calendar-item-paid {
+  opacity: 0.5;
+}
+</style>
