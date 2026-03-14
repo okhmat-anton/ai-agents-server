@@ -75,7 +75,9 @@ class AnthropicProvider:
         if params.stop:
             kwargs["stop_sequences"] = params.stop
 
-        response = await self._async_client.messages.create(**kwargs)
+        # Use streaming internally to avoid Anthropic 10-minute timeout on non-streaming requests
+        async with self._async_client.messages.stream(**kwargs) as stream:
+            response = await stream.get_final_message()
 
         content = ""
         for block in response.content:
