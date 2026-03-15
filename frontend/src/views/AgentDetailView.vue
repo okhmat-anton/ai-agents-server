@@ -1497,9 +1497,12 @@
                   <strong>{{ memoryDeleteTarget.title }}</strong>
                   <div class="text-caption text-truncate" style="max-width: 350px;">{{ memoryDeleteTarget.content }}</div>
                 </v-alert>
+                <div class="text-body-2 mb-1">
+                  Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="memoryDeleteConfirm = 'DELETE'">DELETE</strong> to confirm
+                </div>
                 <v-text-field
                   v-model="memoryDeleteConfirm"
-                  label="Type DELETE to confirm"
+                  placeholder="DELETE"
                   variant="outlined"
                   density="compact"
                 />

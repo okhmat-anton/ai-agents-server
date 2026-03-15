@@ -447,9 +447,12 @@
           <v-card-title class="text-error">Danger Zone</v-card-title>
           <v-card-text>
             <p class="mb-3">Permanently delete this project and all its code, tasks, and logs.</p>
+            <div class="text-body-2 mb-1">
+              Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="dangerDeleteConfirm = 'DELETE'">DELETE</strong> to confirm
+            </div>
             <v-text-field
               v-model="dangerDeleteConfirm"
-              label="Type DELETE to confirm"
+              placeholder="DELETE"
               variant="outlined"
               density="compact"
               style="max-width: 300px"

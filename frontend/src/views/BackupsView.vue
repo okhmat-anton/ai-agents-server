@@ -123,9 +123,12 @@
           <p class="mb-3">This will <strong>replace all current data</strong> with data from:</p>
           <p class="text-subtitle-1 font-weight-bold mb-3">{{ selectedBackup?.filename }}</p>
           <p class="text-error mb-3">This action cannot be undone!</p>
+          <div class="text-body-2 mb-1">
+            Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="confirmText = 'DELETE'">DELETE</strong> to confirm
+          </div>
           <v-text-field
             v-model="confirmText"
-            label="Type DELETE to confirm"
+            placeholder="DELETE"
             variant="outlined"
             density="compact"
           />

@@ -45,10 +45,10 @@ async def _get_polymarket_creds(db) -> dict:
     passphrase = await get_setting_value(db, "polymarket_passphrase")
     address = await get_setting_value(db, "polymarket_address")
     return {
-        "api_key": api_key or "",
-        "api_secret": api_secret or "",
-        "passphrase": passphrase or "",
-        "address": address or "",
+        "api_key": (api_key or "").strip(),
+        "api_secret": (api_secret or "").strip(),
+        "passphrase": (passphrase or "").strip(),
+        "address": (address or "").strip(),
     }
 
 
@@ -86,19 +86,27 @@ def _build_hmac_signature(secret: str, timestamp: int, method: str, request_path
 
 
 def _clob_l2_headers(creds: dict, method: str, request_path: str, body: str = "") -> dict:
-    """Build L2 authenticated headers with HMAC signing for CLOB API."""
-    # Subtract 5 seconds to avoid clock skew rejection by Polymarket servers
-    timestamp = int(time.time()) - 5
+    """Build L2 authenticated headers with HMAC signing for CLOB API.
+
+    Matches the official py-clob-client SDK header format exactly.
+    """
+    timestamp = int(time.time())
     sig = _build_hmac_signature(creds["api_secret"], timestamp, method, request_path, body)
     headers = {
         "Content-Type": "application/json",
+        "User-Agent": "py_clob_client",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
         "POLY_API_KEY": creds["api_key"],
         "POLY_PASSPHRASE": creds["passphrase"],
         "POLY_TIMESTAMP": str(timestamp),
         "POLY_SIGNATURE": sig,
     }
+    if method == "GET":
+        headers["Accept-Encoding"] = "gzip"
     if creds.get("address"):
         headers["POLY_ADDRESS"] = creds["address"]
+    logger.debug("HMAC sign: ts=%s method=%s path=%s body_len=%d", timestamp, method, request_path, len(body))
     return headers
 
 
@@ -246,18 +254,21 @@ async def place_bet(body: PlaceBetRequest, db: AsyncIOMotorDatabase = Depends(ge
         "size": str(body.size),
         "type": "GTC",  # Good Till Cancel
     }
-    body_str = json.dumps(order)
+    # Compact JSON — must match exactly between HMAC signing and request body (official SDK format)
+    body_str = json.dumps(order, separators=(",", ":"), ensure_ascii=False)
     headers = _clob_l2_headers(creds, "POST", "/order", body_str)
     vpn = await _get_active_vpn(db)
+    logger.info("Placing bet: body=%s", body_str)
     try:
         async with _make_httpx_client(vpn, timeout=30) as client:
             r = await client.post(
                 f"{CLOB_API}/order",
-                content=body_str,
+                content=body_str.encode("utf-8"),
                 headers=headers,
             )
+            logger.info("Bet response: status=%d body=%s", r.status_code, r.text[:300])
             if r.status_code not in (200, 201):
-                raise HTTPException(status_code=r.status_code, detail=f"Order failed: {r.text[:500]}")
+                raise HTTPException(status_code=r.status_code, detail=f"Bet failed: {r.text[:500]}")
             result = r.json()
 
             # Save to local history
@@ -687,10 +698,10 @@ async def place_session_bets(
                 "price": str(bet["odds"]),
                 "size": str(bet["amount"]),
             }
-            body_str = json.dumps(order_body)
+            body_str = json.dumps(order_body, separators=(",", ":"), ensure_ascii=False)
             headers = _clob_l2_headers(creds, "POST", "/order", body_str)
             async with _make_httpx_client(vpn, timeout=30) as client:
-                r = await client.post(f"{CLOB_API}/order", headers=headers, content=body_str)
+                r = await client.post(f"{CLOB_API}/order", headers=headers, content=body_str.encode("utf-8"))
                 success = r.status_code in (200, 201)
                 detail = r.json() if success else r.text[:300]
                 results.append({
@@ -781,12 +792,12 @@ async def place_single_bet(
         "price": str(bet["odds"]),
         "size": str(bet["amount"]),
     }
-    body_str = json.dumps(order_body)
+    body_str = json.dumps(order_body, separators=(",", ":"), ensure_ascii=False)
     headers = _clob_l2_headers(creds, "POST", "/order", body_str)
     vpn = await _get_active_vpn(db)
     try:
         async with _make_httpx_client(vpn, timeout=30) as client:
-            r = await client.post(f"{CLOB_API}/order", headers=headers, content=body_str)
+            r = await client.post(f"{CLOB_API}/order", headers=headers, content=body_str.encode("utf-8"))
             success = r.status_code in (200, 201)
             detail = r.json() if success else r.text[:300]
     except Exception as exc:

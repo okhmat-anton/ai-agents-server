@@ -20,27 +20,32 @@ def _build_hmac_signature(secret: str, timestamp: int, method: str, request_path
 
 
 def _clob_l2_headers(api_key: str, api_secret: str, passphrase: str, address: str, method: str, request_path: str, body: str = "") -> dict:
-    """Build L2 authenticated headers with HMAC signing for CLOB API."""
-    # Subtract 5 seconds to avoid clock skew rejection by Polymarket servers
-    timestamp = int(time.time()) - 5
+    """Build L2 authenticated headers with HMAC signing for CLOB API.
+
+    Matches the official py-clob-client SDK header format exactly.
+    """
+    timestamp = int(time.time())
     sig = _build_hmac_signature(api_secret, timestamp, method, request_path, body)
     headers = {
         "Content-Type": "application/json",
-        "POLY_API_KEY": api_key,
-        "POLY_PASSPHRASE": passphrase,
+        "User-Agent": "py_clob_client",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "POLY_API_KEY": api_key.strip(),
+        "POLY_PASSPHRASE": passphrase.strip(),
         "POLY_TIMESTAMP": str(timestamp),
         "POLY_SIGNATURE": sig,
     }
-    if address:
-        headers["POLY_ADDRESS"] = address
+    if address and address.strip():
+        headers["POLY_ADDRESS"] = address.strip()
     return headers
 
 
 async def execute(token_id, price, size, side="BUY"):
-    api_key = os.environ.get("POLYMARKET_API_KEY", "")
-    api_secret = os.environ.get("POLYMARKET_API_SECRET", "")
-    passphrase = os.environ.get("POLYMARKET_PASSPHRASE", "")
-    address = os.environ.get("POLYMARKET_ADDRESS", "")
+    api_key = os.environ.get("POLYMARKET_API_KEY", "").strip()
+    api_secret = os.environ.get("POLYMARKET_API_SECRET", "").strip()
+    passphrase = os.environ.get("POLYMARKET_PASSPHRASE", "").strip()
+    address = os.environ.get("POLYMARKET_ADDRESS", "").strip()
     if not api_key:
         return {"error": "Polymarket API key not configured. Go to Settings to add it."}
     if not token_id:
@@ -59,11 +64,12 @@ async def execute(token_id, price, size, side="BUY"):
         "size": str(size),
         "type": "GTC",
     }
-    body_str = json.dumps(order)
+    # Compact JSON (no spaces, ensure_ascii=False) — must match SDK's canonical form exactly
+    body_str = json.dumps(order, separators=(",", ":"), ensure_ascii=False)
     headers = _clob_l2_headers(api_key, api_secret, passphrase, address, "POST", "/order", body_str)
     try:
         async with httpx.AsyncClient(timeout=30, verify=False) as client:
-            r = await client.post(f"{CLOB_API}/order", content=body_str, headers=headers)
+            r = await client.post(f"{CLOB_API}/order", content=body_str.encode("utf-8"), headers=headers)
             if r.status_code not in (200, 201):
                 return {"error": f"Order failed ({r.status_code}): {r.text[:500]}"}
             result = r.json()

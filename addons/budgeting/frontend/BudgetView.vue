@@ -703,12 +703,14 @@
         <v-card-title class="text-red">Confirm Delete</v-card-title>
         <v-card-text>
           Are you sure you want to delete <strong>{{ deleteTarget?.name || deleteTarget?.bank || '' }}</strong>?
+          <div class="text-body-2 mt-3 mb-1">
+            Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="deleteConfirmText = 'DELETE'">DELETE</strong> to confirm
+          </div>
           <v-text-field
             v-model="deleteConfirmText"
-            label='Type "DELETE" to confirm'
+            placeholder="DELETE"
             variant="outlined"
             density="compact"
-            class="mt-3"
           />
         </v-card-text>
         <v-card-actions>

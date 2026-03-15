@@ -7,9 +7,11 @@
       </v-card-title>
       <v-card-text>
         <p class="mb-4">{{ message }}</p>
+        <div class="text-body-2 mb-1">
+          Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="confirmText = 'DELETE'">DELETE</strong> to confirm
+        </div>
         <v-text-field
           v-model="confirmText"
-          label="Type DELETE to confirm"
           placeholder="DELETE"
           variant="outlined"
           density="compact"

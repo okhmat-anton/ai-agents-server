@@ -361,10 +361,10 @@
           <v-alert type="error" variant="tonal" class="mb-4">
             {{ confirmMessage }}
           </v-alert>
-          <p class="mb-3">To confirm, type <strong>ENABLE</strong> below:</p>
+          <p class="mb-3">To confirm, type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="confirmText = 'ENABLE'">ENABLE</strong> below:</p>
           <v-text-field
             v-model="confirmText"
-            label="Type ENABLE to confirm"
+            placeholder="ENABLE"
             variant="outlined"
             density="compact"
             autofocus

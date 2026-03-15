@@ -186,12 +186,14 @@
         <v-card-title class="text-h6">Delete Idea</v-card-title>
         <v-card-text>
           Are you sure you want to delete this idea? This action cannot be undone.
+          <div class="text-body-2 mt-4 mb-1">
+            Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="deleteConfirmText = 'DELETE'">DELETE</strong> to confirm
+          </div>
           <v-text-field
             v-model="deleteConfirmText"
-            label="Type DELETE to confirm"
+            placeholder="DELETE"
             variant="outlined"
             density="compact"
-            class="mt-4"
           />
         </v-card-text>
         <v-card-actions>

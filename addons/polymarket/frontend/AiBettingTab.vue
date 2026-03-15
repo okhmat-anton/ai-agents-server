@@ -562,7 +562,7 @@
         <v-card-title class="text-h6">Delete Session</v-card-title>
         <v-card-text>
           <div class="mb-3">Are you sure you want to delete this session? This action cannot be undone.</div>
-          <div class="text-caption text-medium-emphasis mb-2">Type <b>CONFIRM</b> to proceed:</div>
+          <div class="text-caption text-medium-emphasis mb-2">Type <b class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="deleteConfirmText = 'CONFIRM'">CONFIRM</b> to proceed:</div>
           <v-text-field
             v-model="deleteConfirmText"
             density="compact"
@@ -590,7 +590,7 @@
             You are about to place <b>{{ selectedBets.length }}</b> bet(s) totaling <b>${{ totalBet.toFixed(2) }}</b>.
             This will send real orders to Polymarket.
           </div>
-          <div class="text-caption text-medium-emphasis mb-2">Type <b>CONFIRM</b> to proceed:</div>
+          <div class="text-caption text-medium-emphasis mb-2">Type <b class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="placeConfirmText = 'CONFIRM'">CONFIRM</b> to proceed:</div>
           <v-text-field
             v-model="placeConfirmText"
             density="compact"
@@ -618,7 +618,7 @@
             <div class="mb-1"><b>#{{ placeSingleTarget.number }}</b> {{ placeSingleTarget.event_title }}</div>
             <div class="text-caption text-medium-emphasis">{{ placeSingleTarget.market_question }} &middot; {{ placeSingleTarget.side }} &middot; ${{ placeSingleTarget.amount }}</div>
           </div>
-          <div class="text-caption text-medium-emphasis mb-2">Type <b>CONFIRM</b> to place this bet:</div>
+          <div class="text-caption text-medium-emphasis mb-2">Type <b class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="placeConfirmText = 'CONFIRM'">CONFIRM</b> to place this bet:</div>
           <v-text-field
             v-model="placeConfirmText"
             density="compact"

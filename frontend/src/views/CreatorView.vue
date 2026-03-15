@@ -407,60 +407,60 @@
             </v-btn>
           </div>
 
-          <v-row>
-            <v-col v-for="(city, idx) in form.cities" :key="city.id || idx" cols="12" sm="6" md="4" lg="3">
-              <v-card variant="outlined" class="fill-height">
-                <v-card-text class="pb-2">
-                  <div class="d-flex align-center mb-2">
-                    <v-icon size="20" class="mr-2" :color="cityTypeColor(city.type)">
-                      {{ cityTypeIcon(city.type) }}
-                    </v-icon>
-                    <v-chip :color="cityTypeColor(city.type)" size="x-small" variant="tonal">{{ city.type }}</v-chip>
-                    <v-spacer />
-                    <v-btn icon size="x-small" variant="text" color="error" @click="form.cities.splice(idx, 1)">
-                      <v-icon size="16">mdi-close</v-icon>
-                    </v-btn>
-                  </div>
-                  <v-text-field
-                    v-model="city.name"
-                    label="City"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    placeholder="Berlin, New York..."
-                    class="mb-2"
-                  />
-                  <v-text-field
-                    v-model="city.country"
-                    label="Country"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    placeholder="Germany, US..."
-                    class="mb-2"
-                  />
-                  <v-select
-                    v-model="city.type"
-                    :items="cityTypes"
-                    item-title="label"
-                    item-value="value"
-                    label="Type"
-                    variant="outlined"
-                    density="compact"
-                    hide-details
-                    class="mb-2"
-                  />
-                  <v-checkbox
-                    v-model="city.in_context"
-                    label="Include in agent context"
-                    density="compact"
-                    hide-details
-                    color="primary"
-                  />
-                </v-card-text>
-              </v-card>
-            </v-col>
-          </v-row>
+          <div class="d-flex flex-wrap ga-3">
+            <v-card
+              v-for="(city, idx) in form.cities"
+              :key="city.id || idx"
+              variant="outlined"
+              class="city-row-card"
+              style="min-width: 320px; max-width: 520px; flex: 1 1 auto;"
+            >
+              <v-card-text class="d-flex align-center ga-2 py-2 px-3">
+                <v-icon size="20" :color="cityTypeColor(city.type)">
+                  {{ cityTypeIcon(city.type) }}
+                </v-icon>
+                <v-text-field
+                  v-model="city.name"
+                  label="City"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  placeholder="Berlin, New York..."
+                  style="max-width: 140px;"
+                />
+                <v-text-field
+                  v-model="city.country"
+                  label="Country"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  placeholder="Germany, US..."
+                  style="max-width: 120px;"
+                />
+                <v-select
+                  v-model="city.type"
+                  :items="cityTypes"
+                  item-title="label"
+                  item-value="value"
+                  label="Type"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                  style="max-width: 130px;"
+                />
+                <v-checkbox
+                  v-model="city.in_context"
+                  density="compact"
+                  hide-details
+                  color="primary"
+                  class="flex-shrink-0"
+                />
+                <v-btn icon size="x-small" variant="text" color="error" @click="form.cities.splice(idx, 1)">
+                  <v-icon size="16">mdi-close</v-icon>
+                </v-btn>
+              </v-card-text>
+            </v-card>
+          </div>
 
           <div v-if="!form.cities.length" class="text-center py-8 text-medium-emphasis">
             <v-icon size="48" class="mb-2" color="grey">mdi-city-variant-outline</v-icon>

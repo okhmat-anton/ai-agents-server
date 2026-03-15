@@ -16,21 +16,24 @@ def _build_hmac_signature(secret: str, timestamp: int, method: str, request_path
 
 
 async def execute():
-    api_key = os.environ.get("POLYMARKET_API_KEY", "")
-    api_secret = os.environ.get("POLYMARKET_API_SECRET", "")
-    passphrase = os.environ.get("POLYMARKET_PASSPHRASE", "")
-    address = os.environ.get("POLYMARKET_ADDRESS", "")
+    api_key = os.environ.get("POLYMARKET_API_KEY", "").strip()
+    api_secret = os.environ.get("POLYMARKET_API_SECRET", "").strip()
+    passphrase = os.environ.get("POLYMARKET_PASSPHRASE", "").strip()
+    address = os.environ.get("POLYMARKET_ADDRESS", "").strip()
     if not api_key:
         return {"error": "Polymarket API key not configured. Go to Settings to add it."}
 
     request_path = "/balance-allowance"
     params = "?asset_type=COLLATERAL&signature_type=0"
-    # Subtract 5 seconds to avoid clock skew rejection by Polymarket servers
-    timestamp = int(time.time()) - 5
+    timestamp = int(time.time())
     sig = _build_hmac_signature(api_secret, timestamp, "GET", request_path)
 
     headers = {
         "Content-Type": "application/json",
+        "User-Agent": "py_clob_client",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Accept-Encoding": "gzip",
         "POLY_API_KEY": api_key,
         "POLY_PASSPHRASE": passphrase,
         "POLY_TIMESTAMP": str(timestamp),

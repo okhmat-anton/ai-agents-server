@@ -369,12 +369,14 @@
         <v-card-title>Clear All DARPA Data?</v-card-title>
         <v-card-text>
           This will delete all stored DARPA items. You can re-scrape at any time.
+          <div class="text-body-2 mt-3 mb-1">
+            Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="deleteConfirmText = 'DELETE'">DELETE</strong> to confirm
+          </div>
           <v-text-field
             v-model="deleteConfirmText"
-            label="Type DELETE to confirm"
+            placeholder="DELETE"
             variant="outlined"
             density="compact"
-            class="mt-3"
           />
         </v-card-text>
         <v-card-actions>
