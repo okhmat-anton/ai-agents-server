@@ -79,7 +79,7 @@ const routes = [
       { path: 'addons', redirect: '/settings/addons' },
       { path: 'addons/polymarket', name: 'Polymarket', component: () => import('@addons/polymarket/frontend/PolymarketView.vue') },
       { path: 'addons/budgeting', name: 'Budgeting', component: () => import('@addons/budgeting/frontend/BudgetView.vue') },
-      { path: 'addons/darpa-monitor', name: 'DarpaMonitor', component: () => import('@addons/darpa_monitor/frontend/DarpaMonitorView.vue') },
+      { path: 'addons/darpa-monitor', name: 'DarpaMonitor', component: () => import('@addons_private/darpa_monitor/frontend/DarpaMonitorView.vue') },
     ],
   },
 ]

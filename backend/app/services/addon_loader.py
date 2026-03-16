@@ -12,22 +12,24 @@ from fastapi import FastAPI
 logger = logging.getLogger("addon_loader")
 
 ADDONS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "addons"
+ADDONS_PRIVATE_DIR = Path(__file__).resolve().parent.parent.parent.parent / "addons_private"
 
 
 def _discover_addons() -> list[dict]:
-    """Scan addons/ for directories with manifest.json."""
+    """Scan addons/ and addons_private/ for directories with manifest.json."""
     addons = []
-    if not ADDONS_DIR.exists():
-        return addons
-    for addon_dir in sorted(ADDONS_DIR.iterdir()):
-        manifest_path = addon_dir / "manifest.json"
-        if addon_dir.is_dir() and manifest_path.exists():
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                manifest["_dir"] = str(addon_dir)
-                addons.append(manifest)
-            except Exception as e:
-                logger.warning("Failed to load addon manifest %s: %s", manifest_path, e)
+    for addons_dir in [ADDONS_DIR, ADDONS_PRIVATE_DIR]:
+        if not addons_dir.exists():
+            continue
+        for addon_dir in sorted(addons_dir.iterdir()):
+            manifest_path = addon_dir / "manifest.json"
+            if addon_dir.is_dir() and manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    manifest["_dir"] = str(addon_dir)
+                    addons.append(manifest)
+                except Exception as e:
+                    logger.warning("Failed to load addon manifest %s: %s", manifest_path, e)
     return addons
 
 

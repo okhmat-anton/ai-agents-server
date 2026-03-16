@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       vue: 'vue/dist/vue.esm-bundler.js',
       '@addons': new URL('../addons', import.meta.url).pathname,
+      '@addons_private': new URL('../addons_private', import.meta.url).pathname,
       '@src': new URL('./src', import.meta.url).pathname,
     },
   },
