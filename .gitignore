@@ -13,3 +13,4 @@ data/
 server.log
 *.session
 data/messengers/sessions/
+landing/

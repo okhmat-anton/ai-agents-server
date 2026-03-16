@@ -50,6 +50,24 @@
               </v-chip>
             </div>
 
+            <!-- Skills details -->
+            <div v-if="addon.skills_details && addon.skills_details.length" class="mb-3">
+              <div class="text-caption font-weight-bold text-medium-emphasis mb-1">Skills:</div>
+              <div
+                v-for="skill in addon.skills_details"
+                :key="skill.name"
+                class="mb-2 pa-2 rounded"
+                style="background: rgba(var(--v-theme-on-surface), 0.04);"
+              >
+                <div class="d-flex align-center mb-1">
+                  <v-icon size="14" color="info" class="mr-1">mdi-puzzle</v-icon>
+                  <span class="text-caption font-weight-bold">{{ skill.display_name || skill.name }}</span>
+                  <v-chip v-if="skill.category" size="x-small" variant="outlined" class="ml-2">{{ skill.category }}</v-chip>
+                </div>
+                <div class="text-caption text-medium-emphasis">{{ skill.description }}</div>
+              </div>
+            </div>
+
             <!-- Settings preview -->
             <div v-if="addon.settings && addon.settings.length && addon.enabled" class="mb-2">
               <div

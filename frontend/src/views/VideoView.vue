@@ -117,6 +117,10 @@
               </template>
               <template #item.category="{ item }">
                 <v-chip v-if="item.category" size="small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
+                <v-chip v-if="item.is_long" size="x-small" variant="tonal" color="orange" class="ml-1">LONG</v-chip>
+              </template>
+              <template #item.tags="{ item }">
+                <v-chip v-for="tag in (item.tags || [])" :key="tag" size="x-small" variant="tonal" class="mr-1">{{ tag }}</v-chip>
               </template>
               <template #item.created_at="{ item }">
                 {{ formatDate(item.created_at) }}
@@ -177,6 +181,11 @@
 
           <template #item.category="{ item }">
             <v-chip v-if="item.category" size="small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
+            <v-chip v-if="item.is_long" size="x-small" variant="tonal" color="orange" class="ml-1">LONG</v-chip>
+          </template>
+
+          <template #item.tags="{ item }">
+            <v-chip v-for="tag in (item.tags || [])" :key="tag" size="x-small" variant="tonal" class="mr-1">{{ tag }}</v-chip>
           </template>
 
           <template #item.created_at="{ item }">
@@ -254,6 +263,26 @@
             hide-details
             clearable
             prepend-inner-icon="mdi-tag-outline"
+            class="mb-3"
+          />
+          <v-combobox
+            v-model="addTags"
+            :items="allTags"
+            label="Tags"
+            variant="outlined"
+            density="compact"
+            chips
+            multiple
+            closable-chips
+            hide-details
+            class="mb-3"
+          />
+          <v-switch
+            v-model="addIsLong"
+            label="Long video"
+            color="orange"
+            density="compact"
+            hide-details
           />
         </v-card-text>
         <v-card-actions>
@@ -312,8 +341,8 @@
 
         <v-divider />
 
-        <!-- Category -->
-        <div class="d-flex align-center ga-2 px-4 py-2" style="background: rgba(255,255,255,0.02);">
+        <!-- Category / Tags / Long Video -->
+        <div class="d-flex align-center ga-2 px-4 py-2 flex-wrap" style="background: rgba(255,255,255,0.02);">
           <v-combobox
             :model-value="currentVideo.category"
             :items="categoryOptions"
@@ -325,6 +354,28 @@
             style="max-width: 250px;"
             prepend-inner-icon="mdi-tag-outline"
             @update:model-value="updateVideoCategory($event)"
+          />
+          <v-combobox
+            :model-value="currentVideo.tags || []"
+            :items="allTags"
+            label="Tags"
+            variant="outlined"
+            density="compact"
+            chips
+            multiple
+            closable-chips
+            hide-details
+            style="max-width: 350px;"
+            @update:model-value="updateVideoTags($event)"
+          />
+          <v-switch
+            :model-value="currentVideo.is_long || false"
+            label="Long video"
+            color="orange"
+            density="compact"
+            hide-details
+            class="ml-2"
+            @update:model-value="updateVideoIsLong($event)"
           />
           <v-spacer />
         </div>
@@ -587,6 +638,8 @@ const selectedItems = ref([])
 const addDialog = ref(false)
 const addUrl = ref('')
 const addCategory = ref(null)
+const addTags = ref([])
+const addIsLong = ref(false)
 const addingWithTranscript = ref(false)
 const transcriptContainerRef = ref(null)
 
@@ -714,6 +767,7 @@ const headers = [
   { title: 'Platform', key: 'platform', width: 120 },
   { title: 'URL', key: 'url' },
   { title: 'Category', key: 'category', width: 140 },
+  { title: 'Tags', key: 'tags', width: 200 },
   { title: 'Status', key: 'status', width: 100 },
   { title: 'Added', key: 'created_at', width: 140 },
   { title: 'Actions', key: 'actions', sortable: false, width: 120 },
@@ -727,6 +781,14 @@ const filteredHistory = computed(() => {
 const categoryOptions = computed(() => {
   const cats = [...new Set(history.value.map(v => v.category).filter(Boolean))]
   return cats.sort()
+})
+
+const allTags = computed(() => {
+  const tags = new Set()
+  for (const v of history.value) {
+    if (v.tags) v.tags.forEach(t => tags.add(t))
+  }
+  return [...tags].sort()
 })
 
 const groupedHistory = computed(() => {
@@ -844,9 +906,13 @@ async function addVideo() {
   try {
     const payload = { url: addUrl.value.trim() }
     if (addCategory.value) payload.category = addCategory.value
+    if (addTags.value?.length) payload.tags = addTags.value
+    if (addIsLong.value) payload.is_long = true
     const { data } = await api.post('/watched-videos', payload)
     addUrl.value = ''
     addCategory.value = null
+    addTags.value = []
+    addIsLong.value = false
     addDialog.value = false
     await loadHistory()
     openVideo(data)
@@ -864,6 +930,8 @@ async function addVideoWithTranscript() {
   try {
     const payload = { url: addUrl.value.trim() }
     if (addCategory.value) payload.category = addCategory.value
+    if (addTags.value?.length) payload.tags = addTags.value
+    if (addIsLong.value) payload.is_long = true
 
     // Step 1: Create the video record first
     const { data } = await api.post('/watched-videos', payload)
@@ -871,6 +939,8 @@ async function addVideoWithTranscript() {
     // Step 2: Close dialog and show in list immediately
     addUrl.value = ''
     addCategory.value = null
+    addTags.value = []
+    addIsLong.value = false
     addDialog.value = false
     await loadHistory()
     showSnackbar?.('Video added! Fetching transcript in background...', 'success')
@@ -889,6 +959,8 @@ async function addVideoWithTranscript() {
 function openAddDialog() {
   addUrl.value = ''
   addCategory.value = null
+  addTags.value = []
+  addIsLong.value = false
   addDialog.value = true
 }
 
@@ -1195,6 +1267,34 @@ async function updateVideoCategory(val) {
     showSnackbar?.('Category updated', 'success')
   } catch (e) {
     showSnackbar?.('Failed to update category', 'error')
+  }
+}
+
+async function updateVideoTags(val) {
+  if (!currentVideo.value) return
+  const tags = val || []
+  try {
+    await api.patch(`/watched-videos/${currentVideo.value.id}`, { tags })
+    currentVideo.value = { ...currentVideo.value, tags }
+    const idx = history.value.findIndex(v => v.id === currentVideo.value.id)
+    if (idx !== -1) history.value[idx] = { ...history.value[idx], tags }
+    showSnackbar?.('Tags updated', 'success')
+  } catch (e) {
+    showSnackbar?.('Failed to update tags', 'error')
+  }
+}
+
+async function updateVideoIsLong(val) {
+  if (!currentVideo.value) return
+  const is_long = !!val
+  try {
+    await api.patch(`/watched-videos/${currentVideo.value.id}`, { is_long })
+    currentVideo.value = { ...currentVideo.value, is_long }
+    const idx = history.value.findIndex(v => v.id === currentVideo.value.id)
+    if (idx !== -1) history.value[idx] = { ...history.value[idx], is_long }
+    showSnackbar?.('Long video flag updated', 'success')
+  } catch (e) {
+    showSnackbar?.('Failed to update long video flag', 'error')
   }
 }
 

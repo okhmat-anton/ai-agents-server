@@ -64,6 +64,8 @@ class WatchedVideoResponse(BaseModel):
     author: Optional[str] = None
     agent_id: Optional[str] = None
     category: Optional[str] = None
+    tags: list[str] = []
+    is_long: bool = False
     credits_used: int = 1
     error: Optional[str] = None
     linked_fact_ids: list[str] = []
@@ -162,6 +164,8 @@ class UpdateVideoRequest(BaseModel):
     title: Optional[str] = None
     transcript: Optional[str] = None
     agent_id: Optional[str] = None
+    tags: Optional[list[str]] = None
+    is_long: Optional[bool] = None
     linked_fact_ids: Optional[list[str]] = None
     linked_analysis_ids: Optional[list[str]] = None
     linked_idea_ids: Optional[list[str]] = None
@@ -192,6 +196,8 @@ async def update_watched_video(
 class AddVideoRequest(BaseModel):
     url: str
     category: Optional[str] = None
+    tags: Optional[list[str]] = None
+    is_long: bool = False
 
 
 @router.post("", response_model=WatchedVideoResponse, status_code=201)
@@ -215,7 +221,13 @@ async def add_video(
         return _to_response(existing)
 
     platform, _ = _detect_video_platform(url)
-    record = MongoWatchedVideo(url=url, platform=platform or "unknown", category=body.category or None)
+    record = MongoWatchedVideo(
+        url=url,
+        platform=platform or "unknown",
+        category=body.category or None,
+        tags=body.tags or [],
+        is_long=body.is_long,
+    )
     created = await svc.create(record)
     return _to_response(created)
 
@@ -609,6 +621,8 @@ def _to_response(v: MongoWatchedVideo) -> WatchedVideoResponse:
         author=v.author,
         agent_id=v.agent_id,
         category=v.category,
+        tags=v.tags if v.tags else [],
+        is_long=v.is_long if hasattr(v, 'is_long') else False,
         credits_used=v.credits_used,
         error=v.error,
         linked_fact_ids=v.linked_fact_ids or [],

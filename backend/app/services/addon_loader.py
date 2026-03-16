@@ -77,10 +77,12 @@ async def seed_addon_settings(db):
         addon_id = manifest.get("id", "unknown")
         # Seed addon enabled flag
         enabled_key = f"addon_{addon_id}_enabled"
+        # Hidden addons default to disabled — enable manually in DB if needed
+        default_enabled = "false" if manifest.get("hidden", False) else "true"
         if enabled_key not in existing_keys:
             new_setting = MongoSystemSetting(
                 key=enabled_key,
-                value="true",
+                value=default_enabled,
                 description=f"Enable/disable the {manifest.get('name', addon_id)} addon",
             )
             await setting_service.create(new_setting)
@@ -179,9 +181,29 @@ async def seed_addon_skills(db):
 def get_addon_manifests() -> list[dict]:
     """Return list of addon manifests for the frontend registry API."""
     addons = _discover_addons()
-    # Strip internal fields
+    # Strip internal fields and enrich with skill details
     result = []
     for m in addons:
         clean = {k: v for k, v in m.items() if not k.startswith("_")}
+        # Load detailed skill manifests
+        addon_dir = Path(m["_dir"])
+        skills_dir = addon_dir / "skills"
+        skills_details = []
+        if skills_dir.exists():
+            for skill_dir in sorted(skills_dir.iterdir()):
+                skill_manifest_file = skill_dir / "manifest.json"
+                if skill_dir.is_dir() and skill_manifest_file.exists():
+                    try:
+                        sm = json.loads(skill_manifest_file.read_text(encoding="utf-8"))
+                        skills_details.append({
+                            "name": sm.get("name", skill_dir.name),
+                            "display_name": sm.get("display_name", sm.get("name", skill_dir.name)),
+                            "description": sm.get("description", ""),
+                            "category": sm.get("category", ""),
+                            "input_schema": sm.get("input_schema", {}),
+                        })
+                    except Exception:
+                        pass
+        clean["skills_details"] = skills_details
         result.append(clean)
     return result

@@ -5,6 +5,7 @@
   "icon": "mdi-shield-search",
   "version": "1.0.0",
   "author": "system",
+  "hidden": true,
   "route": {
     "path": "/addons/darpa-monitor",
     "name": "DarpaMonitor",
