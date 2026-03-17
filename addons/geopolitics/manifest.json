@@ -1,0 +1,49 @@
+{
+  "id": "geopolitics",
+  "name": "Geopolitics Monitor",
+  "description": "Track geopolitical news from configurable sources, monitor Pentagon open-source data, and provide agents with real-time geopolitical intelligence.",
+  "version": "1.0.0",
+  "icon": "mdi-earth",
+  "enabled": false,
+  "settings": [
+    {
+      "key": "geopolitics_scrape_interval",
+      "label": "Scraping Interval (minutes)",
+      "type": "select",
+      "options": ["15", "30", "60", "120", "360", "720", "1440"],
+      "default": "60"
+    },
+    {
+      "key": "geopolitics_news_sources",
+      "label": "News Sources (comma-separated URLs)",
+      "type": "text",
+      "default": "https://www.reuters.com,https://apnews.com,https://www.bbc.com/news"
+    },
+    {
+      "key": "geopolitics_keywords",
+      "label": "Keywords Filter (comma-separated)",
+      "type": "text",
+      "default": "geopolitics,sanctions,military,nato,defense,conflict,treaty,diplomacy"
+    },
+    {
+      "key": "geopolitics_pentagon_enabled",
+      "label": "Enable Pentagon Source Monitoring",
+      "type": "select",
+      "options": ["true", "false"],
+      "default": "true"
+    },
+    {
+      "key": "geopolitics_max_articles",
+      "label": "Max Articles per Source",
+      "type": "select",
+      "options": ["10", "25", "50", "100"],
+      "default": "25"
+    }
+  ],
+  "skills": ["geopolitics_search"],
+  "route": {
+    "path": "/addons/geopolitics",
+    "name": "Geopolitics",
+    "component": "frontend/GeopoliticsView.vue"
+  }
+}

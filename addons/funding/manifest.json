@@ -1,0 +1,44 @@
+{
+  "id": "funding",
+  "name": "Funding & Investors",
+  "description": "Track venture capital, angel investors, and SMB financing — discover funds, people, and programs that provide business funding",
+  "icon": "mdi-currency-usd",
+  "version": "1.0.0",
+  "author": "system",
+  "route": {
+    "path": "/addons/funding",
+    "name": "Funding",
+    "title": "Funding & Investors"
+  },
+  "settings": [
+    {
+      "key": "funding_scrape_frequency",
+      "label": "Scrape Frequency",
+      "type": "select",
+      "default": "weekly",
+      "options": ["daily", "weekly", "monthly", "manual"]
+    },
+    {
+      "key": "funding_focus_sectors",
+      "label": "Focus Sectors (comma-separated)",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "key": "funding_focus_stages",
+      "label": "Investment Stages",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "key": "funding_crunchbase_key",
+      "label": "Crunchbase API Key (optional)",
+      "type": "text",
+      "default": ""
+    }
+  ],
+  "protocols": [],
+  "skills": [
+    "funding_search"
+  ]
+}

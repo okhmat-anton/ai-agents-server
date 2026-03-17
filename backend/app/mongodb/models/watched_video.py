@@ -22,6 +22,8 @@ class MongoWatchedVideo(BaseModel):
     category: Optional[str] = None  # User-defined category for grouping
     tags: List[str] = Field(default_factory=list)  # User-defined tags
     is_long: bool = False  # Flag for long videos
+    tab: Optional[str] = None  # User-defined tab name for organizing videos
+    summary: Optional[str] = None  # LLM-generated summary of the transcript
     credits_used: int = 1
     error: Optional[str] = None  # Error message if fetch failed
     # Cross-linking

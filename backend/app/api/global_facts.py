@@ -189,6 +189,52 @@ async def delete_global_fact(
     return {"detail": "Deleted"}
 
 
+class BulkDeleteRequest(BaseModel):
+    ids: List[str]
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_facts(
+    body: BulkDeleteRequest,
+    _user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Delete multiple facts at once."""
+    svc = AgentFactService(db)
+    deleted = 0
+    for fid in body.ids:
+        existing = await svc.get_by_id(fid)
+        if existing:
+            await svc.delete(fid)
+            deleted += 1
+    return {"deleted": deleted}
+
+
+class BulkCategoryRequest(BaseModel):
+    ids: List[str]
+    category: Optional[str] = None
+
+
+@router.post("/bulk-category")
+async def bulk_update_category(
+    body: BulkCategoryRequest,
+    _user=Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Update category for multiple facts at once."""
+    svc = AgentFactService(db)
+    updated = 0
+    for fid in body.ids:
+        existing = await svc.get_by_id(fid)
+        if existing:
+            await svc.update(fid, {
+                "category": body.category,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
+            updated += 1
+    return {"updated": updated}
+
+
 # ── Link / Unlink ────────────────────────────────────
 
 class FactLinkRequest(BaseModel):

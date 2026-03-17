@@ -66,6 +66,8 @@ class WatchedVideoResponse(BaseModel):
     category: Optional[str] = None
     tags: list[str] = []
     is_long: bool = False
+    tab: Optional[str] = None
+    summary: Optional[str] = None
     credits_used: int = 1
     error: Optional[str] = None
     linked_fact_ids: list[str] = []
@@ -86,6 +88,7 @@ class WatchedVideoListResponse(BaseModel):
 async def list_watched_videos(
     platform: Optional[str] = Query(None, description="Filter by platform (youtube, tiktok, instagram, facebook, twitter)"),
     category: Optional[str] = Query(None, description="Filter by category"),
+    tab: Optional[str] = Query(None, description="Filter by tab name"),
     search: Optional[str] = Query(None, description="Search by URL, title, or transcript text"),
     agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
     limit: int = Query(50, ge=1, le=500),
@@ -106,6 +109,8 @@ async def list_watched_videos(
             filt["platform"] = platform
         if category:
             filt["category"] = category
+        if tab is not None:
+            filt["tab"] = tab if tab else None
         cursor = svc.collection.find(filt).sort("created_at", -1).skip(offset).limit(limit)
         docs = await cursor.to_list(length=limit)
         items = [MongoWatchedVideo.from_mongo(doc) for doc in docs]
@@ -163,9 +168,11 @@ class UpdateVideoRequest(BaseModel):
     category: Optional[str] = None
     title: Optional[str] = None
     transcript: Optional[str] = None
+    summary: Optional[str] = None
     agent_id: Optional[str] = None
     tags: Optional[list[str]] = None
     is_long: Optional[bool] = None
+    tab: Optional[str] = None
     linked_fact_ids: Optional[list[str]] = None
     linked_analysis_ids: Optional[list[str]] = None
     linked_idea_ids: Optional[list[str]] = None
@@ -179,12 +186,13 @@ async def update_watched_video(
     _user: MongoUser = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    """Update a watched video record (category, title, etc.)."""
+    """Update a watched video record (category, title, tab, etc.)."""
     svc = WatchedVideoService(db)
     video = await svc.get_by_id(str(video_id))
     if not video:
         raise HTTPException(status_code=404, detail="Watched video not found")
-    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    # Use exclude_unset to keep explicit nulls (e.g. clearing category/tab)
+    updates = body.model_dump(exclude_unset=True)
     if updates:
         await svc.collection.update_one({"_id": str(video_id)}, {"$set": updates})
         video = await svc.get_by_id(str(video_id))
@@ -195,9 +203,11 @@ async def update_watched_video(
 
 class AddVideoRequest(BaseModel):
     url: str
+    title: Optional[str] = None
     category: Optional[str] = None
     tags: Optional[list[str]] = None
     is_long: bool = False
+    tab: Optional[str] = None
 
 
 @router.post("", response_model=WatchedVideoResponse, status_code=201)
@@ -224,9 +234,11 @@ async def add_video(
     record = MongoWatchedVideo(
         url=url,
         platform=platform or "unknown",
+        title=body.title.strip() if body.title else None,
         category=body.category or None,
         tags=body.tags or [],
         is_long=body.is_long,
+        tab=body.tab or None,
     )
     created = await svc.create(record)
     return _to_response(created)
@@ -607,6 +619,137 @@ async def clear_transcript_logs(
     return {"deleted": result.deleted_count}
 
 
+# ── Video Tabs CRUD ──────────────────────────────────────────────────
+
+VIDEO_TABS_COLLECTION = "video_tabs"
+
+
+class VideoTabRequest(BaseModel):
+    name: str
+    icon: Optional[str] = None
+    color: Optional[str] = None
+
+
+@router.get("/tabs/list")
+async def list_video_tabs(
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """List all video tabs (ordered by sort_order)."""
+    cursor = db[VIDEO_TABS_COLLECTION].find().sort("sort_order", 1)
+    items = []
+    async for doc in cursor:
+        doc["id"] = doc.pop("_id")
+        items.append(doc)
+    return {"items": items}
+
+
+@router.post("/tabs", status_code=201)
+async def create_video_tab(
+    body: VideoTabRequest,
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Create a new video tab."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Tab name is required")
+
+    # Check for duplicates
+    existing = await db[VIDEO_TABS_COLLECTION].find_one({"name": name})
+    if existing:
+        raise HTTPException(status_code=400, detail="Tab with this name already exists")
+
+    # Get max sort_order
+    last = await db[VIDEO_TABS_COLLECTION].find_one(sort=[("sort_order", -1)])
+    sort_order = (last["sort_order"] + 1) if last else 0
+
+    doc = {
+        "_id": str(_uuid.uuid4()),
+        "name": name,
+        "icon": body.icon or "mdi-tab",
+        "color": body.color or "primary",
+        "sort_order": sort_order,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db[VIDEO_TABS_COLLECTION].insert_one(doc)
+    doc["id"] = doc.pop("_id")
+    return doc
+
+
+@router.patch("/tabs/{tab_id}")
+async def update_video_tab(
+    tab_id: str,
+    body: dict,
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Update a video tab (name, icon, color)."""
+    existing = await db[VIDEO_TABS_COLLECTION].find_one({"_id": tab_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tab not found")
+
+    update = {}
+    if "name" in body and body["name"]:
+        new_name = body["name"].strip()
+        old_name = existing["name"]
+        update["name"] = new_name
+        # Rename tab on all videos that reference the old name
+        if new_name != old_name:
+            await db["watched_videos"].update_many(
+                {"tab": old_name},
+                {"$set": {"tab": new_name}},
+            )
+    if "icon" in body:
+        update["icon"] = body["icon"]
+    if "color" in body:
+        update["color"] = body["color"]
+
+    if update:
+        await db[VIDEO_TABS_COLLECTION].update_one({"_id": tab_id}, {"$set": update})
+
+    updated = await db[VIDEO_TABS_COLLECTION].find_one({"_id": tab_id})
+    updated["id"] = updated.pop("_id")
+    return updated
+
+
+@router.delete("/tabs/{tab_id}")
+async def delete_video_tab(
+    tab_id: str,
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Delete a video tab. Videos in this tab get their tab field cleared."""
+    existing = await db[VIDEO_TABS_COLLECTION].find_one({"_id": tab_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tab not found")
+
+    # Clear tab field on videos that were in this tab
+    await db["watched_videos"].update_many(
+        {"tab": existing["name"]},
+        {"$set": {"tab": None}},
+    )
+
+    await db[VIDEO_TABS_COLLECTION].delete_one({"_id": tab_id})
+    return {"message": "Tab deleted"}
+
+
+@router.post("/tabs/reorder")
+async def reorder_video_tabs(
+    body: dict,
+    _user: MongoUser = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Reorder tabs. Body: {"ids": ["id1", "id2", ...]}"""
+    ids = body.get("ids", [])
+    for i, tab_id in enumerate(ids):
+        await db[VIDEO_TABS_COLLECTION].update_one(
+            {"_id": tab_id},
+            {"$set": {"sort_order": i}},
+        )
+    return {"message": "Tabs reordered"}
+
+
 # ── Helpers ───────────────────────────────────────────────────────────
 
 def _to_response(v: MongoWatchedVideo) -> WatchedVideoResponse:
@@ -623,6 +766,8 @@ def _to_response(v: MongoWatchedVideo) -> WatchedVideoResponse:
         category=v.category,
         tags=v.tags if v.tags else [],
         is_long=v.is_long if hasattr(v, 'is_long') else False,
+        tab=getattr(v, 'tab', None),
+        summary=getattr(v, 'summary', None),
         credits_used=v.credits_used,
         error=v.error,
         linked_fact_ids=v.linked_fact_ids or [],

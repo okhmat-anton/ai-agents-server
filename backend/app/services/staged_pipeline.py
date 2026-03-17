@@ -602,7 +602,17 @@ def _infer_args(skill_name: str, planned_args: dict, context: dict) -> dict:
 
     elif skill_name == "fact_read":
         if "query" not in args or not args["query"]:
-            args["query"] = user_input
+            # Strip common fact-request keywords to get the actual search query.
+            # If nothing meaningful remains, leave query empty so _sys_fact_read
+            # returns ALL facts instead of regex-searching the full user sentence.
+            cleaned = re.sub(
+                r'\b(факт[ыаов]*|гипотез[ыау]*|покажи|выведи|прочитай|напомни|'
+                r'мои|какие|что|знаешь|ты|у\s+тебя|список|все|свои|'
+                r'show|my|facts?|hypothes[ei]s|list|all|know|what|read|get|retrieve|'
+                r'display|recall|tell|me|your|the)\b',
+                '', user_input, flags=re.I,
+            ).strip(' ,.:;!?\t\n')
+            args["query"] = cleaned  # empty → get_by_agent returns all
         if "limit" not in args:
             args["limit"] = 20
 
@@ -1446,6 +1456,9 @@ class StagedPipeline:
 
         if query:
             items = await svc.search_by_text(agent_id, query, limit=limit)
+            # Fallback: if regex search found nothing, return all facts
+            if not items:
+                items = await svc.get_by_agent(agent_id, fact_type=fact_type, limit=limit)
         else:
             items = await svc.get_by_agent(agent_id, fact_type=fact_type, limit=limit)
 
@@ -1474,9 +1487,23 @@ class StagedPipeline:
         if not text:
             return {"error": "No text provided for fact extraction"}
 
-        # Use LLM to extract facts
+        # Use LLM to extract facts — scale quantity to text length
+        text_len = len(text)
+        if text_len < 300:
+            max_hint = "Extract at most 1 key fact."
+        elif text_len < 600:
+            max_hint = "Extract at most 2 key facts."
+        elif text_len < 1200:
+            max_hint = "Extract at most 3 key facts."
+        elif text_len < 3000:
+            max_hint = "Extract at most 5 key facts."
+        else:
+            max_hint = "Extract the most important facts (up to 10 max)."
+
         prompt = (
-            "Extract facts and hypotheses from the following text.\n"
+            "Extract the most important facts and hypotheses from the following text.\n"
+            f"IMPORTANT: {max_hint} Only include genuinely significant, non-obvious information. "
+            "Do NOT pad with trivial or redundant facts. Quality over quantity.\n"
             "Return a JSON array where each item has:\n"
             '  - "type": "fact" (confirmed information) or "hypothesis" (unverified assumption)\n'
             '  - "content": the fact/hypothesis text\n'
@@ -1497,6 +1524,10 @@ class StagedPipeline:
             extracted = self._extract_json(resp.content)
             if not isinstance(extracted, list):
                 return {"error": "Failed to parse extracted facts as JSON array"}
+
+            # Hard cap: enforce max facts based on text length
+            max_count = 1 if text_len < 300 else 2 if text_len < 600 else 3 if text_len < 1200 else 5 if text_len < 3000 else 10
+            extracted = extracted[:max_count]
 
             svc = AgentFactService(db)
             saved = []

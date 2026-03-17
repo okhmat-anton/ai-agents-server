@@ -80,6 +80,12 @@ const routes = [
       { path: 'addons/polymarket', name: 'Polymarket', component: () => import('@addons/polymarket/frontend/PolymarketView.vue') },
       { path: 'addons/budgeting', name: 'Budgeting', component: () => import('@addons/budgeting/frontend/BudgetView.vue') },
       { path: 'addons/darpa-monitor', name: 'DarpaMonitor', component: () => import('@addons_private/darpa_monitor/frontend/DarpaMonitorView.vue') },
+      { path: 'addons/us-finance', name: 'UsFinance', component: () => import('@addons/us_finance/frontend/UsFinanceView.vue') },
+      { path: 'addons/grants-tracker', name: 'GrantsTracker', component: () => import('@addons/grants_tracker/frontend/GrantsTrackerView.vue') },
+      { path: 'addons/funding', name: 'Funding', component: () => import('@addons/funding/frontend/FundingView.vue') },
+      { path: 'addons/genetics', name: 'Genetics', component: () => import('@addons_private/genetics/frontend/GeneticsView.vue') },
+      { path: 'addons/physiology', name: 'Physiology', component: () => import('@addons/physiology/frontend/PhysiologyView.vue') },
+      { path: 'addons/geopolitics', name: 'Geopolitics', component: () => import('@addons/geopolitics/frontend/GeopoliticsView.vue') },
     ],
   },
 ]

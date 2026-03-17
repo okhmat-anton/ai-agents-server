@@ -1,0 +1,50 @@
+{
+  "id": "grants_tracker",
+  "name": "Grants Tracker",
+  "description": "Track government and private grants — automated scraping from grants.gov and custom sources with filters, deadlines, and agent search",
+  "icon": "mdi-trophy-award",
+  "version": "1.0.0",
+  "author": "system",
+  "route": {
+    "path": "/addons/grants-tracker",
+    "name": "GrantsTracker",
+    "title": "Grants Tracker"
+  },
+  "settings": [
+    {
+      "key": "grants_scrape_frequency",
+      "label": "Scrape Frequency",
+      "type": "select",
+      "default": "daily",
+      "options": ["hourly", "daily", "weekly", "manual"]
+    },
+    {
+      "key": "grants_sources",
+      "label": "Grant Sources (one URL per line)",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "key": "grants_keywords",
+      "label": "Keyword Filters (comma-separated)",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "key": "grants_min_amount",
+      "label": "Minimum Award Amount ($)",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "key": "grants_eligible_types",
+      "label": "Eligible Applicant Types",
+      "type": "text",
+      "default": ""
+    }
+  ],
+  "protocols": [],
+  "skills": [
+    "grants_search"
+  ]
+}

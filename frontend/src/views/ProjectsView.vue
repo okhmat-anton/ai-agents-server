@@ -227,14 +227,12 @@
         <v-card-text>
           <p>Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong>?</p>
           <p class="text-error mt-2">This will permanently delete all code, tasks, and logs.</p>
-          <div class="text-body-2 mt-3 mb-1">
-            Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="deleteConfirm = 'DELETE'">DELETE</strong> to confirm
-          </div>
           <v-text-field
             v-model="deleteConfirm"
-            placeholder="DELETE"
+            label="Type DELETE to confirm"
             variant="outlined"
             density="compact"
+            class="mt-3"
           />
         </v-card-text>
         <v-card-actions>

@@ -1,0 +1,37 @@
+{
+  "id": "physiology",
+  "name": "Human Physiology",
+  "description": "Simulate human organism at the hormone, peptide, and biochemical level. Enter lab results, predict medication effects.",
+  "version": "1.0.0",
+  "icon": "mdi-human",
+  "enabled": false,
+  "settings": [
+    {
+      "key": "physiology_default_model",
+      "label": "Default LLM Model for Simulation",
+      "type": "select",
+      "options": ["auto", "gpt-4", "gpt-3.5-turbo", "llama3", "mistral"],
+      "default": "auto"
+    },
+    {
+      "key": "physiology_units",
+      "label": "Measurement Units",
+      "type": "select",
+      "options": ["SI", "conventional"],
+      "default": "SI"
+    },
+    {
+      "key": "physiology_age_group",
+      "label": "Default Age Group",
+      "type": "select",
+      "options": ["child", "adult", "elderly"],
+      "default": "adult"
+    }
+  ],
+  "skills": ["physiology_simulate"],
+  "route": {
+    "path": "/addons/physiology",
+    "name": "Physiology",
+    "component": "frontend/PhysiologyView.vue"
+  }
+}

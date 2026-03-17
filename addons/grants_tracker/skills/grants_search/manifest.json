@@ -1,0 +1,25 @@
+{
+  "name": "grants_search",
+  "description": "Search government and private grants by keyword, category, amount, and deadline",
+  "category": "grants",
+  "params": [
+    {
+      "name": "query",
+      "type": "string",
+      "description": "Search text across grant titles, descriptions, and agencies",
+      "required": true
+    },
+    {
+      "name": "category",
+      "type": "string",
+      "description": "Filter by grant category (e.g. Health, Education, Science and Technology)",
+      "required": false
+    },
+    {
+      "name": "limit",
+      "type": "integer",
+      "description": "Maximum results to return (default: 20)",
+      "required": false
+    }
+  ]
+}

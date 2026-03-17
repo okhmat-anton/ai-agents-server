@@ -20,7 +20,7 @@ class MongoAgent(BaseModel):
     temperature: float = 0.7
     top_p: float = 0.9
     top_k: int = 40
-    max_tokens: int = 32768
+    max_tokens: int = 2048
     num_ctx: int = 32768
     repeat_penalty: float = 1.1
     num_predict: int = -1
@@ -49,9 +49,6 @@ class MongoAgent(BaseModel):
 
     # Whether to include creator/owner context in agent responses
     use_creator_context: bool = True
-
-    # Expert questions — top questions other agents can ask this agent
-    expert_questions: List[str] = Field(default_factory=list)
 
     # Thinking protocol
     thinking_protocol_id: Optional[str] = None
@@ -174,7 +171,6 @@ class MongoThinkingProtocol(BaseModel):
     description: str = ""
     type: str = "standard"  # standard, orchestrator, loop
     steps: List[Dict[str, Any]] = Field(default_factory=list)
-    response_style: Optional[str] = None  # humanized, formal, casual, technical, concise, creative, academic
     is_default: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

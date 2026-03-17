@@ -1,8 +1,6 @@
 from uuid import UUID
-import json
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.database import get_mongodb
 from app.core.dependencies import get_current_user
@@ -387,99 +385,6 @@ async def test_akm_advisor_connection(
             raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")
 
 
-class AkmAccessUpdate(BaseModel):
-    full_access: bool = True
-    allowed_sections: list[str] = []
-
-
-@router.get("/akm-advisor/access")
-async def get_akm_access(
-    _user: MongoUser = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
-):
-    """Get current AKM Advisor access configuration."""
-    await _ensure_defaults(db)
-    full_access = (await get_setting_value(db, "akm_advisor_full_access") or "true") == "true"
-    try:
-        sections = json.loads(await get_setting_value(db, "akm_advisor_allowed_sections") or "[]")
-    except Exception:
-        sections = []
-    return {
-        "full_access": full_access,
-        "allowed_sections": sections,
-    }
-
-
-@router.put("/akm-advisor/access")
-async def update_akm_access(
-    body: AkmAccessUpdate,
-    _user: MongoUser = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
-):
-    """Update AKM Advisor access configuration."""
-    await _ensure_defaults(db)
-    setting_service = SystemSettingService(db)
-
-    for key, val in [
-        ("akm_advisor_full_access", "true" if body.full_access else "false"),
-        ("akm_advisor_allowed_sections", json.dumps(body.allowed_sections)),
-    ]:
-        setting = await setting_service.get_by_key(key)
-        if setting:
-            await setting_service.update(setting.id, {"value": val})
-    return {"status": "ok", "message": "Access settings saved"}
-
-
-@router.get("/akm-advisor/available-resources")
-async def get_akm_available_resources(
-    _user: MongoUser = Depends(get_current_user),
-    db: AsyncIOMotorDatabase = Depends(get_mongodb),
-):
-    """Fetch available resources from AKM Advisor API: permissions + project context."""
-    api_key = await get_setting_value(db, "akm_advisor_api_key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="AKM Advisor API key not configured")
-    base_url = (await get_setting_value(db, "akm_advisor_url") or "").rstrip("/")
-    if not base_url:
-        raise HTTPException(status_code=400, detail="AKM Advisor API URL not configured")
-
-    headers = {"X-Agent-Key": api_key}
-
-    result = {
-        "project": None,
-        "issues_count": 0,
-        "permissions": None,
-    }
-
-    async with httpx.AsyncClient(timeout=15) as client:
-        # Agent permissions (sections, pipelines, etc.)
-        try:
-            r = await client.get(f"{base_url}/permissions", headers=headers)
-            if r.status_code == 200:
-                result["permissions"] = r.json()
-        except Exception:
-            pass
-
-        # Project context
-        try:
-            r = await client.get(f"{base_url}/context", headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                result["project"] = {
-                    "id": data.get("id"),
-                    "key": data.get("key"),
-                    "name": data.get("name"),
-                    "description": data.get("description"),
-                    "statuses": data.get("statuses", []),
-                    "team_members": data.get("team_members", []),
-                }
-                result["issues_count"] = data.get("total_issues", 0)
-        except Exception:
-            pass
-
-    return result
-
-
 # --- Model Roles ---
 @router.get("/model-roles/available")
 async def get_available_roles(
@@ -615,15 +520,9 @@ _DEFAULT_SETTINGS = {
     "anthropic_api_key": {"value": "", "description": "Anthropic API key for Claude models (claude-sonnet-4, claude-opus-4, etc.)"},
     # ScrapeCreators — social media video transcripts
     "scrapecreators_api_key": {"value": "", "description": "ScrapeCreators API key for fetching video transcripts from YouTube, TikTok, Instagram, Facebook, Twitter"},
-    "transcript_fetch_timeout": {"value": "120", "description": "Maximum time (seconds) to wait for video transcript fetching from ScrapeCreators API. Increase if you get timeout errors on long videos."},
     # AKM Advisor CRM
     "akm_advisor_api_key": {"value": "", "description": "AKM Advisor Agent API key (X-Agent-Key) for CRM access"},
     "akm_advisor_url": {"value": "", "description": "AKM Advisor Agent API URL (e.g. https://app.akm-advisor.com/api/v1/agent/PROJECT_ID)"},
-    # AKM Advisor access control
-    "akm_advisor_full_access": {"value": "true", "description": "Grant agent full access to all AKM Advisor resources"},
-    "akm_advisor_allowed_sections": {"value": "[\"projects\",\"leads\",\"deals\",\"contacts\",\"sprints\",\"epics\",\"goals\"]", "description": "JSON array of allowed AKM sections"},
-    "akm_advisor_allowed_lead_boards": {"value": "[]", "description": "JSON array of allowed lead board/pipeline IDs (empty = all)"},
-    "akm_advisor_allowed_deal_boards": {"value": "[]", "description": "JSON array of allowed deal board/pipeline IDs (empty = all)"},
 }
 
 
@@ -669,10 +568,7 @@ async def update_system_setting(
     setting_service = SystemSettingService(db)
     setting = await setting_service.get_by_key(key)
     if not setting:
-        # Auto-create the setting if it doesn't exist yet
-        new_setting = MongoSystemSetting(key=key, value=body.value)
-        created = await setting_service.create(new_setting)
-        return created
+        raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
     
     updated = await setting_service.update(setting.id, {"value": body.value})
     return updated

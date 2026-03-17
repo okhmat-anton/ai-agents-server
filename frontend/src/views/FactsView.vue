@@ -6,6 +6,26 @@
       <v-spacer />
       <v-btn
         v-if="selectedItems.length"
+        color="error"
+        variant="tonal"
+        prepend-icon="mdi-delete"
+        class="mr-3"
+        @click="bulkDeleteConfirm"
+      >
+        Delete ({{ selectedItems.length }})
+      </v-btn>
+      <v-btn
+        v-if="selectedItems.length"
+        color="indigo"
+        variant="tonal"
+        prepend-icon="mdi-tag-multiple"
+        class="mr-3"
+        @click="openBulkCategoryDialog"
+      >
+        Change Category ({{ selectedItems.length }})
+      </v-btn>
+      <v-btn
+        v-if="selectedItems.length"
         color="deep-purple"
         variant="tonal"
         prepend-icon="mdi-forum"
@@ -77,8 +97,27 @@
 
     <!-- Facts grouped by category -->
     <div v-if="!filterCategory && groupedFacts.length > 1">
+      <div class="d-flex align-center mb-2">
+        <v-checkbox
+          :model-value="allSelected"
+          :indeterminate="someSelected && !allSelected"
+          density="compact"
+          hide-details
+          class="flex-grow-0 mr-2"
+          @update:model-value="toggleSelectAll"
+        />
+        <span class="text-caption text-medium-emphasis">Select all ({{ facts.length }})</span>
+      </div>
       <div v-for="group in groupedFacts" :key="group.category" class="mb-6">
         <div class="text-subtitle-1 font-weight-bold mb-2 d-flex align-center">
+          <v-checkbox
+            :model-value="isCategoryAllSelected(group.category)"
+            :indeterminate="isCategorySomeSelected(group.category) && !isCategoryAllSelected(group.category)"
+            density="compact"
+            hide-details
+            class="flex-grow-0 mr-1"
+            @update:model-value="toggleSelectCategory(group.category, $event)"
+          />
           <v-icon size="18" class="mr-2">mdi-tag</v-icon>
           {{ group.category || 'Uncategorized' }}
           <v-chip size="x-small" variant="tonal" class="ml-2">{{ group.items.length }}</v-chip>
@@ -92,8 +131,15 @@
           @end="onDragEnd(group.category)"
         >
           <template #item="{ element: fact }">
-            <v-card variant="outlined" class="mb-1">
+            <v-card variant="outlined" class="mb-1" :color="isSelected(fact) ? 'primary' : undefined">
               <v-card-text class="pa-2 d-flex align-center ga-2">
+                <v-checkbox
+                  :model-value="isSelected(fact)"
+                  density="compact"
+                  hide-details
+                  class="flex-grow-0"
+                  @update:model-value="toggleSelect(fact)"
+                />
                 <div class="drag-handle">
                   <v-icon size="18" color="grey">mdi-drag-vertical</v-icon>
                 </div>
@@ -123,6 +169,17 @@
 
     <!-- Flat list -->
     <div v-else>
+      <div class="d-flex align-center mb-2">
+        <v-checkbox
+          :model-value="allSelected"
+          :indeterminate="someSelected && !allSelected"
+          density="compact"
+          hide-details
+          class="flex-grow-0 mr-2"
+          @update:model-value="toggleSelectAll"
+        />
+        <span class="text-caption text-medium-emphasis">Select all ({{ facts.length }})</span>
+      </div>
       <draggable
         :list="facts"
         item-key="id"
@@ -132,8 +189,15 @@
         @end="onDragEndFlat"
       >
         <template #item="{ element: fact }">
-          <v-card variant="outlined" class="mb-1">
+          <v-card variant="outlined" class="mb-1" :color="isSelected(fact) ? 'primary' : undefined">
             <v-card-text class="pa-2 d-flex align-center ga-2">
+              <v-checkbox
+                :model-value="isSelected(fact)"
+                density="compact"
+                hide-details
+                class="flex-grow-0"
+                @update:model-value="toggleSelect(fact)"
+              />
               <div class="drag-handle">
                 <v-icon size="18" color="grey">mdi-drag-vertical</v-icon>
               </div>
@@ -164,9 +228,9 @@
     <!-- Delete Confirmation Dialog -->
     <v-dialog v-model="deleteDialog" max-width="400">
       <v-card>
-        <v-card-title class="text-h6">Delete Fact</v-card-title>
+        <v-card-title class="text-h6">{{ deleteFactIds.length > 1 ? `Delete ${deleteFactIds.length} Facts` : 'Delete Fact' }}</v-card-title>
         <v-card-text>
-          Are you sure you want to delete this fact? This action cannot be undone.
+          {{ deleteFactIds.length > 1 ? `Are you sure you want to delete ${deleteFactIds.length} facts? This action cannot be undone.` : 'Are you sure you want to delete this fact? This action cannot be undone.' }}
           <div class="text-body-2 mt-4 mb-1">
             Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="deleteConfirmText = 'DELETE'">DELETE</strong> to confirm
           </div>
@@ -181,6 +245,31 @@
           <v-spacer />
           <v-btn @click="deleteDialog = false">Cancel</v-btn>
           <v-btn color="error" :disabled="deleteConfirmText !== 'DELETE'" @click="doDeleteFact">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Bulk Category Change Dialog -->
+    <v-dialog v-model="bulkCategoryDialog" max-width="400">
+      <v-card>
+        <v-card-title class="text-h6">Change Category ({{ selectedItems.length }})</v-card-title>
+        <v-card-text>
+          <v-combobox
+            v-model="bulkCategoryValue"
+            :items="categoryOptions"
+            label="New Category"
+            variant="outlined"
+            density="compact"
+            clearable
+            prepend-inner-icon="mdi-tag-outline"
+            hint="Leave empty to remove category"
+            persistent-hint
+          />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="bulkCategoryDialog = false">Cancel</v-btn>
+          <v-btn color="indigo" :loading="bulkCategorySaving" @click="doBulkCategoryChange">Apply</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -315,9 +404,15 @@ const formData = ref({
 })
 
 const deleteDialog = ref(false)
-const deleteFactId = ref(null)
+const deleteFactIds = ref([])
 const deleteConfirmText = ref('')
 const selectedItems = ref([])
+const bulkCategoryDialog = ref(false)
+const bulkCategoryValue = ref(null)
+const bulkCategorySaving = ref(false)
+
+const allSelected = computed(() => facts.value.length > 0 && selectedItems.value.length === facts.value.length)
+const someSelected = computed(() => selectedItems.value.length > 0)
 
 const agents = ref([])
 const agentOptions = computed(() => agents.value)
@@ -463,20 +558,105 @@ async function verifyFact(item) {
 }
 
 async function deleteFact(id) {
-  deleteFactId.value = id
+  deleteFactIds.value = [id]
+  deleteConfirmText.value = ''
+  deleteDialog.value = true
+}
+
+function bulkDeleteConfirm() {
+  if (!selectedItems.value.length) return
+  deleteFactIds.value = selectedItems.value.map(f => f.id)
   deleteConfirmText.value = ''
   deleteDialog.value = true
 }
 
 async function doDeleteFact() {
-  const id = deleteFactId.value
+  const ids = deleteFactIds.value
   deleteDialog.value = false
   try {
-    await api.delete(`/facts/${id}`)
-    facts.value = facts.value.filter(f => f.id !== id)
-    showSnackbar?.('Fact deleted', 'success')
+    if (ids.length === 1) {
+      await api.delete(`/facts/${ids[0]}`)
+      facts.value = facts.value.filter(f => f.id !== ids[0])
+    } else {
+      await api.post('/facts/bulk-delete', { ids })
+      const idSet = new Set(ids)
+      facts.value = facts.value.filter(f => !idSet.has(f.id))
+      selectedItems.value = []
+    }
+    showSnackbar?.(`${ids.length > 1 ? ids.length + ' facts' : 'Fact'} deleted`, 'success')
   } catch (e) {
     showSnackbar?.('Failed to delete', 'error')
+  }
+}
+
+function isSelected(fact) {
+  return selectedItems.value.some(f => f.id === fact.id)
+}
+
+function toggleSelect(fact) {
+  const idx = selectedItems.value.findIndex(f => f.id === fact.id)
+  if (idx !== -1) {
+    selectedItems.value.splice(idx, 1)
+  } else {
+    selectedItems.value.push(fact)
+  }
+}
+
+function toggleSelectAll(val) {
+  if (val) {
+    selectedItems.value = [...facts.value]
+  } else {
+    selectedItems.value = []
+  }
+}
+
+function isCategoryAllSelected(category) {
+  const group = groupedFacts.value.find(g => g.category === category)
+  if (!group || !group.items.length) return false
+  return group.items.every(f => selectedItems.value.some(s => s.id === f.id))
+}
+
+function isCategorySomeSelected(category) {
+  const group = groupedFacts.value.find(g => g.category === category)
+  if (!group) return false
+  return group.items.some(f => selectedItems.value.some(s => s.id === f.id))
+}
+
+function toggleSelectCategory(category, val) {
+  const group = groupedFacts.value.find(g => g.category === category)
+  if (!group) return
+  if (val) {
+    // Add all items from this category that are not already selected
+    const existingIds = new Set(selectedItems.value.map(f => f.id))
+    for (const f of group.items) {
+      if (!existingIds.has(f.id)) selectedItems.value.push(f)
+    }
+  } else {
+    // Remove all items from this category
+    const catIds = new Set(group.items.map(f => f.id))
+    selectedItems.value = selectedItems.value.filter(f => !catIds.has(f.id))
+  }
+}
+
+function openBulkCategoryDialog() {
+  if (!selectedItems.value.length) return
+  bulkCategoryValue.value = null
+  bulkCategoryDialog.value = true
+}
+
+async function doBulkCategoryChange() {
+  bulkCategorySaving.value = true
+  try {
+    const ids = selectedItems.value.map(f => f.id)
+    await api.post('/facts/bulk-category', { ids, category: bulkCategoryValue.value || null })
+    showSnackbar?.(`Category updated for ${ids.length} facts`, 'success')
+    bulkCategoryDialog.value = false
+    selectedItems.value = []
+    await loadFacts()
+  } catch (e) {
+    showSnackbar?.('Failed to update category', 'error')
+  } finally {
+    bulkCategorySaving.value = false
   }
 }
 

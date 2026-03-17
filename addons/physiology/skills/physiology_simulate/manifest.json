@@ -1,0 +1,26 @@
+{
+  "id": "physiology_simulate",
+  "name": "Physiology Simulate",
+  "description": "Simulate the effect of a medication or substance on human physiology, predicting changes to hormones, peptides, and biochemistry markers",
+  "category": "health",
+  "parameters": [
+    {
+      "name": "substance_name",
+      "type": "string",
+      "description": "Name of the substance or medication to simulate",
+      "required": true
+    },
+    {
+      "name": "profile_id",
+      "type": "string",
+      "description": "Profile ID to use for simulation (uses latest lab results)",
+      "required": false
+    },
+    {
+      "name": "dosage",
+      "type": "string",
+      "description": "Dosage information (e.g. 200mg/week)",
+      "required": false
+    }
+  ]
+}

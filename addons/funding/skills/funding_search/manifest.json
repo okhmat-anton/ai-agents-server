@@ -1,0 +1,25 @@
+{
+  "name": "funding_search",
+  "description": "Search VC firms, investors, and SMB financing programs",
+  "category": "finance",
+  "params": [
+    {
+      "name": "query",
+      "type": "string",
+      "description": "Search text across funding data (firms, investors, programs)",
+      "required": true
+    },
+    {
+      "name": "section",
+      "type": "string",
+      "description": "Filter by section: vc, investors, smb",
+      "required": false
+    },
+    {
+      "name": "limit",
+      "type": "integer",
+      "description": "Maximum results to return (default: 20)",
+      "required": false
+    }
+  ]
+}

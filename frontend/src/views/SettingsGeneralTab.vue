@@ -329,6 +329,76 @@
       </v-card-text>
     </v-card>
 
+    <!-- AKM Advisor CRM -->
+    <v-card class="mb-6">
+      <v-card-title>
+        <v-icon class="mr-2" color="blue">mdi-briefcase-outline</v-icon>AKM Advisor CRM <a href="https://app.akm-advisor.com/settings/agent" target="_blank" class="text-primary font-weight-medium">API</a>
+      </v-card-title>
+      <v-card-text>
+        <v-row>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="akmSettings.akm_advisor_api_key"
+              label="Agent API Key (X-Agent-Key)"
+              :type="showAkmKey ? 'text' : 'password'"
+              variant="outlined"
+              density="compact"
+              hide-details
+              placeholder="agent_xxxxxxxxxxxxx"
+              :append-inner-icon="showAkmKey ? 'mdi-eye-off' : 'mdi-eye'"
+              @click:append-inner="showAkmKey = !showAkmKey"
+            />
+          </v-col>
+          <v-col cols="12" md="3">
+            <v-text-field
+              v-model="akmSettings.akm_advisor_url"
+              label="Agent API URL"
+              variant="outlined"
+              density="compact"
+              hide-details
+              placeholder="https://app.akm-advisor.com/api/v1/agent/..."
+            />
+          </v-col>
+          <v-col cols="12" md="3" class="d-flex align-center ga-2">
+            <v-btn
+              color="primary"
+              :disabled="!akmSettingsChanged"
+              :loading="savingAkm"
+              @click="saveAkmSettings"
+            >
+              <v-icon start>mdi-content-save</v-icon>
+              Save
+            </v-btn>
+            <v-btn
+              variant="tonal"
+              color="info"
+              :loading="testingAkm"
+              :disabled="!akmSettings.akm_advisor_api_key || !akmSettings.akm_advisor_url"
+              @click="testAkmConnection"
+            >
+              <v-icon start>mdi-connection</v-icon>
+              Test
+            </v-btn>
+          </v-col>
+        </v-row>
+        <v-alert
+          v-if="akmTestResult"
+          :type="akmTestResult.type"
+          variant="tonal"
+          density="compact"
+          class="mt-3"
+          closable
+          @click:close="akmTestResult = null"
+        >
+          {{ akmTestResult.message }}
+        </v-alert>
+        <v-alert type="info" variant="tonal" density="compact" class="mt-3">
+          Get your Agent API key and URL at <a href="https://app.akm-advisor.com/settings/agent" target="_blank" class="text-primary">akm-advisor.com &rarr; Settings &rarr; Agent</a>.
+          The URL should look like: <code>https://app.akm-advisor.com/api/v1/agent/YOUR_PROJECT_ID</code>
+        </v-alert>
+      </v-card-text>
+    </v-card>
+
     <v-row>
       <v-col cols="6">
         <v-card>
@@ -361,10 +431,10 @@
           <v-alert type="error" variant="tonal" class="mb-4">
             {{ confirmMessage }}
           </v-alert>
-          <p class="mb-3">To confirm, type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="confirmText = 'ENABLE'">ENABLE</strong> below:</p>
+          <p class="mb-3">To confirm, type <strong>ENABLE</strong> below:</p>
           <v-text-field
             v-model="confirmText"
-            placeholder="ENABLE"
+            label="Type ENABLE to confirm"
             variant="outlined"
             density="compact"
             autofocus
@@ -457,6 +527,19 @@ const scrapcreatorsSettingsChanged = computed(() => {
   return scrapcreatorsSettings.value.scrapecreators_api_key !== originalScrapcreatorsSettings.value.scrapecreators_api_key
 })
 
+// AKM Advisor settings
+const akmSettings = ref({ akm_advisor_api_key: '', akm_advisor_url: 'https://app.akm-advisor.com' })
+const originalAkmSettings = ref({ akm_advisor_api_key: '', akm_advisor_url: 'https://app.akm-advisor.com' })
+const showAkmKey = ref(false)
+const savingAkm = ref(false)
+const testingAkm = ref(false)
+const akmTestResult = ref(null)
+
+const akmSettingsChanged = computed(() => {
+  return akmSettings.value.akm_advisor_api_key !== originalAkmSettings.value.akm_advisor_api_key
+    || akmSettings.value.akm_advisor_url !== originalAkmSettings.value.akm_advisor_url
+})
+
 // Confirmation dialog
 const confirmDialog = ref(false)
 const confirmText = ref('')
@@ -504,6 +587,15 @@ onMounted(async () => {
       scrapcreatorsSettings.value.scrapecreators_api_key = store.systemSettings.scrapecreators_api_key.value
       originalScrapcreatorsSettings.value.scrapecreators_api_key = store.systemSettings.scrapecreators_api_key.value
     }
+    // Load AKM Advisor settings
+    if (store.systemSettings.akm_advisor_api_key?.value) {
+      akmSettings.value.akm_advisor_api_key = store.systemSettings.akm_advisor_api_key.value
+      originalAkmSettings.value.akm_advisor_api_key = store.systemSettings.akm_advisor_api_key.value
+    }
+    if (store.systemSettings.akm_advisor_url?.value) {
+      akmSettings.value.akm_advisor_url = store.systemSettings.akm_advisor_url.value
+      originalAkmSettings.value.akm_advisor_url = store.systemSettings.akm_advisor_url.value
+    }
   } catch (e) {
     console.error('Failed to load system settings', e)
   }
@@ -550,6 +642,40 @@ const saveScrapcreatorsSettings = async () => {
     showSnackbar(e.response?.data?.detail || 'Failed to save ScrapeCreators key', 'error')
   } finally {
     savingScrapcreators.value = false
+  }
+}
+
+const saveAkmSettings = async () => {
+  savingAkm.value = true
+  try {
+    await store.updateSystemSetting('akm_advisor_api_key', akmSettings.value.akm_advisor_api_key)
+    await store.updateSystemSetting('akm_advisor_url', akmSettings.value.akm_advisor_url)
+    originalAkmSettings.value.akm_advisor_api_key = akmSettings.value.akm_advisor_api_key
+    originalAkmSettings.value.akm_advisor_url = akmSettings.value.akm_advisor_url
+    showSnackbar('AKM Advisor settings saved')
+  } catch (e) {
+    showSnackbar(e.response?.data?.detail || 'Failed to save AKM settings', 'error')
+  } finally {
+    savingAkm.value = false
+  }
+}
+
+const testAkmConnection = async () => {
+  testingAkm.value = true
+  akmTestResult.value = null
+  try {
+    if (akmSettingsChanged.value) {
+      await store.updateSystemSetting('akm_advisor_api_key', akmSettings.value.akm_advisor_api_key)
+      await store.updateSystemSetting('akm_advisor_url', akmSettings.value.akm_advisor_url)
+      originalAkmSettings.value.akm_advisor_api_key = akmSettings.value.akm_advisor_api_key
+      originalAkmSettings.value.akm_advisor_url = akmSettings.value.akm_advisor_url
+    }
+    const { data } = await api.post('/settings/akm-advisor/test')
+    akmTestResult.value = { type: 'success', message: data.message }
+  } catch (e) {
+    akmTestResult.value = { type: 'error', message: e.response?.data?.detail || 'Connection failed' }
+  } finally {
+    testingAkm.value = false
   }
 }
 

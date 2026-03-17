@@ -37,6 +37,41 @@
     <!-- ========== VIDEOS TAB ========== -->
     <div v-show="activeTab === 'videos'">
 
+    <!-- Inner Tabs (All + user-defined) -->
+    <div class="d-flex align-center mb-3 ga-2 flex-wrap">
+      <v-btn-toggle v-model="activeVideoTab" mandatory density="compact" color="primary" variant="outlined">
+        <v-btn value="__all__" size="small">
+          <v-icon start size="16">mdi-view-list</v-icon>
+          Main Tab
+          <v-chip size="x-small" variant="tonal" class="ml-1">{{ mainTabCount }}</v-chip>
+        </v-btn>
+        <v-btn v-for="tab in videoTabs" :key="tab.id" :value="tab.name" size="small">
+          <v-icon start size="16">{{ tab.icon || 'mdi-tab' }}</v-icon>
+          {{ tab.name }}
+          <v-chip size="x-small" variant="tonal" class="ml-1">{{ tabVideoCount(tab.name) }}</v-chip>
+        </v-btn>
+      </v-btn-toggle>
+      <v-btn icon size="small" variant="text" color="primary" @click="openTabDialog()">
+        <v-icon size="18">mdi-plus</v-icon>
+        <v-tooltip activator="parent" location="top">Create Tab</v-tooltip>
+      </v-btn>
+      <v-menu v-if="videoTabs.length > 0" location="bottom">
+        <template #activator="{ props }">
+          <v-btn icon size="small" variant="text" v-bind="props">
+            <v-icon size="18">mdi-dots-vertical</v-icon>
+          </v-btn>
+        </template>
+        <v-list density="compact">
+          <v-list-item v-if="activeVideoTab !== '__all__'" prepend-icon="mdi-pencil" @click="openTabDialog(currentTabObj)">
+            Rename Tab
+          </v-list-item>
+          <v-list-item v-if="activeVideoTab !== '__all__'" prepend-icon="mdi-delete" class="text-error" @click="confirmDeleteTab">
+            Delete Tab
+          </v-list-item>
+        </v-list>
+      </v-menu>
+    </div>
+
     <!-- Filters -->
     <div class="d-flex align-center ga-3 mb-4 flex-wrap">
       <v-chip-group v-model="filterPlatform" selected-class="text-primary" @update:model-value="loadHistory">
@@ -103,8 +138,9 @@
               <template #item.url="{ item }">
                 <div class="d-flex align-center">
                   <div>
-                    <span class="font-weight-medium text-truncate d-block" style="max-width: 400px;">{{ item.url }}</span>
-                    <div v-if="item.transcript" class="text-caption text-grey text-truncate" style="max-width: 400px;">
+                    <div v-if="item.title" class="font-weight-bold text-truncate" style="max-width: 400px;">{{ item.title }}</div>
+                    <span class="text-truncate d-block" :class="item.title ? 'text-caption text-medium-emphasis' : 'font-weight-medium'" style="max-width: 400px;">{{ item.url }}</span>
+                    <div v-if="item.transcript && !item.title" class="text-caption text-grey text-truncate" style="max-width: 400px;">
                       {{ item.transcript.substring(0, 80) }}…
                     </div>
                   </div>
@@ -161,8 +197,9 @@
           <template #item.url="{ item }">
             <div class="d-flex align-center">
               <div>
-                <span class="font-weight-medium text-truncate d-block" style="max-width: 400px;">{{ item.url }}</span>
-                <div v-if="item.transcript" class="text-caption text-grey text-truncate" style="max-width: 400px;">
+                <div v-if="item.title" class="font-weight-bold text-truncate" style="max-width: 400px;">{{ item.title }}</div>
+                <span class="text-truncate d-block" :class="item.title ? 'text-caption text-medium-emphasis' : 'font-weight-medium'" style="max-width: 400px;">{{ item.url }}</span>
+                <div v-if="item.transcript && !item.title" class="text-caption text-grey text-truncate" style="max-width: 400px;">
                   {{ item.transcript.substring(0, 80) }}…
                 </div>
               </div>
@@ -254,6 +291,17 @@
             autofocus
             @keydown.enter="addVideo"
           />
+          <v-text-field
+            v-model="addTitle"
+            label="Title (optional)"
+            placeholder="Give this video a name..."
+            variant="outlined"
+            density="compact"
+            prepend-inner-icon="mdi-format-title"
+            hide-details
+            clearable
+            class="mb-3"
+          />
           <v-combobox
             v-model="addCategory"
             :items="categoryOptions"
@@ -263,6 +311,17 @@
             hide-details
             clearable
             prepend-inner-icon="mdi-tag-outline"
+            class="mb-3"
+          />
+          <v-select
+            v-model="addTab"
+            :items="tabNameOptions"
+            label="Tab"
+            variant="outlined"
+            density="compact"
+            hide-details
+            clearable
+            prepend-inner-icon="mdi-tab"
             class="mb-3"
           />
           <v-combobox
@@ -303,7 +362,19 @@
           <v-chip :color="platformColor(currentVideo.platform)" size="small" class="mr-3">
             {{ currentVideo.platform }}
           </v-chip>
-          <span class="text-body-1 text-truncate flex-grow-1" style="max-width: 600px;">{{ currentVideo.url }}</span>
+          <div class="flex-grow-1" style="max-width: 600px; min-width: 0;">
+            <v-text-field
+              :model-value="currentVideo.title || ''"
+              placeholder="Add a title..."
+              variant="plain"
+              density="compact"
+              hide-details
+              single-line
+              class="video-title-input font-weight-bold"
+              @change="updateVideoTitle"
+            />
+            <div class="text-caption text-medium-emphasis text-truncate">{{ currentVideo.url }}</div>
+          </div>
           <v-spacer />
           <v-btn
             v-if="!transcript"
@@ -341,7 +412,7 @@
 
         <v-divider />
 
-        <!-- Category / Tags / Long Video -->
+        <!-- Category / Tags / Tab / Long Video -->
         <div class="d-flex align-center ga-2 px-4 py-2 flex-wrap" style="background: rgba(255,255,255,0.02);">
           <v-combobox
             :model-value="currentVideo.category"
@@ -354,6 +425,18 @@
             style="max-width: 250px;"
             prepend-inner-icon="mdi-tag-outline"
             @update:model-value="updateVideoCategory($event)"
+          />
+          <v-select
+            :model-value="currentVideo.tab"
+            :items="tabNameOptions"
+            label="Tab"
+            variant="outlined"
+            density="compact"
+            hide-details
+            clearable
+            style="max-width: 200px;"
+            prepend-inner-icon="mdi-tab"
+            @update:model-value="updateVideoTab($event)"
           />
           <v-combobox
             :model-value="currentVideo.tags || []"
@@ -385,7 +468,7 @@
           <v-btn variant="tonal" color="primary" size="small" prepend-icon="mdi-chat-plus-outline" @click="startChatWithTranscript">
             Start Chat
           </v-btn>
-          <v-btn variant="tonal" color="orange" size="small" prepend-icon="mdi-lightbulb-on-outline" :loading="extractingFacts" :disabled="!selectedAgentId" @click="extractFacts">
+          <v-btn variant="tonal" color="orange" size="small" prepend-icon="mdi-lightbulb-on-outline" :loading="extractingFacts" @click="extractFacts">
             Extract Facts
           </v-btn>
           <v-btn variant="tonal" color="teal" size="small" prepend-icon="mdi-text-box-check-outline" :loading="summarizing" @click="getSummary">
@@ -424,15 +507,15 @@
               Linked Entities
             </div>
             <div class="d-flex flex-wrap ga-2">
-              <v-chip v-for="fid in (currentVideo.linked_fact_ids || [])" :key="'f-'+fid" size="small" variant="tonal" color="teal" closable @click:close="unlinkFromVideo('fact', fid)">
+              <v-chip v-for="fid in (currentVideo.linked_fact_ids || [])" :key="'f-'+fid" size="small" variant="tonal" color="teal" closable @click:close="confirmUnlink('fact', fid)">
                 <v-icon start size="14">mdi-check-decagram</v-icon>
-                Fact
+                <span style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block;">{{ linkedFacts[fid] || 'Fact' }}</span>
               </v-chip>
-              <v-chip v-for="aid in (currentVideo.linked_analysis_ids || [])" :key="'a-'+aid" size="small" variant="tonal" color="blue" closable @click:close="unlinkFromVideo('analysis', aid)">
+              <v-chip v-for="aid in (currentVideo.linked_analysis_ids || [])" :key="'a-'+aid" size="small" variant="tonal" color="blue" closable @click:close="confirmUnlink('analysis', aid)">
                 <v-icon start size="14">mdi-chart-line</v-icon>
                 Analysis
               </v-chip>
-              <v-chip v-for="iid in (currentVideo.linked_idea_ids || [])" :key="'i-'+iid" size="small" variant="tonal" color="amber" closable @click:close="unlinkFromVideo('idea', iid)">
+              <v-chip v-for="iid in (currentVideo.linked_idea_ids || [])" :key="'i-'+iid" size="small" variant="tonal" color="amber" closable @click:close="confirmUnlink('idea', iid)">
                 <v-icon start size="14">mdi-lightbulb-on-outline</v-icon>
                 Idea
               </v-chip>
@@ -485,6 +568,96 @@
         </v-card-text>
       </v-card>
     </v-dialog>
+    <!-- Video Tab Create/Edit Dialog -->
+    <v-dialog v-model="tabDialog" max-width="400">
+      <v-card>
+        <v-card-title class="text-h6">{{ editingTab ? 'Rename Tab' : 'Create Tab' }}</v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="tabFormName"
+            label="Tab Name"
+            variant="outlined"
+            density="compact"
+            autofocus
+            @keydown.enter="saveTab"
+          />
+          <v-select
+            v-model="tabFormIcon"
+            :items="tabIconOptions"
+            label="Icon"
+            variant="outlined"
+            density="compact"
+            hide-details
+          >
+            <template #item="{ item, props }">
+              <v-list-item v-bind="props">
+                <template #prepend>
+                  <v-icon size="18">{{ item.value }}</v-icon>
+                </template>
+              </v-list-item>
+            </template>
+            <template #selection="{ item }">
+              <v-icon size="18" class="mr-1">{{ item.value }}</v-icon>
+              {{ item.title }}
+            </template>
+          </v-select>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="tabDialog = false">Cancel</v-btn>
+          <v-btn color="primary" :disabled="!tabFormName?.trim()" @click="saveTab">
+            {{ editingTab ? 'Save' : 'Create' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Unlink Confirmation Dialog -->
+    <v-dialog v-model="unlinkDialog" max-width="420">
+      <v-card>
+        <v-card-title class="text-h6">Remove linked {{ unlinkTarget.type }}?</v-card-title>
+        <v-card-text>
+          Are you sure you want to unlink this {{ unlinkTarget.type }} from the video? The {{ unlinkTarget.type }} itself will not be deleted.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="unlinkDialog = false">Cancel</v-btn>
+          <v-btn color="error" @click="doUnlink">Remove</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Unlink Confirmation Dialog -->
+    <v-dialog v-model="unlinkDialog" max-width="420">
+      <v-card>
+        <v-card-title class="text-h6">Remove linked {{ unlinkTarget.type }}?</v-card-title>
+        <v-card-text>
+          Are you sure you want to unlink this {{ unlinkTarget.type }} from the video? The {{ unlinkTarget.type }} itself will not be deleted.
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="unlinkDialog = false">Cancel</v-btn>
+          <v-btn color="error" @click="doUnlink">Remove</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Tab Delete Confirmation Dialog -->
+    <v-dialog v-model="deleteTabDialog" max-width="400">
+      <v-card>
+        <v-card-title class="text-h6">Delete Tab</v-card-title>
+        <v-card-text>
+          Are you sure you want to delete the tab <strong>"{{ deleteTabName }}"</strong>?
+          Videos in this tab will be moved to "All".
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="deleteTabDialog = false">Cancel</v-btn>
+          <v-btn color="error" @click="doDeleteTab">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     </div>
 
     <!-- ========== TRANSCRIPT LOGS TAB ========== -->
@@ -633,18 +806,54 @@ const deleteVideoId = ref(null)
 const deleteConfirmText = ref('')
 const filterCategory = ref(null)
 const selectedItems = ref([])
+const unlinkDialog = ref(false)
+const unlinkTarget = ref({ type: '', id: '' })
+const linkedFacts = ref({})
 
 // Add video dialog
 const addDialog = ref(false)
 const addUrl = ref('')
+const addTitle = ref('')
 const addCategory = ref(null)
 const addTags = ref([])
 const addIsLong = ref(false)
+const addTab = ref(null)
 const addingWithTranscript = ref(false)
 const transcriptContainerRef = ref(null)
 
-// Tabs
-const activeTab = ref('videos')
+// Top tabs
+const activeTab = ref(localStorage.getItem('video_activeTab') || 'videos')
+
+// Video inner tabs
+const activeVideoTab = ref(localStorage.getItem('video_activeVideoTab') || '__all__')
+const videoTabs = ref([])
+const tabDialog = ref(false)
+const editingTab = ref(null)
+const tabFormName = ref('')
+const tabFormIcon = ref('mdi-tab')
+const deleteTabDialog = ref(false)
+const deleteTabId = ref(null)
+const deleteTabName = ref('')
+
+const tabIconOptions = [
+  { title: 'Tab', value: 'mdi-tab' },
+  { title: 'Folder', value: 'mdi-folder-outline' },
+  { title: 'Star', value: 'mdi-star-outline' },
+  { title: 'Bookmark', value: 'mdi-bookmark-outline' },
+  { title: 'Play', value: 'mdi-play-circle-outline' },
+  { title: 'Music', value: 'mdi-music-note' },
+  { title: 'School', value: 'mdi-school-outline' },
+  { title: 'Code', value: 'mdi-code-braces' },
+  { title: 'Heart', value: 'mdi-heart-outline' },
+  { title: 'Fire', value: 'mdi-fire' },
+]
+
+const tabNameOptions = computed(() => videoTabs.value.map(t => t.name))
+
+const currentTabObj = computed(() => {
+  if (activeVideoTab.value === '__all__') return null
+  return videoTabs.value.find(t => t.name === activeVideoTab.value) || null
+})
 
 // Video-related skills
 const videoSkills = [
@@ -774,8 +983,24 @@ const headers = [
 ]
 
 const filteredHistory = computed(() => {
-  if (!filterPlatform.value) return history.value
-  return history.value.filter(v => v.platform === filterPlatform.value)
+  let items = history.value
+  if (filterPlatform.value) {
+    items = items.filter(v => v.platform === filterPlatform.value)
+  }
+  if (activeVideoTab.value === '__all__') {
+    items = items.filter(v => !v.tab)
+  } else {
+    items = items.filter(v => v.tab === activeVideoTab.value)
+  }
+  return items
+})
+
+function tabVideoCount(tabName) {
+  return history.value.filter(v => v.tab === tabName).length
+}
+
+const mainTabCount = computed(() => {
+  return history.value.filter(v => !v.tab).length
 })
 
 const categoryOptions = computed(() => {
@@ -809,11 +1034,16 @@ const groupedHistory = computed(() => {
 })
 
 onMounted(async () => {
-  await Promise.all([loadHistory(), loadAgents(), loadLogErrorCount()])
+  await Promise.all([loadHistory(), loadAgents(), loadLogErrorCount(), loadVideoTabs()])
 })
 
 watch(activeTab, (val) => {
+  localStorage.setItem('video_activeTab', val)
   if (val === 'logs') loadLogs()
+})
+
+watch(activeVideoTab, (val) => {
+  localStorage.setItem('video_activeVideoTab', val)
 })
 
 async function loadAgents() {
@@ -825,6 +1055,93 @@ async function loadAgents() {
     }
   } catch (e) {
     console.error('Failed to load agents:', e)
+  }
+}
+
+// ── Video Tabs ──
+
+async function loadVideoTabs() {
+  try {
+    const { data } = await api.get('/watched-videos/tabs/list')
+    videoTabs.value = data.items || []
+    // Validate restored activeVideoTab — fall back if saved tab no longer exists
+    if (activeVideoTab.value !== '__all__') {
+      const exists = videoTabs.value.some(t => t.name === activeVideoTab.value)
+      if (!exists) activeVideoTab.value = '__all__'
+    }
+  } catch (e) {
+    console.error('Failed to load video tabs:', e)
+  }
+}
+
+function openTabDialog(tab = null) {
+  editingTab.value = tab
+  tabFormName.value = tab ? tab.name : ''
+  tabFormIcon.value = tab ? (tab.icon || 'mdi-tab') : 'mdi-tab'
+  tabDialog.value = true
+}
+
+async function saveTab() {
+  const name = tabFormName.value?.trim()
+  if (!name) return
+  try {
+    if (editingTab.value) {
+      await api.patch(`/watched-videos/tabs/${editingTab.value.id}`, {
+        name,
+        icon: tabFormIcon.value,
+      })
+      // If renamed, update active tab selection
+      if (activeVideoTab.value === editingTab.value.name && name !== editingTab.value.name) {
+        activeVideoTab.value = name
+      }
+      showSnackbar?.('Tab updated', 'success')
+    } else {
+      await api.post('/watched-videos/tabs', {
+        name,
+        icon: tabFormIcon.value,
+      })
+      showSnackbar?.('Tab created', 'success')
+    }
+    tabDialog.value = false
+    await loadVideoTabs()
+    // Reload videos in case tab names changed
+    if (editingTab.value) await loadHistory()
+  } catch (e) {
+    showSnackbar?.(e.response?.data?.detail || 'Failed to save tab', 'error')
+  }
+}
+
+function confirmDeleteTab() {
+  const tab = currentTabObj.value
+  if (!tab) return
+  deleteTabId.value = tab.id
+  deleteTabName.value = tab.name
+  deleteTabDialog.value = true
+}
+
+async function doDeleteTab() {
+  deleteTabDialog.value = false
+  try {
+    await api.delete(`/watched-videos/tabs/${deleteTabId.value}`)
+    activeVideoTab.value = '__all__'
+    showSnackbar?.('Tab deleted', 'success')
+    await Promise.all([loadVideoTabs(), loadHistory()])
+  } catch (e) {
+    showSnackbar?.('Failed to delete tab', 'error')
+  }
+}
+
+async function updateVideoTab(val) {
+  if (!currentVideo.value) return
+  const tab = val || null
+  try {
+    await api.patch(`/watched-videos/${currentVideo.value.id}`, { tab })
+    currentVideo.value = { ...currentVideo.value, tab }
+    const idx = history.value.findIndex(v => v.id === currentVideo.value.id)
+    if (idx !== -1) history.value[idx] = { ...history.value[idx], tab }
+    showSnackbar?.('Tab updated', 'success')
+  } catch (e) {
+    showSnackbar?.('Failed to update tab', 'error')
   }
 }
 
@@ -905,14 +1222,18 @@ async function addVideo() {
   errorMsg.value = null
   try {
     const payload = { url: addUrl.value.trim() }
+    if (addTitle.value?.trim()) payload.title = addTitle.value.trim()
     if (addCategory.value) payload.category = addCategory.value
     if (addTags.value?.length) payload.tags = addTags.value
     if (addIsLong.value) payload.is_long = true
+    if (addTab.value) payload.tab = addTab.value
     const { data } = await api.post('/watched-videos', payload)
     addUrl.value = ''
+    addTitle.value = ''
     addCategory.value = null
     addTags.value = []
     addIsLong.value = false
+    addTab.value = null
     addDialog.value = false
     await loadHistory()
     openVideo(data)
@@ -929,18 +1250,22 @@ async function addVideoWithTranscript() {
   errorMsg.value = null
   try {
     const payload = { url: addUrl.value.trim() }
+    if (addTitle.value?.trim()) payload.title = addTitle.value.trim()
     if (addCategory.value) payload.category = addCategory.value
     if (addTags.value?.length) payload.tags = addTags.value
     if (addIsLong.value) payload.is_long = true
+    if (addTab.value) payload.tab = addTab.value
 
     // Step 1: Create the video record first
     const { data } = await api.post('/watched-videos', payload)
 
     // Step 2: Close dialog and show in list immediately
     addUrl.value = ''
+    addTitle.value = ''
     addCategory.value = null
     addTags.value = []
     addIsLong.value = false
+    addTab.value = null
     addDialog.value = false
     await loadHistory()
     showSnackbar?.('Video added! Fetching transcript in background...', 'success')
@@ -958,25 +1283,57 @@ async function addVideoWithTranscript() {
 
 function openAddDialog() {
   addUrl.value = ''
+  addTitle.value = ''
   addCategory.value = null
   addTags.value = []
   addIsLong.value = false
+  addTab.value = activeVideoTab.value !== '__all__' ? activeVideoTab.value : null
   addDialog.value = true
+}
+
+// Helper: update currentVideo and sync back into history list
+function syncVideoUpdate(updates) {
+  currentVideo.value = { ...currentVideo.value, ...updates }
+  const idx = history.value.findIndex(v => v.id === currentVideo.value.id)
+  if (idx !== -1) {
+    history.value[idx] = { ...history.value[idx], ...updates }
+  }
 }
 
 function openVideo(item) {
   currentVideo.value = item
-  summaryText.value = null
+  summaryText.value = item.summary || null
   factsResult.value = null
   memoryResult.value = null
   errorMsg.value = null
   editingTranscript.value = false
+  linkedFacts.value = {}
+  if (item.linked_fact_ids?.length) {
+    loadLinkedFacts(item.linked_fact_ids)
+  }
   if (item.transcript) {
     loadFullTranscript(item)
   } else {
     transcript.value = ''
   }
   detailDialog.value = true
+}
+
+async function loadLinkedFacts(factIds) {
+  if (!factIds?.length) return
+  try {
+    const { data } = await api.get('/facts', { params: { limit: 500 } })
+    const allFacts = data.items || []
+    const map = {}
+    for (const f of allFacts) {
+      if (factIds.includes(f.id)) {
+        map[f.id] = f.content
+      }
+    }
+    linkedFacts.value = map
+  } catch {
+    // Silently fail — chips will show ID fallback
+  }
 }
 
 async function loadFullTranscript(item) {
@@ -1014,7 +1371,7 @@ async function fetchTranscriptForCurrent() {
   errorMsg.value = null
   try {
     const { data } = await api.post('/watched-videos/fetch', { video_id: currentVideo.value.id })
-    currentVideo.value = { ...currentVideo.value, ...data }
+    syncVideoUpdate(data)
     if (data.id) {
       try {
         const { data: full } = await api.get(`/watched-videos/${data.id}/full-transcript`)
@@ -1045,7 +1402,7 @@ async function fetchTranscriptForItem(item) {
       history.value[idx] = { ...history.value[idx], transcript: data.transcript, language: data.language }
     }
     if (currentVideo.value?.id === item.id) {
-      currentVideo.value = { ...currentVideo.value, ...data }
+      syncVideoUpdate(data)
       try {
         const { data: full } = await api.get(`/watched-videos/${data.id}/full-transcript`)
         transcript.value = full.transcript || data.transcript || ''
@@ -1097,17 +1454,38 @@ function startChatWithTranscript() {
 }
 
 async function extractFacts() {
-  if (!transcript.value || !selectedAgentId.value) return
+  if (!transcript.value) return
   extractingFacts.value = true
   factsResult.value = null
   try {
+    // Scale max facts to transcript length (same logic as backend staged_pipeline)
+    const textLen = transcript.value.length
+    let maxFacts
+    let maxHint
+    if (textLen < 300) {
+      maxFacts = 1
+      maxHint = 'Extract at most 1 key fact.'
+    } else if (textLen < 600) {
+      maxFacts = 2
+      maxHint = 'Extract at most 2 key facts.'
+    } else if (textLen < 1200) {
+      maxFacts = 3
+      maxHint = 'Extract at most 3 key facts.'
+    } else if (textLen < 3000) {
+      maxFacts = 5
+      maxHint = 'Extract at most 5 key facts.'
+    } else {
+      maxFacts = 10
+      maxHint = 'Extract at most 10 key facts.'
+    }
+
     // Use LLM to extract individual facts from transcript
     const { data: session } = await api.post('/chat/sessions', {
       title: `Extract facts: ${currentVideo.value?.url?.substring(0, 50) || 'video'}`,
       chat_type: 'user',
     })
     const { data } = await api.post(`/chat/sessions/${session.id}/messages`, {
-      content: `Extract all key facts from the following video transcript. Return ONLY a JSON array of strings, each being a concise factual statement. No explanations, just the JSON array.\n\n---\n\n${transcript.value.substring(0, 12000)}`,
+      content: `Extract key facts from the following video transcript.\nIMPORTANT: ${maxHint} Only include genuinely significant, non-obvious information. Quality over quantity — do NOT pad with trivial or redundant facts.\nEach fact MUST be completely self-contained and understandable without the original text. Do NOT use pronouns like "he", "she", "they", "the speaker", "the author" — instead always use the actual name or specific subject. Do NOT write facts that depend on context (e.g. "this method works well" — specify WHICH method). Every fact should read as a standalone piece of knowledge that makes sense on its own. Return ONLY a JSON array of strings. No explanations, just the JSON array.\n\n---\n\n${transcript.value.substring(0, 12000)}`,
     }, { timeout: 300000 })
     const assistantMsg = data.find?.(m => m.role === 'assistant') || data
     const responseText = assistantMsg.content || assistantMsg.text || ''
@@ -1128,22 +1506,34 @@ async function extractFacts() {
       factsResult.value = 'No facts extracted from transcript.'
       return
     }
+
+    // Hard cap: never exceed max facts regardless of LLM output
+    if (facts.length > maxFacts) {
+      facts = facts.slice(0, maxFacts)
+    }
     
-    // Save each fact linked to this video
+    // Determine category: use video category, or tab name as fallback
+    const factCategory = currentVideo.value?.category || currentVideo.value?.tab || null
+
+    // Save each fact as global, linked to this video
     let savedCount = 0
+    const newFactIds = []
     for (const factText of facts) {
       if (typeof factText !== 'string' || factText.length < 5) continue
       try {
-        const { data: newFact } = await api.post(`/agents/${selectedAgentId.value}/facts`, {
+        const { data: newFact } = await api.post('/facts', {
+          agent_ids: [],
           type: 'fact',
           content: factText,
           source: 'video',
           verified: false,
           confidence: 0.7,
+          category: factCategory,
           tags: ['video', currentVideo.value?.platform || 'unknown'],
         })
         // Link fact to video bidirectionally
         if (currentVideo.value?.id && newFact?.id) {
+          newFactIds.push({ id: newFact.id, content: factText })
           await api.post(`/watched-videos/${currentVideo.value.id}/link`, {
             target_type: 'fact', target_id: newFact.id,
           }).catch(() => {})
@@ -1163,7 +1553,11 @@ async function extractFacts() {
     if (currentVideo.value?.id) {
       try {
         const { data: updated } = await api.get(`/watched-videos/${currentVideo.value.id}`)
-        currentVideo.value = { ...currentVideo.value, ...updated }
+        syncVideoUpdate(updated)
+        // Update linkedFacts map with newly created facts so chips show content
+        for (const nf of newFactIds) {
+          linkedFacts.value[nf.id] = nf.content
+        }
       } catch {}
     }
   } catch (e) {
@@ -1187,6 +1581,15 @@ async function getSummary() {
     }, { timeout: 300000 })
     const assistantMsg = data.find?.(m => m.role === 'assistant') || data
     summaryText.value = assistantMsg.content || assistantMsg.text || JSON.stringify(assistantMsg)
+    // Save summary to backend so it persists across modal reopens
+    if (currentVideo.value?.id && summaryText.value) {
+      try {
+        await api.patch(`/watched-videos/${currentVideo.value.id}`, { summary: summaryText.value })
+        currentVideo.value = { ...currentVideo.value, summary: summaryText.value }
+        const idx = history.value.findIndex(v => v.id === currentVideo.value.id)
+        if (idx !== -1) history.value[idx] = { ...history.value[idx], summary: summaryText.value }
+      } catch {}
+    }
     showSnackbar?.('Summary generated', 'success')
   } catch (e) {
     errorMsg.value = e.response?.data?.detail || 'Failed to generate summary'
@@ -1236,7 +1639,7 @@ async function regenerateTranscript() {
   errorMsg.value = null
   try {
     const { data } = await api.post('/watched-videos/fetch', { video_id: currentVideo.value.id, force: true })
-    currentVideo.value = { ...currentVideo.value, ...data }
+    syncVideoUpdate(data)
     if (data.id) {
       try {
         const { data: full } = await api.get(`/watched-videos/${data.id}/full-transcript`)
@@ -1253,6 +1656,20 @@ async function regenerateTranscript() {
     errorMsg.value = e.response?.data?.detail || 'Failed to regenerate transcript'
   } finally {
     fetching.value = false
+  }
+}
+
+async function updateVideoTitle(val) {
+  if (!currentVideo.value) return
+  const title = val?.trim() || null
+  try {
+    await api.patch(`/watched-videos/${currentVideo.value.id}`, { title })
+    currentVideo.value = { ...currentVideo.value, title }
+    const idx = history.value.findIndex(v => v.id === currentVideo.value.id)
+    if (idx !== -1) history.value[idx] = { ...history.value[idx], title }
+    showSnackbar?.('Title updated', 'success')
+  } catch (e) {
+    showSnackbar?.('Failed to update title', 'error')
   }
 }
 
@@ -1342,6 +1759,17 @@ async function discussSelected() {
   }
 }
 
+function confirmUnlink(type, id) {
+  unlinkTarget.value = { type, id }
+  unlinkDialog.value = true
+}
+
+async function doUnlink() {
+  const { type, id } = unlinkTarget.value
+  unlinkDialog.value = false
+  await unlinkFromVideo(type, id)
+}
+
 async function unlinkFromVideo(targetType, targetId) {
   if (!currentVideo.value?.id) return
   try {
@@ -1349,7 +1777,12 @@ async function unlinkFromVideo(targetType, targetId) {
       target_type: targetType,
       target_id: targetId,
     })
-    currentVideo.value = { ...currentVideo.value, ...data }
+    syncVideoUpdate(data)
+    // Remove from local fact cache
+    if (targetType === 'fact') {
+      const { [targetId]: _, ...rest } = linkedFacts.value
+      linkedFacts.value = rest
+    }
     showSnackbar?.('Unlinked', 'success')
   } catch (e) {
     showSnackbar?.('Failed to unlink', 'error')

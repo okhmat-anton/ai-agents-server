@@ -1,0 +1,28 @@
+{
+  "name": "us_finance_search",
+  "display_name": "US Finance: Search",
+  "description": "Search US economic indicators, real estate data, oil prices, taxation info, and government programs.",
+  "description_for_agent": "Search US & Canada financial data: economic indicators (FRED/BLS), real estate trends, oil/energy prices, state taxation tables, government financing programs. Use when user asks about US economy, interest rates, unemployment, housing market, oil prices, state taxes, or business grants. Parameters: query (search text), section (optional: news/real_estate/oil/programs/taxation), limit (max results, default 20).",
+  "category": "finance",
+  "version": "1.0.0",
+  "entry_point": "main.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search text across US finance data (indicators, real estate, oil, programs)."
+      },
+      "section": {
+        "type": "string",
+        "description": "Filter by section: news, real_estate, oil, programs, taxation. Leave empty for all.",
+        "enum": ["", "news", "real_estate", "oil", "programs", "taxation"]
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of results to return. Default: 20.",
+        "default": 20
+      }
+    }
+  }
+}

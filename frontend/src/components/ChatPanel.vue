@@ -314,17 +314,6 @@
             <v-icon size="14">mdi-pencil</v-icon>
             <v-tooltip activator="parent" location="top">Edit &amp; resend</v-tooltip>
           </v-btn>
-          <!-- Delete message button -->
-          <v-btn
-            icon
-            size="x-small"
-            variant="text"
-            class="msg-delete-btn mr-1"
-            @click="confirmDeleteMessage(msg)"
-          >
-            <v-icon size="14">mdi-close</v-icon>
-            <v-tooltip activator="parent" location="top">Delete message</v-tooltip>
-          </v-btn>
           <span v-if="msg.duration_ms" class="text-caption text-medium-emphasis">
             {{ (msg.duration_ms / 1000).toFixed(1) }}s
           </span>
@@ -888,25 +877,10 @@
       </div>
     </div>
   </div>
-
-  <!-- Delete message confirmation dialog -->
-  <v-dialog v-model="deleteMessageDialog" max-width="360">
-    <v-card>
-      <v-card-title class="text-subtitle-1">Delete message?</v-card-title>
-      <v-card-text class="text-body-2">
-        This will permanently delete this {{ messageToDelete?.role === 'user' ? 'question' : 'response' }}.
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" @click="deleteMessageDialog = false">Cancel</v-btn>
-        <v-btn color="red" variant="tonal" @click="doDeleteMessage">Delete</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, reactive, inject } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, reactive } from 'vue'
 import { useChatStore } from '../stores/chat'
 import { useAgentsStore } from '../stores/agents'
 import { useSettingsStore } from '../stores/settings'
@@ -918,7 +892,6 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/github-dark.css'
 import TextSelectionPopup from './TextSelectionPopup.vue'
 
-const dataRefreshSignal = inject('dataRefreshSignal', reactive({ type: '', timestamp: 0 }))
 const chatStore = useChatStore()
 const agentsStore = useAgentsStore()
 const settingsStore = useSettingsStore()
@@ -939,40 +912,6 @@ const ttsLoading = reactive({})
 const savingToNotes = reactive({})  // msgId -> loading state
 const selectionPopupRef = ref(null) // TextSelectionPopup ref
 
-// ── Draft persistence (AIS-64) ──────────────────────────────────────
-// Save unsent message text per session so it survives page reloads
-const DRAFT_PREFIX = 'chat_draft_'
-let _draftTimer = null
-
-function getDraftKey(sessionId) {
-  return DRAFT_PREFIX + (sessionId || '_new')
-}
-
-function saveDraft(text, sessionId) {
-  const key = getDraftKey(sessionId)
-  if (text?.trim()) {
-    localStorage.setItem(key, text)
-  } else {
-    localStorage.removeItem(key)
-  }
-}
-
-function loadDraft(sessionId) {
-  return localStorage.getItem(getDraftKey(sessionId)) || ''
-}
-
-function clearDraft(sessionId) {
-  localStorage.removeItem(getDraftKey(sessionId))
-}
-
-// Debounced draft save on input change
-watch(messageInput, (val) => {
-  clearTimeout(_draftTimer)
-  _draftTimer = setTimeout(() => {
-    saveDraft(val, chatStore.currentSession?.id)
-  }, 300)
-})
-
 // Thinking log state
 const thinkingLogs = reactive({})        // logId -> full log data with steps
 const thinkingLogExpanded = reactive({}) // logId -> boolean
@@ -983,9 +922,6 @@ const stepSubSections = reactive({})     // stepId_section -> boolean
 // Message edit state
 const editingMessageIndex = ref(null)
 const editingMessageContent = ref('')
-// Message delete state
-const deleteMessageDialog = ref(false)
-const messageToDelete = ref(null)
 // Restore active chat type from localStorage, default to 'user'
 const activeChatType = ref(localStorage.getItem('chat_active_tab') || 'user') // 'user', 'agent', 'project_task'
 const previousChatType = ref('user') // Remember which tab we came from
@@ -1276,24 +1212,20 @@ async function retryMessage(msgIndex) {
   scrollToBottom()
 }
 
-// ── Save assistant message to Notes ───────────────────────────────
+// ── Save assistant message to Creator Notes ───────────────────────
 async function saveMessageToNotes(msg) {
   if (!msg?.content || savingToNotes[msg.id]) return
   savingToNotes[msg.id] = true
   try {
     const title = msg.content.substring(0, 80).replace(/[#*`\n]/g, '').trim() + (msg.content.length > 80 ? '…' : '')
-    await api.post('/notes', {
+    await api.post('/creator/append-item', {
+      target: 'notes',
       title,
       content: msg.content,
-      status: 'active',
-      in_context: true,
     })
     // Brief visual feedback — turn button into a check
     savingToNotes[msg.id] = 'done'
     setTimeout(() => { delete savingToNotes[msg.id] }, 1500)
-    // Trigger notes refresh on NotesView
-    dataRefreshSignal.type = 'notes'
-    dataRefreshSignal.timestamp = Date.now()
   } catch (e) {
     console.error('Failed to save note:', e)
     delete savingToNotes[msg.id]
@@ -1303,8 +1235,7 @@ async function saveMessageToNotes(msg) {
 // ── Save selected text to Creator / Agent ─────────────────────────
 async function saveSelectedTextTo(target, text, extra = {}) {
   /**
-   * target: 'goals' | 'dreams'
-   *       | 'global_note' | 'global_idea' | 'global_fact' | 'global_analysis'
+   * target: 'notes' | 'goals' | 'ideas' | 'dreams'
    *       | 'agent_fact' | 'agent_belief' | 'agent_aspiration' | 'agent_event' | 'agent_task'
    * text: the selected text
    * extra: { agentId } for agent_* targets
@@ -1312,25 +1243,6 @@ async function saveSelectedTextTo(target, text, extra = {}) {
   if (!text?.trim()) return
   const trimmed = text.trim()
   const titleSnippet = trimmed.substring(0, 80).replace(/[#*`\n]/g, '').trim() + (trimmed.length > 80 ? '…' : '')
-
-  // ── Global targets ──
-  if (target === 'global_note') {
-    await api.post('/notes', { title: titleSnippet, content: trimmed })
-    return
-  }
-  if (target === 'global_idea') {
-    await api.post('/ideas', { title: titleSnippet, description: trimmed, source: 'user' })
-    return
-  }
-  if (target === 'global_fact') {
-    const agentId = extra.agentId || null
-    await api.post('/facts', { type: 'fact', content: trimmed, source: 'chat_selection', agent_id: agentId })
-    return
-  }
-  if (target === 'global_analysis') {
-    await api.post('/analysis-topics', { title: titleSnippet, description: trimmed, status: 'active' })
-    return
-  }
 
   // ── Agent targets ──
   if (target.startsWith('agent_') && extra.agentId) {
@@ -1382,20 +1294,6 @@ async function handleSelectionSave(target, extra = {}) {
     selectionPopupRef.value?.showStatus('Saved!', 'success')
     // Clear browser selection after save
     window.getSelection()?.removeAllRanges()
-
-    // Notify current page to refresh its data
-    const refreshMap = {
-      global_fact: 'facts', global_analysis: 'analysis',
-      global_idea: 'ideas', global_note: 'notes',
-      agent_fact: 'facts', agent_belief: 'beliefs',
-      agent_aspiration: 'aspirations', agent_event: 'events',
-      agent_task: 'tasks', goals: 'creator', dreams: 'creator',
-    }
-    const entityType = refreshMap[target]
-    if (entityType) {
-      dataRefreshSignal.type = entityType
-      dataRefreshSignal.timestamp = Date.now()
-    }
   } catch (e) {
     console.error('Selection save failed:', e)
     selectionPopupRef.value?.showStatus('Error', 'error')
@@ -1424,23 +1322,6 @@ async function submitEditMessage(msgIndex) {
 
   await chatStore.editUserMessage(msgIndex, content)
   scrollToBottom()
-}
-
-// ── Delete single message ─────────────────────────────────────────
-function confirmDeleteMessage(msg) {
-  messageToDelete.value = msg
-  deleteMessageDialog.value = true
-}
-
-async function doDeleteMessage() {
-  if (!messageToDelete.value) return
-  try {
-    await chatStore.deleteMessage(messageToDelete.value.id)
-  } catch (e) {
-    console.error('Failed to delete message:', e)
-  }
-  deleteMessageDialog.value = false
-  messageToDelete.value = null
 }
 
 // ── Audio TTS ─────────────────────────────────────────────────────
@@ -1630,7 +1511,6 @@ async function triggerSummarization() {
 }
 
 function newChat() {
-  clearDraft(chatStore.currentSession?.id)  // Clear old session draft (AIS-64)
   chatStore.newChat()
   selectedModels.value = []
   multiModel.value = false
@@ -1669,7 +1549,6 @@ async function handleSend() {
     if (msg) {
       // User typed new text → stop current generation and resend with edited message
       messageInput.value = ''
-      clearDraft(chatStore.currentSession?.id)  // AIS-64
       await chatStore.editAndRegenerate(msg)
       scrollToBottom()
     } else {
@@ -1685,7 +1564,6 @@ async function handleSend() {
   if (!models.length) return
 
   messageInput.value = ''
-  clearDraft(chatStore.currentSession?.id)  // AIS-64
 
   // If no active session, create one first
   if (!chatStore.currentSession) {
@@ -1729,9 +1607,6 @@ async function fetchProjects() {
 }
 
 async function loadSession(sessionId) {
-  // Save unsent draft of current session before switching (AIS-64)
-  saveDraft(messageInput.value, chatStore.currentSession?.id)
-  
   // Save current tab before opening session
   previousChatType.value = activeChatType.value
   
@@ -1822,7 +1697,6 @@ async function loadSession(sessionId) {
     }
     systemPrompt.value = chatStore.currentSession.system_prompt || ''
     temperature.value = chatStore.currentSession.temperature ?? 0.7
-    messageInput.value = loadDraft(sessionId)  // Restore unsent draft (AIS-64)
     sessionsExpanded.value = false
   }
   await nextTick()
@@ -1928,8 +1802,6 @@ onMounted(async () => {
     console.log('[ChatPanel] Session restored. Messages:', chatStore.messages.length, 'sessionsExpanded:', sessionsExpanded.value)
   } else {
     console.log('[ChatPanel] No saved session found, showing default view')
-    // Restore unsent draft for no-session state (AIS-64)
-    messageInput.value = loadDraft(null)
     // Pre-select first model if available
     if (chatStore.availableModels.length && !selectedModels.value.length) {
       selectedModels.value = multiModel.value ? [] : chatStore.availableModels[0].id
@@ -1939,8 +1811,6 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  // Save unsent draft before unmount (AIS-64)
-  saveDraft(messageInput.value, chatStore.currentSession?.id)
   stopModelPolling()
 })
 
@@ -1950,17 +1820,6 @@ watch(() => chatStore.panelOpen, (open) => {
     startModelPolling()
   } else {
     stopModelPolling()
-  }
-})
-
-// Watch for pending input from external sources (Video tab, etc.)
-watch(() => chatStore.pendingInput, (val) => {
-  if (val) {
-    messageInput.value = val
-    chatStore.pendingInput = ''
-    nextTick(() => {
-      if (inputRef.value) inputRef.value.focus()
-    })
   }
 })
 </script>
@@ -2076,15 +1935,6 @@ watch(() => chatStore.pendingInput, (val) => {
   transition: opacity 0.15s;
 }
 .message-bubble.user:hover .msg-edit-btn {
-  opacity: 1;
-}
-
-/* Delete button: visible on hover */
-.message-bubble .msg-delete-btn {
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-.message-bubble:hover .msg-delete-btn {
   opacity: 1;
 }
 

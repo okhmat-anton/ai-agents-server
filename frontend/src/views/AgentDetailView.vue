@@ -101,14 +101,6 @@
           Events
           <v-badge v-if="eventsCount > 0" :content="eventsCount" color="deep-purple" inline />
         </v-tab>
-        <v-tab value="analysis">
-          Analysis
-          <v-badge v-if="analysisTopicsCount > 0" :content="analysisTopicsCount" color="blue" inline />
-        </v-tab>
-        <v-tab value="ideas">
-          Ideas
-          <v-badge v-if="ideasCount > 0" :content="ideasCount" color="amber-darken-2" inline />
-        </v-tab>
         <v-tab value="projects">Projects</v-tab>
         <v-tab value="files">Files</v-tab>
         <v-tab value="tasks">Tasks</v-tab>
@@ -755,144 +747,6 @@
           </div>
         </div>
 
-        <!-- Analysis Tab -->
-        <div v-if="tab === 'analysis'">
-          <!-- Filters row -->
-          <div class="d-flex align-center mb-4 flex-wrap ga-2">
-            <v-chip-group v-model="analysisStatusFilter" selected-class="text-primary" @update:model-value="loadAnalysisTopics">
-              <v-chip value="" variant="tonal" size="small">All</v-chip>
-              <v-chip value="active" color="blue" variant="tonal" size="small">Active</v-chip>
-              <v-chip value="draft" color="grey" variant="tonal" size="small">Draft</v-chip>
-              <v-chip value="completed" color="success" variant="tonal" size="small">Completed</v-chip>
-              <v-chip value="archived" color="brown" variant="tonal" size="small">Archived</v-chip>
-            </v-chip-group>
-            <v-spacer />
-            <v-text-field
-              v-model="analysisSearch"
-              density="compact"
-              variant="outlined"
-              placeholder="Search topics..."
-              prepend-inner-icon="mdi-magnify"
-              hide-details
-              clearable
-              style="max-width: 300px;"
-              @update:model-value="debouncedLoadAnalysis"
-            />
-            <v-btn color="blue" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openAnalysisDialog()">Add</v-btn>
-            <v-btn size="small" variant="tonal" prepend-icon="mdi-refresh" @click="loadAnalysisTopics" :loading="analysisLoading">Refresh</v-btn>
-          </div>
-
-          <!-- Analysis topics list -->
-          <div v-if="analysisLoading && !analysisTopics.length" class="text-center pa-8">
-            <v-progress-circular indeterminate color="blue" />
-          </div>
-          <div v-else-if="analysisTopics.length">
-            <v-card v-for="t in analysisTopics" :key="t.id" variant="outlined" class="mb-2 pa-3">
-              <div class="d-flex align-start">
-                <v-icon color="blue" size="20" class="mr-2 mt-1">mdi-chart-timeline-variant-shimmer</v-icon>
-                <div class="flex-grow-1">
-                  <div class="text-body-1 font-weight-medium">{{ t.title }}</div>
-                  <div v-if="t.description" class="text-body-2 text-medium-emphasis mt-1">{{ t.description }}</div>
-                  <div class="d-flex align-center mt-1 flex-wrap ga-1">
-                    <v-chip :color="analysisStatusColor(t.status)" size="x-small" variant="flat">{{ t.status }}</v-chip>
-                    <v-chip size="x-small" variant="tonal" color="teal">{{ t.fact_ids?.length || 0 }} facts</v-chip>
-                    <v-chip v-for="tag in t.tags" :key="tag" size="x-small" variant="tonal" color="blue-grey">{{ tag }}</v-chip>
-                    <v-chip size="x-small" variant="tonal" class="ml-auto">{{ t.created_by }}</v-chip>
-                  </div>
-                </div>
-                <div class="d-flex ml-2">
-                  <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editAnalysis(t)" />
-                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteAnalysis(t.id)" />
-                </div>
-              </div>
-            </v-card>
-          </div>
-          <div v-else class="text-center text-grey pa-8">
-            <v-icon size="48" class="mb-2">mdi-chart-timeline-variant-shimmer</v-icon>
-            <div>No analysis topics yet</div>
-            <div class="text-caption mt-1">Add topics to structure your research and connect facts</div>
-          </div>
-        </div>
-
-        <!-- Ideas Tab -->
-        <div v-if="tab === 'ideas'">
-          <!-- Filters row -->
-          <div class="d-flex align-center mb-4 flex-wrap ga-2">
-            <v-btn-toggle v-model="ideasSourceFilter" density="compact" variant="outlined" mandatory @update:model-value="loadIdeas">
-              <v-btn value="all" size="small">All</v-btn>
-              <v-btn value="user" size="small"><v-icon size="14" class="mr-1">mdi-account</v-icon> User</v-btn>
-              <v-btn value="agent" size="small"><v-icon size="14" class="mr-1">mdi-robot</v-icon> Agent</v-btn>
-            </v-btn-toggle>
-            <v-chip-group v-model="ideasStatusFilter" selected-class="text-primary" @update:model-value="loadIdeas">
-              <v-chip value="" variant="tonal" size="small">All</v-chip>
-              <v-chip value="new" color="blue" variant="tonal" size="small">New</v-chip>
-              <v-chip value="in_progress" color="orange" variant="tonal" size="small">In Progress</v-chip>
-              <v-chip value="done" color="success" variant="tonal" size="small">Done</v-chip>
-              <v-chip value="archived" color="brown" variant="tonal" size="small">Archived</v-chip>
-            </v-chip-group>
-            <v-spacer />
-            <v-btn color="amber-darken-2" size="small" variant="tonal" prepend-icon="mdi-plus" @click="openIdeaDialog()">Add</v-btn>
-            <v-btn size="small" variant="tonal" prepend-icon="mdi-refresh" @click="loadIdeas" :loading="ideasLoading">Refresh</v-btn>
-          </div>
-
-          <!-- Ideas list -->
-          <div v-if="ideasLoading && !agentIdeas.length" class="text-center pa-8">
-            <v-progress-circular indeterminate color="amber-darken-2" />
-          </div>
-          <div v-else-if="agentIdeas.length">
-            <v-card v-for="idea in agentIdeas" :key="idea.id" variant="outlined" class="mb-2 pa-3">
-              <div class="d-flex align-start">
-                <v-icon :color="ideaPriorityColor(idea.priority)" size="20" class="mr-2 mt-1">
-                  {{ idea.priority === 'high' ? 'mdi-arrow-up-bold' : idea.priority === 'low' ? 'mdi-arrow-down' : 'mdi-minus' }}
-                </v-icon>
-                <div class="flex-grow-1">
-                  <div class="text-body-1 font-weight-medium">{{ idea.title }}</div>
-                  <div v-if="idea.description" class="text-body-2 text-medium-emphasis mt-1">{{ idea.description }}</div>
-                  <div class="d-flex align-center mt-1 flex-wrap ga-1">
-                    <v-chip :color="ideaStatusColor(idea.status)" size="x-small" variant="flat">{{ idea.status }}</v-chip>
-                    <v-chip :color="idea.source === 'user' ? 'blue' : 'orange'" size="x-small" variant="tonal">
-                      <v-icon start size="10">{{ idea.source === 'user' ? 'mdi-account' : 'mdi-robot' }}</v-icon>
-                      {{ idea.source }}
-                    </v-chip>
-                    <v-chip v-if="idea.category" size="x-small" variant="tonal" color="indigo">{{ idea.category }}</v-chip>
-                    <v-chip v-for="tag in idea.tags" :key="tag" size="x-small" variant="tonal" color="blue-grey">{{ tag }}</v-chip>
-                  </div>
-                </div>
-                <div class="d-flex ml-2">
-                  <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editIdea(idea)" />
-                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="deleteIdea(idea.id)" />
-                </div>
-              </div>
-            </v-card>
-          </div>
-          <div v-else class="text-center text-grey pa-8">
-            <v-icon size="48" class="mb-2">mdi-lightbulb-on-outline</v-icon>
-            <div>No ideas yet</div>
-            <div class="text-caption mt-1">Add ideas from the user or let the agent generate them</div>
-          </div>
-        </div>
-
-        <!-- Idea Create/Edit Dialog -->
-        <v-dialog v-model="ideaDialog" max-width="600">
-          <v-card>
-            <v-card-title>{{ ideaEditId ? 'Edit Idea' : 'New Idea' }}</v-card-title>
-            <v-card-text>
-              <v-text-field v-model="ideaFormTitle" label="Title" variant="outlined" density="compact" class="mb-3" />
-              <v-textarea v-model="ideaFormDescription" label="Description" variant="outlined" density="compact" rows="4" class="mb-3" />
-              <v-select v-model="ideaFormSource" :items="['user', 'agent']" label="Source" variant="outlined" density="compact" class="mb-3" />
-              <v-select v-model="ideaFormPriority" :items="['low', 'medium', 'high']" label="Priority" variant="outlined" density="compact" class="mb-3" />
-              <v-select v-model="ideaFormStatus" :items="['new', 'in_progress', 'done', 'archived']" label="Status" variant="outlined" density="compact" class="mb-3" />
-              <v-combobox v-model="ideaFormCategory" label="Category" variant="outlined" density="compact" clearable class="mb-3" />
-              <v-combobox v-model="ideaFormTags" label="Tags" variant="outlined" density="compact" chips multiple closable-chips />
-            </v-card-text>
-            <v-card-actions>
-              <v-spacer />
-              <v-btn @click="ideaDialog = false">Cancel</v-btn>
-              <v-btn color="amber-darken-2" :loading="ideaSaving" @click="saveIdea">{{ ideaEditId ? 'Update' : 'Create' }}</v-btn>
-            </v-card-actions>
-          </v-card>
-        </v-dialog>
-
         <!-- Tasks Tab -->
         <div v-if="tab === 'tasks'">
           <v-btn color="primary" size="small" prepend-icon="mdi-plus" @click="agentTaskDialog = true" class="mb-3">New Task</v-btn>
@@ -1394,126 +1248,13 @@
             <template #item.type="{ item }">
               <v-chip size="x-small" variant="tonal">{{ item.type }}</v-chip>
             </template>
-            <template #item.content="{ item }">
-              <div class="text-truncate" style="max-width: 400px;">{{ item.content }}</div>
-            </template>
             <template #item.importance="{ item }">
               <v-progress-linear :model-value="item.importance * 100" :color="item.importance > 0.7 ? 'success' : 'grey'" height="6" rounded />
             </template>
             <template #item.tags="{ item }">
               <v-chip v-for="t in (item.tags || []).slice(0, 3)" :key="t" size="x-small" class="mr-1">{{ t }}</v-chip>
             </template>
-            <template #item.category="{ item }">
-              <v-chip v-if="item.category" size="x-small" variant="tonal" color="indigo">{{ item.category }}</v-chip>
-            </template>
-            <template #item.actions="{ item }">
-              <v-btn icon size="small" variant="text" @click.stop="openEditMemory(item)">
-                <v-icon>mdi-pencil</v-icon>
-              </v-btn>
-              <v-btn icon size="small" variant="text" color="error" @click.stop="confirmDeleteMemory(item)">
-                <v-icon>mdi-delete</v-icon>
-              </v-btn>
-            </template>
           </v-data-table>
-
-          <!-- Edit Memory Dialog -->
-          <v-dialog v-model="memoryEditDialog" max-width="600">
-            <v-card>
-              <v-card-title>Edit Memory</v-card-title>
-              <v-card-text>
-                <v-text-field
-                  v-model="memoryForm.title"
-                  label="Title"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                />
-                <v-textarea
-                  v-model="memoryForm.content"
-                  label="Content"
-                  variant="outlined"
-                  density="compact"
-                  rows="4"
-                  class="mb-3"
-                />
-                <v-select
-                  v-model="memoryForm.type"
-                  :items="['fact', 'experience', 'skill', 'preference', 'conversation', 'reflection', 'observation', 'knowledge']"
-                  label="Type"
-                  variant="outlined"
-                  density="compact"
-                  class="mb-3"
-                />
-                <v-slider
-                  v-model="memoryForm.importance"
-                  label="Importance"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  thumb-label
-                  class="mb-3"
-                />
-                <v-combobox
-                  v-model="memoryForm.category"
-                  :items="memoryCategoryOptions"
-                  label="Category"
-                  variant="outlined"
-                  density="compact"
-                  clearable
-                  class="mb-3"
-                />
-                <v-combobox
-                  v-model="memoryForm.tags"
-                  label="Tags"
-                  variant="outlined"
-                  density="compact"
-                  chips
-                  multiple
-                  closable-chips
-                  class="mb-3"
-                />
-                <v-checkbox
-                  v-model="memoryForm.is_pinned"
-                  label="Pinned"
-                  density="compact"
-                  hide-details
-                />
-              </v-card-text>
-              <v-card-actions>
-                <v-spacer />
-                <v-btn @click="memoryEditDialog = false">Cancel</v-btn>
-                <v-btn color="primary" :loading="memorySaving" @click="saveMemory">Save</v-btn>
-              </v-card-actions>
-            </v-card>
-          </v-dialog>
-
-          <!-- Delete Memory Confirmation -->
-          <v-dialog v-model="memoryDeleteDialog" max-width="400">
-            <v-card>
-              <v-card-title class="text-h6">Delete Memory</v-card-title>
-              <v-card-text>
-                <div class="mb-3">Are you sure you want to delete this memory?</div>
-                <v-alert v-if="memoryDeleteTarget" type="info" variant="tonal" density="compact" class="mb-3">
-                  <strong>{{ memoryDeleteTarget.title }}</strong>
-                  <div class="text-caption text-truncate" style="max-width: 350px;">{{ memoryDeleteTarget.content }}</div>
-                </v-alert>
-                <div class="text-body-2 mb-1">
-                  Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="memoryDeleteConfirm = 'DELETE'">DELETE</strong> to confirm
-                </div>
-                <v-text-field
-                  v-model="memoryDeleteConfirm"
-                  placeholder="DELETE"
-                  variant="outlined"
-                  density="compact"
-                />
-              </v-card-text>
-              <v-card-actions>
-                <v-spacer />
-                <v-btn @click="memoryDeleteDialog = false">Cancel</v-btn>
-                <v-btn color="error" :disabled="memoryDeleteConfirm !== 'DELETE'" @click="doDeleteMemory">Delete</v-btn>
-              </v-card-actions>
-            </v-card>
-          </v-dialog>
         </div>
 
         <!-- Messengers Tab -->
@@ -2274,30 +2015,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- Analysis Topic Dialog -->
-    <v-dialog v-model="analysisDialog" max-width="600">
-      <v-card>
-        <v-card-title>{{ analysisEditId ? 'Edit' : 'Add' }} Analysis Topic</v-card-title>
-        <v-card-text>
-          <v-text-field v-model="analysisFormTitle" label="Title" autofocus density="compact" class="mb-2" />
-          <v-textarea v-model="analysisFormDescription" label="Description" rows="4" density="compact" class="mb-2" />
-          <v-select
-            v-model="analysisFormStatus"
-            :items="['draft', 'active', 'completed', 'archived']"
-            label="Status"
-            density="compact"
-            class="mb-2"
-          />
-          <v-combobox v-model="analysisFormTags" label="Tags" density="compact" multiple chips closable-chips small-chips hide-details />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn @click="analysisDialog = false">Cancel</v-btn>
-          <v-btn color="blue" @click="saveAnalysis" :loading="analysisSaving">{{ analysisEditId ? 'Save' : 'Add' }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
     <!-- New Personal Skill Dialog -->
     <v-dialog v-model="newSkillDialog" max-width="600">
       <v-card>
@@ -2688,49 +2405,6 @@ const deleteEventItem = ref(null)
 
 const eventsCount = computed(() => events.value.length)
 
-// Analysis topics state
-const analysisTopics = ref([])
-const analysisLoading = ref(false)
-const analysisStatusFilter = ref('')
-const analysisSearch = ref('')
-const analysisDialog = ref(false)
-const analysisEditId = ref(null)
-const analysisFormTitle = ref('')
-const analysisFormDescription = ref('')
-const analysisFormStatus = ref('active')
-const analysisFormTags = ref([])
-const analysisSaving = ref(false)
-const analysisTopicsCount = computed(() => analysisTopics.value.length)
-
-// Ideas state
-const agentIdeas = ref([])
-const ideasLoading = ref(false)
-const ideasSourceFilter = ref('all')
-const ideasStatusFilter = ref('')
-const ideaDialog = ref(false)
-const ideaEditId = ref(null)
-const ideaFormTitle = ref('')
-const ideaFormDescription = ref('')
-const ideaFormSource = ref('user')
-const ideaFormPriority = ref('medium')
-const ideaFormStatus = ref('new')
-const ideaFormCategory = ref('')
-const ideaFormTags = ref([])
-const ideaSaving = ref(false)
-const ideasCount = computed(() => agentIdeas.value.length)
-
-const ideaStatusColor = (s) => ({
-  new: 'blue', in_progress: 'orange', done: 'success', archived: 'brown',
-}[s] || 'grey')
-
-const ideaPriorityColor = (p) => ({
-  low: 'blue-grey', medium: 'blue', high: 'red',
-}[p] || 'grey')
-
-const analysisStatusColor = (s) => ({
-  draft: 'grey', active: 'blue', completed: 'success', archived: 'brown',
-}[s] || 'grey')
-
 const eventTypeColor = (t) => ({
   conversation: 'blue', observation: 'teal', discovery: 'amber',
   decision: 'orange', milestone: 'green', custom: 'grey',
@@ -2786,13 +2460,10 @@ const taskHeaders = [
 
 const memHeaders = [
   { title: 'Title', key: 'title' },
-  { title: 'Content', key: 'content' },
   { title: 'Type', key: 'type', width: 100 },
-  { title: 'Category', key: 'category', width: 120 },
   { title: 'Importance', key: 'importance', width: 120 },
   { title: 'Tags', key: 'tags', width: 200 },
   { title: 'Source', key: 'source', width: 80 },
-  { title: 'Actions', key: 'actions', sortable: false, width: 100 },
 ]
 
 const loadData = async () => {
@@ -3032,77 +2703,6 @@ const createPersonalSkill = async () => {
 const loadMemories = async () => {
   const { data } = await api.get(`/agents/${id.value}/memory`, { params: { limit: 100 } })
   memories.value = data
-}
-
-// ── Memory Edit/Delete ──
-const memoryEditDialog = ref(false)
-const memoryDeleteDialog = ref(false)
-const memoryDeleteTarget = ref(null)
-const memoryDeleteConfirm = ref('')
-const memorySaving = ref(false)
-const memoryEditId = ref(null)
-const memoryForm = ref({
-  title: '', content: '', type: 'fact', importance: 0.5,
-  category: 'general', tags: [], is_pinned: false,
-})
-
-const memoryCategoryOptions = computed(() => {
-  const cats = [...new Set(memories.value.map(m => m.category).filter(Boolean))]
-  return cats.sort()
-})
-
-function openEditMemory(item) {
-  memoryEditId.value = item.id
-  memoryForm.value = {
-    title: item.title || '',
-    content: item.content || '',
-    type: item.type || 'fact',
-    importance: item.importance ?? 0.5,
-    category: item.category || 'general',
-    tags: [...(item.tags || [])],
-    is_pinned: item.is_pinned || false,
-  }
-  memoryEditDialog.value = true
-}
-
-async function saveMemory() {
-  memorySaving.value = true
-  try {
-    await api.put(`/agents/${id.value}/memory/${memoryEditId.value}`, {
-      title: memoryForm.value.title,
-      content: memoryForm.value.content,
-      type: memoryForm.value.type,
-      importance: memoryForm.value.importance,
-      category: memoryForm.value.category,
-      tags: memoryForm.value.tags,
-      is_pinned: memoryForm.value.is_pinned,
-    })
-    memoryEditDialog.value = false
-    await loadMemories()
-    showSnackbar?.('Memory updated', 'success')
-  } catch (e) {
-    showSnackbar?.('Failed to update memory', 'error')
-  } finally {
-    memorySaving.value = false
-  }
-}
-
-function confirmDeleteMemory(item) {
-  memoryDeleteTarget.value = item
-  memoryDeleteConfirm.value = ''
-  memoryDeleteDialog.value = true
-}
-
-async function doDeleteMemory() {
-  if (!memoryDeleteTarget.value) return
-  try {
-    await api.delete(`/agents/${id.value}/memory/${memoryDeleteTarget.value.id}`)
-    memoryDeleteDialog.value = false
-    memories.value = memories.value.filter(m => m.id !== memoryDeleteTarget.value.id)
-    showSnackbar?.('Memory deleted', 'success')
-  } catch (e) {
-    showSnackbar?.('Failed to delete memory', 'error')
-  }
 }
 
 // ===== Files =====
@@ -3557,141 +3157,6 @@ const doDeleteEvent = async () => {
   } catch (e) { alert(e.response?.data?.detail || 'Failed to delete event') }
 }
 
-// ===== Analysis Topics =====
-let _analysisDebounce = null
-const debouncedLoadAnalysis = () => {
-  clearTimeout(_analysisDebounce)
-  _analysisDebounce = setTimeout(() => loadAnalysisTopics(), 400)
-}
-
-const loadAnalysisTopics = async () => {
-  analysisLoading.value = true
-  try {
-    const params = { limit: 200 }
-    if (analysisStatusFilter.value) params.status = analysisStatusFilter.value
-    if (analysisSearch.value) params.search = analysisSearch.value
-    const { data } = await api.get(`/agents/${id.value}/analysis-topics`, { params })
-    analysisTopics.value = data.items || []
-  } catch { analysisTopics.value = [] }
-  finally { analysisLoading.value = false }
-}
-
-const openAnalysisDialog = (existing = null) => {
-  if (existing) {
-    analysisEditId.value = existing.id
-    analysisFormTitle.value = existing.title
-    analysisFormDescription.value = existing.description || ''
-    analysisFormStatus.value = existing.status
-    analysisFormTags.value = existing.tags || []
-  } else {
-    analysisEditId.value = null
-    analysisFormTitle.value = ''
-    analysisFormDescription.value = ''
-    analysisFormStatus.value = 'active'
-    analysisFormTags.value = []
-  }
-  analysisDialog.value = true
-}
-
-const editAnalysis = (t) => openAnalysisDialog(t)
-
-const saveAnalysis = async () => {
-  if (!analysisFormTitle.value.trim()) return
-  analysisSaving.value = true
-  try {
-    const payload = {
-      title: analysisFormTitle.value.trim(),
-      description: analysisFormDescription.value.trim(),
-      status: analysisFormStatus.value,
-      tags: analysisFormTags.value,
-    }
-    if (analysisEditId.value) {
-      await api.patch(`/analysis-topics/${analysisEditId.value}`, payload)
-    } else {
-      await api.post(`/agents/${id.value}/analysis-topics`, payload)
-    }
-    analysisDialog.value = false
-    await loadAnalysisTopics()
-  } catch (e) { alert(e.response?.data?.detail || 'Failed to save topic') }
-  finally { analysisSaving.value = false }
-}
-
-const deleteAnalysis = async (topicId) => {
-  try {
-    await api.delete(`/analysis-topics/${topicId}`)
-    await loadAnalysisTopics()
-  } catch (e) { alert(e.response?.data?.detail || 'Failed to delete topic') }
-}
-
-// ===== Ideas =====
-const loadIdeas = async () => {
-  ideasLoading.value = true
-  try {
-    const params = { limit: 200 }
-    if (ideasSourceFilter.value && ideasSourceFilter.value !== 'all') params.source = ideasSourceFilter.value
-    if (ideasStatusFilter.value) params.status = ideasStatusFilter.value
-    const { data } = await api.get(`/agents/${id.value}/ideas`, { params })
-    agentIdeas.value = data.items || []
-  } catch { agentIdeas.value = [] }
-  finally { ideasLoading.value = false }
-}
-
-const openIdeaDialog = (existing = null) => {
-  if (existing) {
-    ideaEditId.value = existing.id
-    ideaFormTitle.value = existing.title
-    ideaFormDescription.value = existing.description || ''
-    ideaFormSource.value = existing.source || 'user'
-    ideaFormPriority.value = existing.priority || 'medium'
-    ideaFormStatus.value = existing.status || 'new'
-    ideaFormCategory.value = existing.category || ''
-    ideaFormTags.value = existing.tags || []
-  } else {
-    ideaEditId.value = null
-    ideaFormTitle.value = ''
-    ideaFormDescription.value = ''
-    ideaFormSource.value = 'user'
-    ideaFormPriority.value = 'medium'
-    ideaFormStatus.value = 'new'
-    ideaFormCategory.value = ''
-    ideaFormTags.value = []
-  }
-  ideaDialog.value = true
-}
-
-const editIdea = (idea) => openIdeaDialog(idea)
-
-const saveIdea = async () => {
-  if (!ideaFormTitle.value.trim()) return
-  ideaSaving.value = true
-  try {
-    const payload = {
-      title: ideaFormTitle.value.trim(),
-      description: ideaFormDescription.value.trim(),
-      source: ideaFormSource.value,
-      priority: ideaFormPriority.value,
-      status: ideaFormStatus.value,
-      category: ideaFormCategory.value || null,
-      tags: ideaFormTags.value,
-    }
-    if (ideaEditId.value) {
-      await api.patch(`/ideas/${ideaEditId.value}`, payload)
-    } else {
-      await api.post(`/agents/${id.value}/ideas`, payload)
-    }
-    ideaDialog.value = false
-    await loadIdeas()
-  } catch (e) { alert(e.response?.data?.detail || 'Failed to save idea') }
-  finally { ideaSaving.value = false }
-}
-
-const deleteIdea = async (ideaId) => {
-  try {
-    await api.delete(`/ideas/${ideaId}`)
-    await loadIdeas()
-  } catch (e) { alert(e.response?.data?.detail || 'Failed to delete idea') }
-}
-
 const doDeleteFile = async () => {
   try {
     await api.delete(`/agents/${id.value}/files/delete`, { params: { path: deleteFilePath.value } })
@@ -3716,7 +3181,6 @@ watch(tab, (val) => {
   if (val === 'aspirations') loadAspirations()
   if (val === 'facts') loadFacts()
   if (val === 'events') loadEvents()
-  if (val === 'ideas') loadIdeas()
 })
 
 watch(logLevel, () => { if (tab.value === 'logs') loadLogs() })
@@ -4256,19 +3720,13 @@ onMounted(async () => {
   await loadAutonomousStatus()
 })
 
-// Lazy-load projects/messengers/analysis when tab is selected
+// Lazy-load projects/messengers when tab is selected
 watch(tab, (val) => {
   if (val === 'projects' && !agentProjects.value.length && !agentProjectsLoading.value) {
     loadAgentProjects()
   }
   if (val === 'messengers' && !messengerAccounts.value.length) {
     loadMessengers()
-  }
-  if (val === 'analysis' && !analysisTopics.value.length && !analysisLoading.value) {
-    loadAnalysisTopics()
-  }
-  if (val === 'ideas' && !agentIdeas.value.length && !ideasLoading.value) {
-    loadIdeas()
   }
 })
 

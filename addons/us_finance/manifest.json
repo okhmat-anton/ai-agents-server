@@ -1,0 +1,56 @@
+{
+  "id": "us_finance",
+  "name": "US & Canada Finance",
+  "description": "Track US & Canada financial data — economic news, real estate trends, property valuations, oil prices, taxation by state, and government financing programs",
+  "icon": "mdi-finance",
+  "version": "1.0.0",
+  "author": "system",
+  "route": {
+    "path": "/addons/us-finance",
+    "name": "UsFinance",
+    "title": "US & Canada Finance"
+  },
+  "settings": [
+    {
+      "key": "us_finance_news_source",
+      "label": "Primary News Source",
+      "type": "select",
+      "default": "fred",
+      "options": ["fred", "bls"]
+    },
+    {
+      "key": "us_finance_scrape_frequency",
+      "label": "Scrape Frequency",
+      "type": "select",
+      "default": "daily",
+      "options": ["hourly", "daily", "weekly", "manual"]
+    },
+    {
+      "key": "us_finance_auction_urls",
+      "label": "Auction URLs (one per line)",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "key": "us_finance_auction_scrape_hours",
+      "label": "Auction Scrape Interval (hours)",
+      "type": "select",
+      "default": "24",
+      "options": ["6", "12", "24", "48"]
+    },
+    {
+      "key": "us_finance_fred_api_key",
+      "label": "FRED API Key (free at fred.stlouisfed.org)",
+      "type": "text",
+      "default": ""
+    },
+    {
+      "key": "us_finance_zillow_api_key",
+      "label": "Zillow / RapidAPI Key (optional)",
+      "type": "text",
+      "default": ""
+    }
+  ],
+  "protocols": [],
+  "skills": ["us_finance_search"]
+}
