@@ -173,7 +173,9 @@
               <div class="d-flex align-center mb-3">
                 <v-icon color="red" class="mr-2">mdi-arrow-up-bold</v-icon>
                 <span class="text-h6">Expenses</span>
-                <span v-if="summary && summary.unpaid_expense > 0" class="text-caption text-orange ml-2">(unpaid: ${{ fmt(summary.unpaid_expense) }})</span>
+                <span v-if="summary && summary.unpaid_expense > 0" class="text-caption text-orange ml-2">
+                  (unpaid: ${{ fmt(summary.unpaid_expense) }}<span v-if="summary.unpaid_expense_no_daily > 0 && summary.unpaid_expense_no_daily !== summary.unpaid_expense" class="text-blue-grey"> · w/o daily: ${{ fmt(summary.unpaid_expense_no_daily) }}</span>)
+                </span>
                 <v-spacer />
                 <v-btn
                   :icon="expensesCollapsed ? 'mdi-chevron-down' : 'mdi-chevron-up'"

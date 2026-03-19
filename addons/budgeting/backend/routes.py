@@ -550,6 +550,26 @@ async def get_summary(
     still_needed = max(unpaid_forward_with_loans - available_cash, 0)
     min_daily = still_needed / remaining_days if remaining_days > 0 else 0
 
+    # Unpaid forward-looking without daily items
+    unpaid_no_daily = 0.0
+    for e in entries:
+        if e.get("type") != "expense":
+            continue
+        freq = e.get("frequency", "once")
+        if freq == "daily":
+            continue
+        if e.get("is_paid"):
+            continue
+        base_amt = e.get("amount", 0)
+        if freq == "weekly":
+            start_day = e.get("day_of_month") or 1
+            future_start = max(start_day, today.day) if year == today.year and month == today.month else start_day
+            future_occ = len(range(future_start, days_in_month + 1, 7))
+            unpaid_no_daily += base_amt * future_occ
+        else:
+            unpaid_no_daily += base_amt
+    unpaid_no_daily_with_loans = unpaid_no_daily + (total_loan_payments - loan_paid)
+
     return {
         "month_key": mk,
         "total_income": round(total_income, 2),
@@ -558,6 +578,7 @@ async def get_summary(
         "income_paid": round(income_paid, 2),
         "expense_paid": round(expense_paid_with_loans, 2),
         "unpaid_expense": round(unpaid_forward_with_loans, 2),
+        "unpaid_expense_no_daily": round(unpaid_no_daily_with_loans, 2),
         "income_by_category": {k: round(v, 2) for k, v in sorted(income_by_cat.items())},
         "expense_by_category": {k: round(v, 2) for k, v in sorted(expense_by_cat.items())},
         "remaining_days": remaining_days,
