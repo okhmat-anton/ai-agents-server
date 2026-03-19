@@ -14,3 +14,4 @@ server.log
 *.session
 data/messengers/sessions/
 landing/
+addons_private

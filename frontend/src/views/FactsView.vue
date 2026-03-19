@@ -157,9 +157,9 @@
                 <v-icon v-if="fact.verified" color="green" size="18">mdi-check-circle</v-icon>
                 <v-chip size="x-small" variant="tonal">{{ (fact.confidence * 100).toFixed(0) }}%</v-chip>
                 <span class="text-caption text-grey">{{ formatDate(fact.created_at) }}</span>
-                <v-btn v-if="fact.type === 'hypothesis' && !fact.verified" icon size="small" variant="text" color="green" @click.stop="verifyFact(fact)"><v-icon>mdi-check-circle</v-icon></v-btn>
-                <v-btn icon size="small" variant="text" @click.stop="editFact(fact)"><v-icon>mdi-pencil</v-icon></v-btn>
-                <v-btn icon size="small" variant="text" color="error" @click.stop="deleteFact(fact.id)"><v-icon>mdi-delete</v-icon></v-btn>
+                <v-btn v-if="fact.type === 'hypothesis' && !fact.verified" icon size="small" variant="text" color="green" @click.stop="verifyFact(fact)" @mousedown.stop @pointerdown.stop><v-icon>mdi-check-circle</v-icon></v-btn>
+                <v-btn icon size="small" variant="text" @click.stop="editFact(fact)" @mousedown.stop @pointerdown.stop><v-icon>mdi-pencil</v-icon></v-btn>
+                <v-btn icon size="small" variant="text" color="error" @click.stop="deleteFact(fact.id)" @mousedown.stop @pointerdown.stop><v-icon>mdi-delete</v-icon></v-btn>
               </v-card-text>
             </v-card>
           </template>
@@ -216,9 +216,9 @@
               <v-icon v-if="fact.verified" color="green" size="18">mdi-check-circle</v-icon>
               <v-chip size="x-small" variant="tonal">{{ (fact.confidence * 100).toFixed(0) }}%</v-chip>
               <span class="text-caption text-grey">{{ formatDate(fact.created_at) }}</span>
-              <v-btn v-if="fact.type === 'hypothesis' && !fact.verified" icon size="small" variant="text" color="green" @click.stop="verifyFact(fact)"><v-icon>mdi-check-circle</v-icon></v-btn>
-              <v-btn icon size="small" variant="text" @click.stop="editFact(fact)"><v-icon>mdi-pencil</v-icon></v-btn>
-              <v-btn icon size="small" variant="text" color="error" @click.stop="deleteFact(fact.id)"><v-icon>mdi-delete</v-icon></v-btn>
+              <v-btn v-if="fact.type === 'hypothesis' && !fact.verified" icon size="small" variant="text" color="green" @click.stop="verifyFact(fact)" @mousedown.stop @pointerdown.stop><v-icon>mdi-check-circle</v-icon></v-btn>
+              <v-btn icon size="small" variant="text" @click.stop="editFact(fact)" @mousedown.stop @pointerdown.stop><v-icon>mdi-pencil</v-icon></v-btn>
+              <v-btn icon size="small" variant="text" color="error" @click.stop="deleteFact(fact.id)" @mousedown.stop @pointerdown.stop><v-icon>mdi-delete</v-icon></v-btn>
             </v-card-text>
           </v-card>
         </template>
@@ -557,7 +557,7 @@ async function verifyFact(item) {
   }
 }
 
-async function deleteFact(id) {
+function deleteFact(id) {
   deleteFactIds.value = [id]
   deleteConfirmText.value = ''
   deleteDialog.value = true

@@ -47,6 +47,23 @@
         <v-icon start size="16">mdi-bank</v-icon>
         Loan Payments: ${{ fmt(summary.total_loan_payments) }}/mo
       </v-chip>
+      <v-chip variant="tonal" color="blue-grey" size="large" v-if="summary.entries_expense_no_daily > 0">
+        <v-icon start size="16">mdi-cash-minus</v-icon>
+        Expenses (no daily): ${{ fmt(summary.entries_expense_no_daily) }}
+      </v-chip>
+      <v-chip variant="tonal" color="amber" size="large" v-if="summary.asset_income > 0">
+        <v-icon start size="16">mdi-chart-line</v-icon>
+        Profitable Income: +${{ fmt(summary.asset_income) }}/mo
+      </v-chip>
+      <v-chip variant="tonal" color="deep-orange" size="large" v-if="summary.asset_cost > 0">
+        <v-icon start size="16">mdi-trending-down</v-icon>
+        Non-Profitable Cost: -${{ fmt(summary.asset_cost) }}/mo
+      </v-chip>
+      <v-chip variant="tonal" :color="(assetsSummary.net_worth || 0) >= 0 ? 'amber' : 'deep-orange'" size="large"
+        v-if="assetsSummary.profitable_count || assetsSummary.not_profitable_count">
+        <v-icon start size="16">mdi-home-city</v-icon>
+        Net Worth: ${{ fmt(assetsSummary.net_worth) }}
+      </v-chip>
     </div>
 
     <!-- Tabs -->
@@ -58,6 +75,10 @@
       <v-tab value="calendar">
         <v-icon start>mdi-calendar-month</v-icon>
         Calendar
+      </v-tab>
+      <v-tab value="assets">
+        <v-icon start>mdi-home-city</v-icon>
+        Assets
       </v-tab>
       <v-tab value="settings">
         <v-icon start>mdi-cog</v-icon>
@@ -123,6 +144,26 @@
               <v-btn block variant="tonal" color="green" class="mt-2" prepend-icon="mdi-plus" @click="openAddEntry('income')">
                 Add Income
               </v-btn>
+
+              <!-- Auto profitable asset income -->
+              <div v-if="activeAssetIncome.length" class="mt-3">
+                <v-divider class="mb-2" />
+                <div class="text-caption text-medium-emphasis mb-1">
+                  <v-icon size="14" class="mr-1">mdi-chart-line</v-icon>
+                  Profitable Assets (auto)
+                </div>
+                <v-list density="compact" class="bg-transparent">
+                  <v-list-item v-for="a in activeAssetIncome" :key="'ai-' + a.id" class="px-0 rounded mb-1" style="opacity: 0.85">
+                    <v-list-item-title>{{ a.name }}</v-list-item-title>
+                    <v-list-item-subtitle>
+                      <v-chip size="x-small" variant="text" class="px-0">{{ formatCategory(a.category) }}</v-chip>
+                    </v-list-item-subtitle>
+                    <template #append>
+                      <span class="text-amber font-weight-bold">${{ fmt(a.monthly_income) }}</span>
+                    </template>
+                  </v-list-item>
+                </v-list>
+              </div>
             </v-card>
           </v-col>
 
@@ -222,6 +263,26 @@
                     </v-list-item-subtitle>
                     <template #append>
                       <span class="text-purple font-weight-bold">${{ fmt(loan.monthly_payment) }}</span>
+                    </template>
+                  </v-list-item>
+                </v-list>
+              </div>
+
+              <!-- Auto non-profitable asset costs -->
+              <div v-if="activeLiabilityCosts.length" class="mt-3">
+                <v-divider class="mb-2" />
+                <div class="text-caption text-medium-emphasis mb-1">
+                  <v-icon size="14" class="mr-1">mdi-trending-down</v-icon>
+                  Non-Profitable Assets (auto)
+                </div>
+                <v-list density="compact" class="bg-transparent">
+                  <v-list-item v-for="a in activeLiabilityCosts" :key="'ac-' + a.id" class="px-0 rounded mb-1" style="opacity: 0.85">
+                    <v-list-item-title>{{ a.name }}</v-list-item-title>
+                    <v-list-item-subtitle>
+                      <v-chip size="x-small" variant="text" class="px-0">{{ formatCategory(a.category) }}</v-chip>
+                    </v-list-item-subtitle>
+                    <template #append>
+                      <span class="text-deep-orange font-weight-bold">${{ fmt(a.monthly_cost) }}</span>
                     </template>
                   </v-list-item>
                 </v-list>
@@ -559,6 +620,146 @@
         </v-card>
       </v-window-item>
 
+      <!-- ═══════ ASSETS TAB (Kiyosaki) ═══════ -->
+      <v-window-item value="assets">
+        <v-row class="mb-4">
+          <v-col cols="6" sm="3">
+            <v-card variant="tonal" color="amber" class="pa-3 text-center">
+              <div class="text-caption">Profitable Value</div>
+              <div class="text-h6">${{ fmt(assetsSummary.total_profitable_value) }}</div>
+            </v-card>
+          </v-col>
+          <v-col cols="6" sm="3">
+            <v-card variant="tonal" color="deep-orange" class="pa-3 text-center">
+              <div class="text-caption">Non-Profitable Value</div>
+              <div class="text-h6">${{ fmt(assetsSummary.total_nonprof_value) }}</div>
+            </v-card>
+          </v-col>
+          <v-col cols="6" sm="3">
+            <v-card variant="tonal" :color="(assetsSummary.net_worth || 0) >= 0 ? 'green' : 'red'" class="pa-3 text-center">
+              <div class="text-caption">Net Worth</div>
+              <div class="text-h6">${{ fmt(assetsSummary.net_worth) }}</div>
+            </v-card>
+          </v-col>
+          <v-col cols="6" sm="3">
+            <v-card variant="tonal" :color="(assetsSummary.net_cash_flow || 0) >= 0 ? 'green' : 'red'" class="pa-3 text-center">
+              <div class="text-caption">Net Cash Flow</div>
+              <div class="text-h6">${{ fmt(assetsSummary.net_cash_flow) }}/mo</div>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <v-row>
+          <!-- LEFT: Profitable -->
+          <v-col cols="12" md="6">
+            <v-card variant="outlined" class="pa-3">
+              <div class="d-flex align-center mb-3">
+                <v-icon color="amber" class="mr-2">mdi-chart-line</v-icon>
+                <span class="text-h6">Profitable</span>
+                <v-spacer />
+                <v-btn color="amber" variant="tonal" prepend-icon="mdi-plus" size="x-small" @click="openAddAsset('profitable')">
+                  Add
+                </v-btn>
+              </div>
+              <div class="text-caption text-medium-emphasis mb-2">
+                Monthly income: ${{ fmt(assetsSummary.total_profitable_income) }}/mo
+              </div>
+
+              <div v-if="assetItems.length === 0" class="text-center text-medium-emphasis py-4">
+                No profitable assets yet. Add items that put money in your pocket.
+              </div>
+
+              <v-table density="compact" v-if="assetItems.length">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Category</th>
+                    <th>Value</th>
+                    <th>Income/mo</th>
+                    <th style="width: 80px"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="a in assetItems" :key="a.id">
+                    <td class="font-weight-bold">
+                      <v-icon size="14" :color="a.is_active ? 'amber' : 'grey'" class="mr-1">mdi-chart-line</v-icon>
+                      {{ a.name }}
+                      <v-chip v-if="!a.is_active" size="x-small" color="grey" variant="tonal" class="ml-1">inactive</v-chip>
+                    </td>
+                    <td class="text-medium-emphasis">{{ formatCategory(a.category) }}</td>
+                    <td class="text-amber font-weight-bold">${{ fmt(a.current_value) }}</td>
+                    <td class="text-green font-weight-bold">
+                      {{ a.monthly_income > 0 ? '+$' + fmt(a.monthly_income) : '—' }}
+                    </td>
+                    <td>
+                      <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEditAsset(a)" />
+                      <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="confirmDeleteAsset(a)" />
+                    </td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-card>
+          </v-col>
+
+          <!-- RIGHT: Not Profitable -->
+          <v-col cols="12" md="6">
+            <v-card variant="outlined" class="pa-3">
+              <div class="d-flex align-center mb-3">
+                <v-icon color="deep-orange" class="mr-2">mdi-trending-down</v-icon>
+                <span class="text-h6">Not Profitable</span>
+                <v-spacer />
+                <v-btn color="deep-orange" variant="tonal" prepend-icon="mdi-plus" size="x-small" @click="openAddAsset('not_profitable')">
+                  Add
+                </v-btn>
+              </div>
+              <div class="text-caption text-medium-emphasis mb-2">
+                Monthly cost: ${{ fmt(assetsSummary.total_nonprof_cost) }}/mo
+              </div>
+
+              <div v-if="liabilityItems.length === 0" class="text-center text-medium-emphasis py-4">
+                No non-profitable assets yet. Track items that take money from your pocket.
+              </div>
+
+              <v-table density="compact" v-if="liabilityItems.length">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Category</th>
+                    <th>Value</th>
+                    <th>Cost/mo</th>
+                    <th style="width: 80px"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="a in liabilityItems" :key="a.id">
+                    <td class="font-weight-bold">
+                      <v-icon size="14" :color="a.is_active ? 'deep-orange' : 'grey'" class="mr-1">mdi-trending-down</v-icon>
+                      {{ a.name }}
+                      <v-chip v-if="!a.is_active" size="x-small" color="grey" variant="tonal" class="ml-1">inactive</v-chip>
+                    </td>
+                    <td class="text-medium-emphasis">{{ formatCategory(a.category) }}</td>
+                    <td class="text-deep-orange font-weight-bold">${{ fmt(a.current_value) }}</td>
+                    <td class="text-red font-weight-bold">
+                      {{ a.monthly_cost > 0 ? '-$' + fmt(a.monthly_cost) : '—' }}
+                    </td>
+                    <td>
+                      <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEditAsset(a)" />
+                      <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="confirmDeleteAsset(a)" />
+                    </td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-card>
+          </v-col>
+        </v-row>
+
+        <!-- Kiyosaki tip -->
+        <v-alert type="info" variant="tonal" density="compact" class="mt-4">
+          <strong>Kiyosaki Principle:</strong> Every item you own is an asset. If it puts money in your pocket — it's profitable.
+          If it takes money out — it's not profitable. Focus on acquiring profitable assets.
+        </v-alert>
+      </v-window-item>
+
       <!-- ═══════ SETTINGS TAB ═══════ -->
       <v-window-item value="settings">
         <v-row>
@@ -692,6 +893,65 @@
           <v-btn variant="text" @click="loanDialog = false">Cancel</v-btn>
           <v-btn color="teal" variant="flat" @click="saveLoan" :loading="loanSaving">
             {{ editingLoan ? 'Save' : 'Add' }}
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ═══════ ADD/EDIT ASSET DIALOG ═══════ -->
+    <v-dialog v-model="assetDialog" max-width="560" persistent>
+      <v-card>
+        <v-card-title>
+          <v-icon :color="assetForm.kind === 'profitable' ? 'amber' : 'deep-orange'" class="mr-2">
+            {{ assetForm.kind === 'profitable' ? 'mdi-chart-line' : 'mdi-trending-down' }}
+          </v-icon>
+          {{ editingAsset ? 'Edit' : 'Add' }} {{ assetForm.kind === 'profitable' ? 'Profitable Asset' : 'Non-Profitable Asset' }}
+        </v-card-title>
+        <v-card-text>
+          <v-text-field v-model="assetForm.name" label="Name" variant="outlined" density="compact" class="mb-2"
+            :placeholder="assetForm.kind === 'profitable' ? 'e.g. Rental Apartment, AAPL Stock' : 'e.g. Car, iPhone, TV'" />
+          <v-select
+            v-model="assetForm.category"
+            :items="allCategoryOptions"
+            label="Category"
+            variant="outlined"
+            density="compact"
+            class="mb-2"
+          />
+          <v-row dense>
+            <v-col cols="6">
+              <v-text-field v-model.number="assetForm.purchase_price" label="Purchase Price" type="number" prefix="$" variant="outlined" density="compact" class="mb-2" />
+            </v-col>
+            <v-col cols="6">
+              <v-text-field v-model="assetForm.purchase_date" label="Purchase Date" type="date" variant="outlined" density="compact" class="mb-2" />
+            </v-col>
+          </v-row>
+          <v-row dense>
+            <v-col cols="6">
+              <v-text-field v-model.number="assetForm.current_value" label="Current Value" type="number" prefix="$" variant="outlined" density="compact" class="mb-2" />
+            </v-col>
+            <v-col cols="6" v-if="assetForm.kind === 'profitable'">
+              <v-text-field v-model.number="assetForm.projected_value" label="Projected Value" type="number" prefix="$" variant="outlined" density="compact" class="mb-2" />
+            </v-col>
+          </v-row>
+          <v-row dense>
+            <v-col cols="6" v-if="assetForm.kind === 'profitable'">
+              <v-text-field v-model.number="assetForm.monthly_income" label="Monthly Income" type="number" prefix="$" variant="outlined" density="compact" class="mb-2"
+                hint="How much it puts in your pocket" persistent-hint />
+            </v-col>
+            <v-col cols="6" v-if="assetForm.kind === 'not_profitable'">
+              <v-text-field v-model.number="assetForm.monthly_cost" label="Monthly Cost" type="number" prefix="$" variant="outlined" density="compact" class="mb-2"
+                hint="How much it takes from your pocket" persistent-hint />
+            </v-col>
+          </v-row>
+          <v-switch v-model="assetForm.is_active" label="Active" :color="assetForm.kind === 'profitable' ? 'amber' : 'deep-orange'" density="compact" class="mb-2" />
+          <v-textarea v-model="assetForm.notes" label="Notes" variant="outlined" density="compact" rows="2" />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="assetDialog = false">Cancel</v-btn>
+          <v-btn :color="assetForm.kind === 'profitable' ? 'amber' : 'deep-orange'" variant="flat" @click="saveAsset" :loading="assetSaving">
+            {{ editingAsset ? 'Save' : 'Add' }}
           </v-btn>
         </v-card-actions>
       </v-card>
@@ -832,10 +1092,38 @@ const editingLoan = ref(null)
 const loanSaving = ref(false)
 const loanForm = ref({ bank: '', purpose: '', credit_limit: 0, remaining_debt: 0, monthly_payment: 0, payment_date: null, notes: '' })
 
+// Asset dialog
+const assetDialog = ref(false)
+const editingAsset = ref(null)
+const assetSaving = ref(false)
+const assetForm = ref({
+  name: '', kind: 'profitable', category: '', purchase_price: 0, purchase_date: '',
+  current_value: 0, projected_value: 0, monthly_income: 0, monthly_cost: 0,
+  notes: '', is_active: true,
+})
+
+// Assets data
+const assets = ref([])
+const assetsSummary = ref({ net_worth: 0, net_cash_flow: 0, total_profitable_value: 0, total_nonprof_value: 0, total_profitable_income: 0, total_nonprof_cost: 0, profitable_count: 0, not_profitable_count: 0, categories: [] })
+
+// Asset category options (unified list)
+const allCategoryOptions = computed(() => (assetsSummary.value?.categories || []).map(c => ({ title: formatCategory(c), value: c })))
+
+// Computed asset lists
+const assetItems = computed(() => assets.value.filter(a => a.kind === 'profitable'))
+const liabilityItems = computed(() => assets.value.filter(a => a.kind === 'not_profitable'))
+const activeAssetIncome = computed(() => assets.value.filter(a => a.kind === 'profitable' && a.is_active && a.monthly_income > 0))
+const activeLiabilityCosts = computed(() => assets.value.filter(a => a.kind === 'not_profitable' && a.is_active && a.monthly_cost > 0))
+
+function formatCategory(cat) {
+  if (!cat) return ''
+  return cat.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+}
+
 // Delete dialog
 const deleteDialog = ref(false)
 const deleteTarget = ref(null)
-const deleteType = ref('')  // 'entry', 'account', 'loan'
+const deleteType = ref('')  // 'entry', 'account', 'loan', 'asset'
 const deleteConfirmText = ref('')
 const deleteLoading = ref(false)
 
@@ -941,10 +1229,26 @@ async function loadCalendar() {
   finally { calendarLoading.value = false }
 }
 
+async function loadAssets() {
+  try {
+    const { data } = await api.get('/addons/budgeting/assets')
+    assets.value = data.items || []
+  } catch { assets.value = [] }
+}
+
+async function loadAssetsSummary() {
+  try {
+    const { data } = await api.get('/addons/budgeting/assets/summary')
+    assetsSummary.value = data
+  } catch {
+    assetsSummary.value = { net_worth: 0, net_cash_flow: 0, total_profitable_value: 0, total_nonprof_value: 0, total_profitable_income: 0, total_nonprof_cost: 0, profitable_count: 0, not_profitable_count: 0, categories: [] }
+  }
+}
+
 async function refreshAll() {
   loading.value = true
   try {
-    await Promise.all([loadEntries(), loadSummary(), loadAccounts(), loadLoans(), loadCalendar()])
+    await Promise.all([loadEntries(), loadSummary(), loadAccounts(), loadLoans(), loadCalendar(), loadAssets(), loadAssetsSummary()])
   } finally {
     loading.value = false
   }
@@ -1113,6 +1417,63 @@ function confirmDeleteLoan(loan) {
   deleteDialog.value = true
 }
 
+// ── Asset CRUD ──────────────────────────────────────────────────────
+
+function openAddAsset(kind) {
+  editingAsset.value = null
+  assetForm.value = {
+    name: '', kind, category: '', purchase_price: 0, purchase_date: '',
+    current_value: 0, projected_value: 0, monthly_income: 0, monthly_cost: 0,
+    notes: '', is_active: true,
+  }
+  assetDialog.value = true
+}
+
+function openEditAsset(item) {
+  editingAsset.value = item
+  assetForm.value = { ...item }
+  assetDialog.value = true
+}
+
+async function saveAsset() {
+  assetSaving.value = true
+  try {
+    const payload = {
+      name: assetForm.value.name,
+      kind: assetForm.value.kind,
+      category: assetForm.value.category,
+      purchase_price: assetForm.value.purchase_price || 0,
+      purchase_date: assetForm.value.purchase_date || '',
+      current_value: assetForm.value.current_value || 0,
+      projected_value: assetForm.value.projected_value || 0,
+      monthly_income: assetForm.value.monthly_income || 0,
+      monthly_cost: assetForm.value.monthly_cost || 0,
+      notes: assetForm.value.notes || '',
+      is_active: assetForm.value.is_active,
+    }
+    if (editingAsset.value) {
+      await api.patch(`/addons/budgeting/assets/${editingAsset.value.id}`, payload)
+      showSnack('Asset updated')
+    } else {
+      await api.post('/addons/budgeting/assets', payload)
+      showSnack(`${payload.kind === 'profitable' ? 'Profitable asset' : 'Non-profitable asset'} added`)
+    }
+    assetDialog.value = false
+    await Promise.all([loadAssets(), loadAssetsSummary(), loadSummary()])
+  } catch (e) {
+    showSnack(e.response?.data?.detail || 'Failed to save asset', 'error')
+  } finally {
+    assetSaving.value = false
+  }
+}
+
+function confirmDeleteAsset(item) {
+  deleteTarget.value = item
+  deleteType.value = 'asset'
+  deleteConfirmText.value = ''
+  deleteDialog.value = true
+}
+
 // ── Delete handler ──────────────────────────────────────────────────
 
 async function executeDelete() {
@@ -1128,6 +1489,9 @@ async function executeDelete() {
     } else if (deleteType.value === 'loan') {
       await api.delete(`/addons/budgeting/loans/${id}`)
       await loadLoans()
+    } else if (deleteType.value === 'asset') {
+      await api.delete(`/addons/budgeting/assets/${id}`)
+      await Promise.all([loadAssets(), loadAssetsSummary(), loadSummary()])
     }
     deleteDialog.value = false
     showSnack('Deleted successfully')

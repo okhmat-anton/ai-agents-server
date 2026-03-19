@@ -30,6 +30,7 @@ ENTRIES_COL = "budget_entries"
 ACCOUNTS_COL = "budget_accounts"
 LOANS_COL = "budget_loans"
 CATEGORIES_COL = "budget_categories"
+ASSETS_COL = "budget_assets"
 
 
 # ── Pydantic Models ─────────────────────────────────────────────────
@@ -107,6 +108,43 @@ class CategoryCreate(BaseModel):
     type: str = "expense"  # income or expense
     icon: str = ""
     color: str = ""
+
+
+# ── Asset Models (Kiyosaki) ─────────────────────────────────────────
+
+ASSET_CATEGORIES = [
+    "real_estate", "rental_property", "vehicle", "business", "stocks",
+    "bonds", "crypto", "intellectual_property", "paper_assets",
+    "personal_property", "electronics", "other",
+]
+
+
+class AssetCreate(BaseModel):
+    name: str
+    kind: str = Field("profitable", description="profitable or not_profitable")
+    category: str = ""
+    purchase_price: float = 0.0
+    purchase_date: str = ""
+    current_value: float = 0.0
+    projected_value: float = 0.0
+    monthly_income: float = 0.0
+    monthly_cost: float = 0.0
+    notes: str = ""
+    is_active: bool = True
+
+
+class AssetUpdate(BaseModel):
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    category: Optional[str] = None
+    purchase_price: Optional[float] = None
+    purchase_date: Optional[str] = None
+    current_value: Optional[float] = None
+    projected_value: Optional[float] = None
+    monthly_income: Optional[float] = None
+    monthly_cost: Optional[float] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 # ── Helper ──────────────────────────────────────────────────────────
@@ -473,6 +511,38 @@ async def get_summary(
     expense_paid_with_loans = expense_paid + loan_paid
     balance_with_loans = total_income - total_expense_with_loans
 
+    # Asset income/cost integration
+    active_items = await db[ASSETS_COL].find({"is_active": True}, {"_id": 0}).to_list(500)
+    asset_income_total = sum(a.get("monthly_income", 0) for a in active_items if a.get("kind") == "profitable")
+    asset_cost_total = sum(a.get("monthly_cost", 0) for a in active_items if a.get("kind") == "not_profitable")
+
+    total_income += asset_income_total
+    if asset_income_total > 0:
+        income_by_cat["Profitable Assets"] = round(asset_income_total, 2)
+
+    total_expense_with_loans += asset_cost_total
+    if asset_cost_total > 0:
+        expense_by_cat["Non-Profitable Assets"] = round(asset_cost_total, 2)
+
+    balance_with_loans = total_income - total_expense_with_loans
+
+    # Expense total without daily items (only once + weekly + loans)
+    expense_no_daily = 0.0
+    for e in entries:
+        if e.get("type") != "expense":
+            continue
+        freq = e.get("frequency", "once")
+        if freq == "daily":
+            continue
+        base_amt = e.get("amount", 0)
+        if freq == "weekly":
+            start_day = e.get("day_of_month") or 1
+            occurrences = len(range(start_day, days_in_month + 1, 7))
+            expense_no_daily += base_amt * occurrences
+        else:
+            expense_no_daily += base_amt
+    expense_no_daily_with_loans = expense_no_daily + total_loan_payments + asset_cost_total
+
     # Forward-looking unpaid: only future obligations
     # unpaid_expense_forward already has remaining daily/weekly + all unpaid one-time expenses
     # Add unpaid loan payments
@@ -495,6 +565,9 @@ async def get_summary(
         "total_loan_payments": round(total_loan_payments, 2),
         "available_cash": round(available_cash, 2),
         "entries_expense": round(total_expense, 2),
+        "entries_expense_no_daily": round(expense_no_daily_with_loans, 2),
+        "asset_income": round(asset_income_total, 2),
+        "asset_cost": round(asset_cost_total, 2),
     }
 
 
@@ -617,6 +690,99 @@ async def toggle_loan_paid(
         {"$set": {"paid_months": paid_months, "updated_at": datetime.now(timezone.utc).isoformat()}},
     )
     return {"id": loan_id, "month_key": mk, "is_paid": is_paid}
+
+
+# ── Assets (Kiyosaki) ───────────────────────────────────────────────
+
+@router.get("/assets")
+async def list_assets(
+    kind: Optional[str] = Query(None, description="profitable or not_profitable"),
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    query = {}
+    if kind:
+        query["kind"] = kind
+    items = await db[ASSETS_COL].find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"items": items}
+
+
+@router.post("/assets")
+async def create_asset(
+    body: AssetCreate,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    doc = {
+        "id": _make_id(),
+        **body.model_dump(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db[ASSETS_COL].insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.patch("/assets/{asset_id}")
+async def update_asset(
+    asset_id: str,
+    body: AssetUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    result = await db[ASSETS_COL].update_one({"id": asset_id}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Asset not found")
+    doc = await db[ASSETS_COL].find_one({"id": asset_id}, {"_id": 0})
+    return doc
+
+
+@router.delete("/assets/{asset_id}")
+async def delete_asset(
+    asset_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    result = await db[ASSETS_COL].delete_one({"id": asset_id})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Asset not found")
+    return {"ok": True}
+
+
+@router.get("/assets/summary")
+async def get_assets_summary(
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    items = await db[ASSETS_COL].find({}, {"_id": 0}).to_list(500)
+    profitable = [a for a in items if a.get("kind") == "profitable"]
+    not_profitable = [a for a in items if a.get("kind") == "not_profitable"]
+
+    total_profitable_value = sum(a.get("current_value", 0) for a in profitable)
+    total_profitable_purchase = sum(a.get("purchase_price", 0) for a in profitable)
+    total_profitable_projected = sum(a.get("projected_value", 0) for a in profitable)
+    total_profitable_income = sum(a.get("monthly_income", 0) for a in profitable if a.get("is_active"))
+
+    total_nonprof_value = sum(a.get("current_value", 0) for a in not_profitable)
+    total_nonprof_purchase = sum(a.get("purchase_price", 0) for a in not_profitable)
+    total_nonprof_cost = sum(a.get("monthly_cost", 0) for a in not_profitable if a.get("is_active"))
+
+    net_worth = total_profitable_value - total_nonprof_value
+    net_cash_flow = total_profitable_income - total_nonprof_cost
+
+    return {
+        "profitable_count": len(profitable),
+        "not_profitable_count": len(not_profitable),
+        "total_profitable_value": round(total_profitable_value, 2),
+        "total_profitable_purchase": round(total_profitable_purchase, 2),
+        "total_profitable_projected": round(total_profitable_projected, 2),
+        "total_profitable_income": round(total_profitable_income, 2),
+        "total_nonprof_value": round(total_nonprof_value, 2),
+        "total_nonprof_purchase": round(total_nonprof_purchase, 2),
+        "total_nonprof_cost": round(total_nonprof_cost, 2),
+        "net_worth": round(net_worth, 2),
+        "net_cash_flow": round(net_cash_flow, 2),
+        "categories": ASSET_CATEGORIES,
+    }
 
 
 # ── Agent-Readable Summary ──────────────────────────────────────────
@@ -815,5 +981,28 @@ async def agent_summary(
             mp = l.get("monthly_payment", 0)
             remaining_payments = f", ~{int(l['remaining_debt'] / mp)} payments left" if mp > 0 else ""
             lines.append(f"  {l['bank']}: debt ${l.get('remaining_debt', 0):,.2f}, monthly ${mp:,.2f}{limit_str}{remaining_payments}{pd}{purpose}")
+
+    # Assets (Kiyosaki)
+    asset_items = await db[ASSETS_COL].find({}, {"_id": 0}).to_list(500)
+    profitable = [a for a in asset_items if a.get("kind") == "profitable"]
+    not_profitable_items = [a for a in asset_items if a.get("kind") == "not_profitable"]
+    if profitable:
+        lines.append("")
+        lines.append("--- Profitable Assets ---")
+        for a in profitable:
+            active = "ACTIVE" if a.get("is_active") else "INACTIVE"
+            income = f", income ${a.get('monthly_income', 0):,.2f}/mo" if a.get("monthly_income") else ""
+            lines.append(f"  [{active}] {a['name']}: value ${a.get('current_value', 0):,.2f}{income} ({a.get('category', '')})")
+    if not_profitable_items:
+        lines.append("")
+        lines.append("--- Non-Profitable Assets ---")
+        for a in not_profitable_items:
+            active = "ACTIVE" if a.get("is_active") else "INACTIVE"
+            cost = f", cost ${a.get('monthly_cost', 0):,.2f}/mo" if a.get("monthly_cost") else ""
+            lines.append(f"  [{active}] {a['name']}: value ${a.get('current_value', 0):,.2f}{cost} ({a.get('category', '')})")
+    if profitable or not_profitable_items:
+        total_pv = sum(a.get("current_value", 0) for a in profitable)
+        total_npv = sum(a.get("current_value", 0) for a in not_profitable_items)
+        lines.append(f"  Net Worth (profitable - non-profitable): ${total_pv - total_npv:,.2f}")
 
     return {"summary": "\n".join(lines)}

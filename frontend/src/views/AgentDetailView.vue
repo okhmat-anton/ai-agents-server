@@ -650,7 +650,7 @@
                     @click="verifyFact(f)"
                   />
                   <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="editFact(f)" />
-                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click="confirmDeleteFact(f)" />
+                  <v-btn icon="mdi-delete" size="x-small" variant="text" color="error" @click.stop="confirmDeleteFact(f)" @mousedown.stop />
                 </div>
               </div>
             </v-card>
@@ -1964,11 +1964,22 @@
     <v-dialog v-model="deleteFactDialog" max-width="400">
       <v-card>
         <v-card-title>Delete {{ deleteFactItem?.type === 'fact' ? 'Fact' : 'Hypothesis' }}</v-card-title>
-        <v-card-text>"{{ deleteFactItem?.content }}"</v-card-text>
+        <v-card-text>
+          "{{ deleteFactItem?.content }}"
+          <div class="text-body-2 mt-4 mb-1">
+            Type <strong class="text-error" style="cursor: pointer; border-bottom: 1px dashed currentColor" @click="deleteFactConfirmText = 'DELETE'">DELETE</strong> to confirm
+          </div>
+          <v-text-field
+            v-model="deleteFactConfirmText"
+            placeholder="DELETE"
+            variant="outlined"
+            density="compact"
+          />
+        </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn @click="deleteFactDialog = false">Cancel</v-btn>
-          <v-btn color="error" @click="doDeleteFact">Delete</v-btn>
+          <v-btn color="error" :disabled="deleteFactConfirmText !== 'DELETE'" @click="doDeleteFact">Delete</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -2382,6 +2393,7 @@ const factFormTags = ref([])
 const factSaving = ref(false)
 const deleteFactDialog = ref(false)
 const deleteFactItem = ref(null)
+const deleteFactConfirmText = ref('')
 
 const factsCount = computed(() => facts.value.length)
 
@@ -3063,6 +3075,7 @@ const verifyFact = async (f) => {
 
 const confirmDeleteFact = (f) => {
   deleteFactItem.value = f
+  deleteFactConfirmText.value = ''
   deleteFactDialog.value = true
 }
 
