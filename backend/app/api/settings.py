@@ -568,7 +568,10 @@ async def update_system_setting(
     setting_service = SystemSettingService(db)
     setting = await setting_service.get_by_key(key)
     if not setting:
-        raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
+        # Auto-create setting if it doesn't exist (e.g. addon settings)
+        new_setting = MongoSystemSetting(key=key, value=body.value, description="")
+        created = await setting_service.create(new_setting)
+        return created
     
     updated = await setting_service.update(setting.id, {"value": body.value})
     return updated

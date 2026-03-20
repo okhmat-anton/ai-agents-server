@@ -757,13 +757,27 @@ async def _generate_summary(db, model_id: str, language: str, news_context: str,
     if language and language != "English":
         language_instruction = f"\n\nIMPORTANT: Write the ENTIRE briefing in {language}. All headings, analysis, and text must be in {language}.\n"
 
+    # Load priority countries from system settings
+    priority_countries_instruction = ""
+    settings_doc = await db["system_settings"].find_one({"key": "geopolitics_priority_countries"})
+    if settings_doc and settings_doc.get("value"):
+        countries_raw = settings_doc["value"]
+        # Value can be comma-separated string or already a list
+        if isinstance(countries_raw, str):
+            countries_list = [c.strip() for c in countries_raw.split(",") if c.strip()]
+        else:
+            countries_list = [str(c).strip() for c in countries_raw if str(c).strip()]
+        if countries_list:
+            countries_str = ", ".join(countries_list)
+            priority_countries_instruction = f"\n\nPRIORITY COUNTRIES: {countries_str}\nYou MUST prioritize news and analysis related to these countries FIRST. Start the Executive Summary and Key Developments with events concerning these countries before covering the rest of the world.\n"
+
     scope_label = "daily" if scope == "daily" else "monthly (last 30 days)"
 
-    prompt = f"""You are a senior geopolitical intelligence analyst. Produce a concise {scope_label} intelligence briefing based on the following news and Pentagon data.{language_instruction}
+    prompt = f"""You are a senior geopolitical intelligence analyst. Produce a concise {scope_label} intelligence briefing based on the following news and Pentagon data.{language_instruction}{priority_countries_instruction}
 
 Structure your briefing as:
-1. **Executive Summary** — 2-3 sentence overview of the most critical developments
-2. **Key Developments** — bullet points of the most important stories, grouped by region or topic
+1. **Executive Summary** — 2-3 sentence overview of the most critical developments (prioritize the countries of interest first)
+2. **Key Developments** — bullet points of the most important stories, grouped by region or topic (priority countries first, then rest of the world)
 3. **Defense & Military** — any Pentagon/military-related developments
 4. **Risk Assessment** — emerging threats or escalation risks
 5. **Watch List** — things to monitor in the coming days

@@ -489,6 +489,17 @@
                 hint="Only articles matching these keywords will be saved. Leave empty for all."
                 persistent-hint
               />
+              <v-combobox
+                v-model="settingsForm.geopolitics_priority_countries"
+                label="Priority Countries"
+                variant="outlined"
+                multiple
+                chips
+                closable-chips
+                class="mb-3"
+                hint="Countries to prioritize in intelligence briefings. Type a country name and press Enter."
+                persistent-hint
+              />
               <v-select
                 v-model="settingsForm.geopolitics_pentagon_enabled"
                 :items="[{title: 'Enabled', value: 'true'}, {title: 'Disabled', value: 'false'}]"
@@ -664,6 +675,7 @@ export default {
         geopolitics_scrape_interval: '60',
         geopolitics_news_sources: 'https://www.reuters.com,https://apnews.com,https://www.bbc.com/news',
         geopolitics_keywords: 'geopolitics,sanctions,military,nato,defense,conflict,treaty,diplomacy',
+        geopolitics_priority_countries: [],
         geopolitics_pentagon_enabled: 'true',
         geopolitics_max_articles: '25',
       },
@@ -770,6 +782,7 @@ export default {
     },
 
     async deleteArticle(id) {
+      if (!confirm('Delete this article?')) return
       try {
         await api.delete(`${API}/news/${id}`)
         this.news = this.news.filter(a => a._id !== id)
@@ -815,6 +828,7 @@ export default {
     },
 
     async deletePentagonItem(id) {
+      if (!confirm('Delete this Pentagon item?')) return
       try {
         await api.delete(`${API}/pentagon/${id}`)
         this.pentagonItems = this.pentagonItems.filter(i => i._id !== id)
@@ -898,6 +912,7 @@ export default {
     },
 
     async deleteSource(id) {
+      if (!confirm('Delete this source?')) return
       try {
         await api.delete(`${API}/sources/${id}`)
         this.notify('Source deleted')
@@ -974,6 +989,9 @@ export default {
       this.settingsForm.geopolitics_scrape_interval = s.systemSettings?.geopolitics_scrape_interval || '60'
       this.settingsForm.geopolitics_news_sources = s.systemSettings?.geopolitics_news_sources || 'https://www.reuters.com,https://apnews.com,https://www.bbc.com/news'
       this.settingsForm.geopolitics_keywords = s.systemSettings?.geopolitics_keywords || 'geopolitics,sanctions,military,nato,defense,conflict,treaty,diplomacy'
+      // Priority countries: stored as comma-separated string, displayed as array of chips
+      const countriesRaw = s.systemSettings?.geopolitics_priority_countries || ''
+      this.settingsForm.geopolitics_priority_countries = countriesRaw ? countriesRaw.split(',').map(c => c.trim()).filter(Boolean) : []
       this.settingsForm.geopolitics_pentagon_enabled = s.systemSettings?.geopolitics_pentagon_enabled || 'true'
       this.settingsForm.geopolitics_max_articles = s.systemSettings?.geopolitics_max_articles || '25'
     },
@@ -982,7 +1000,11 @@ export default {
       const s = useSettingsStore()
       try {
         for (const [key, value] of Object.entries(this.settingsForm)) {
-          await s.updateSystemSetting(key, value)
+          // Convert priority countries array to comma-separated string for storage
+          const saveValue = (key === 'geopolitics_priority_countries' && Array.isArray(value))
+            ? value.join(',')
+            : value
+          await s.updateSystemSetting(key, saveValue)
         }
         this.notify('Settings saved')
       } catch (e) { this.notify('Failed to save settings', 'error') }
