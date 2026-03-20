@@ -412,12 +412,6 @@
           <span class="text-subtitle-2 text-medium-emphasis">{{ summaries.length }} saved briefing{{ summaries.length !== 1 ? 's' : '' }}</span>
         </v-col>
         <v-col cols="auto" class="d-flex ga-2 align-center">
-          <v-btn color="amber-darken-3" variant="flat" size="small" :loading="summarizing" @click="summarizeDay">
-            <v-icon start>mdi-plus</v-icon> Daily
-          </v-btn>
-          <v-btn color="deep-purple" variant="flat" size="small" :loading="summarizingMonth" @click="summarizeMonth">
-            <v-icon start>mdi-calendar-month</v-icon> Monthly
-          </v-btn>
           <v-btn v-if="summaries.length" color="red" variant="outlined" size="small" @click="clearSummaries">
             <v-icon start>mdi-delete-forever</v-icon> Clear All
           </v-btn>
