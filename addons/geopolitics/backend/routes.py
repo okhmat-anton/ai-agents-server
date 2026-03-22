@@ -807,7 +807,8 @@ Be analytical, not just descriptive. Identify patterns, connections between even
 
 @router.post("/summarize-day")
 async def summarize_day(body: dict = None):
-    """Use LLM to produce an intelligence briefing from today's news and Pentagon data."""
+    """Use LLM to produce an intelligence briefing from today's news and Pentagon data.
+    Auto-scrapes if no data from today, falls back to latest available."""
     from app.api.chat import _resolve_model, _chat_with_model
     from app.llm.base import GenerationParams
 
@@ -816,19 +817,47 @@ async def summarize_day(body: dict = None):
     model_id = body.get("model_id", "role:default")
     language = body.get("language", "English")
 
-    # Strictly today's articles only
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     news_query = {"created_at": {"$gte": today_start}}
+
+    # Check if we have today's articles
     news_items = []
     async for doc in db[NEWS_COLLECTION].find(news_query).sort("published_at", -1).limit(100):
         news_items.append(doc)
-
     pentagon_items = []
     async for doc in db[PENTAGON_COLLECTION].find(news_query).sort("published_at", -1).limit(100):
         pentagon_items.append(doc)
 
+    # Auto-scrape if nothing from today
     if not news_items and not pentagon_items:
-        raise HTTPException(status_code=400, detail="No news or Pentagon data from today. Run scraping first.")
+        logger.info("No today's data — auto-scraping before summarize...")
+        try:
+            await scrape_news()
+        except Exception as e:
+            logger.warning(f"Auto-scrape news failed: {e}")
+        try:
+            await scrape_pentagon()
+        except Exception as e:
+            logger.warning(f"Auto-scrape pentagon failed: {e}")
+
+        # Re-check after scraping
+        news_items = []
+        async for doc in db[NEWS_COLLECTION].find(news_query).sort("published_at", -1).limit(100):
+            news_items.append(doc)
+        pentagon_items = []
+        async for doc in db[PENTAGON_COLLECTION].find(news_query).sort("published_at", -1).limit(100):
+            pentagon_items.append(doc)
+
+    # Still nothing from today — fall back to latest available
+    if not news_items:
+        async for doc in db[NEWS_COLLECTION].find().sort("created_at", -1).limit(50):
+            news_items.append(doc)
+    if not pentagon_items:
+        async for doc in db[PENTAGON_COLLECTION].find().sort("created_at", -1).limit(50):
+            pentagon_items.append(doc)
+
+    if not news_items and not pentagon_items:
+        raise HTTPException(status_code=400, detail="No news data available at all. Check your sources.")
 
     news_context = _build_news_context(news_items, pentagon_items)
     summary_text = await _generate_summary(db, model_id, language, news_context, scope="daily")

@@ -840,7 +840,7 @@ export default {
     async summarizeDay() {
       this.summarizing = true
       try {
-        const { data } = await api.post(`${API}/summarize-day`, { language: this.summaryLang })
+        const { data } = await api.post(`${API}/summarize-day`, { language: this.summaryLang }, { timeout: 300000 })
         await this.loadSummaries()
         this.tab = 'summaries'
         if (this.summaries.length > 0) {
@@ -855,7 +855,7 @@ export default {
     async summarizeMonth() {
       this.summarizingMonth = true
       try {
-        const { data } = await api.post(`${API}/summarize-month`, { language: this.summaryLang })
+        const { data } = await api.post(`${API}/summarize-month`, { language: this.summaryLang }, { timeout: 300000 })
         await this.loadSummaries()
         this.tab = 'summaries'
         if (this.summaries.length > 0) {
