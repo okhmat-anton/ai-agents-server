@@ -853,6 +853,26 @@ async def get_listing(listing_hash: str, db=Depends(get_mongodb)):
     return doc
 
 
+class CommentInput(BaseModel):
+    comment: str = ""
+
+
+@router.patch("/listings/{listing_hash}/comment")
+async def update_listing_comment(
+    listing_hash: str,
+    body: CommentInput,
+    db=Depends(get_mongodb),
+):
+    """Save or update user comment on a listing."""
+    result = await db[COL_LISTINGS].update_one(
+        {"hash": listing_hash},
+        {"$set": {"user_comment": body.comment}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Listing not found")
+    return {"ok": True}
+
+
 @router.post("/listings/{listing_hash}/scrape-detail")
 async def scrape_listing_detail(listing_hash: str, db=Depends(get_mongodb)):
     """Scrape detail page for a specific listing to get financing info."""

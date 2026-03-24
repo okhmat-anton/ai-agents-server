@@ -283,6 +283,20 @@
                     {{ item.zoning_code }}
                   </v-chip>
                 </div>
+                <div class="mt-2" @click.stop>
+                  <v-text-field
+                    :model-value="item.user_comment || ''"
+                    @update:model-value="item.user_comment = $event"
+                    @blur="saveComment(item)"
+                    @keydown.enter="$event.target.blur()"
+                    variant="outlined"
+                    density="compact"
+                    placeholder="Add comment..."
+                    hide-details
+                    prepend-inner-icon="mdi-comment-outline"
+                    class="comment-card-field"
+                  />
+                </div>
               </v-card-text>
 
               <v-card-actions class="px-3 pb-3">
@@ -348,6 +362,7 @@
               <th>Source</th>
               <th>HOA</th>
               <th>Zoning</th>
+              <th style="min-width: 180px">Comment</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -390,6 +405,20 @@
               <td>
                 <v-chip v-if="item.zoning" size="x-small" color="purple" variant="tonal">{{ item.zoning }}</v-chip>
                 <span v-else class="text-grey">—</span>
+              </td>
+              <td @click.stop>
+                <v-text-field
+                  :model-value="item.user_comment || ''"
+                  @update:model-value="item.user_comment = $event"
+                  @blur="saveComment(item)"
+                  @keydown.enter="$event.target.blur()"
+                  variant="plain"
+                  density="compact"
+                  placeholder="Add comment..."
+                  hide-details
+                  single-line
+                  class="comment-field"
+                />
               </td>
               <td style="white-space: nowrap">
                 <v-btn size="x-small" variant="text" icon @click="scrapeDetail(item)" :loading="item._loadingDetail">
@@ -1399,6 +1428,16 @@ export default {
       }
     },
 
+    // ---- Comment ----
+    async saveComment(item) {
+      const comment = (item.user_comment || '').trim()
+      try {
+        await api.patch(`${API}/listings/${item.hash}/comment`, { comment })
+      } catch (e) {
+        this.notify('Failed to save comment', 'error')
+      }
+    },
+
     // ---- Sources ----
     async loadSources() {
       try {
@@ -1466,4 +1505,22 @@ export default {
 </script>
 
 <style scoped>
+.comment-field :deep(.v-field__input) {
+  font-size: 0.8rem;
+  padding: 2px 4px;
+  min-height: 28px;
+}
+.comment-field :deep(.v-field) {
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
+}
+.comment-field :deep(.v-field:hover) {
+  border-bottom-color: rgba(255, 255, 255, 0.4);
+}
+.comment-field :deep(.v-field--focused) {
+  border-bottom-color: #8D6E63;
+}
+.comment-card-field :deep(.v-field__input) {
+  font-size: 0.8rem;
+  min-height: 32px;
+}
 </style>
