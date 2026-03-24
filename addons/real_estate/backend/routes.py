@@ -184,6 +184,94 @@ DEFAULT_SOURCES = [
         "scraper_type": "landzero",
         "description": "Zero down, zero credit checks. AZ, CO, FL, NV, NM, UT, MI, CA.",
     },
+    {
+        "source_id": "billyland",
+        "name": "BillyLand",
+        "base_url": "https://www.billyland.com",
+        "enabled": True,
+        "scraper_type": "billyland",
+        "description": "Cheap land auctions across 16 states, owner financing, no credit check",
+    },
+    {
+        "source_id": "elegmentland",
+        "name": "Elegment Land",
+        "base_url": "https://land.elegment.com",
+        "enabled": True,
+        "scraper_type": "elegmentland",
+        "description": "Affordable land with owner financing in AL, CA, AR, SC, NC, TX, CO, OK, TN, WA",
+    },
+    {
+        "source_id": "landequities",
+        "name": "Land Equities",
+        "base_url": "https://landequities.com",
+        "enabled": True,
+        "scraper_type": "landequities",
+        "description": "Land 50-80% below market value. AZ, CA, CO, HI, NV, NM, OR, TX",
+    },
+    {
+        "source_id": "yourcheapland",
+        "name": "YourCheapLand",
+        "base_url": "https://yourcheapland.com",
+        "enabled": True,
+        "scraper_type": "yourcheapland",
+        "description": "Cheap land in TX, AZ, NM, CO, UT, OK. Off-grid homesteads, recreation.",
+    },
+    {
+        "source_id": "terraprimelots",
+        "name": "Terra Prime Lots",
+        "base_url": "https://www.terraprimelots.com",
+        "enabled": True,
+        "scraper_type": "terraprimelots",
+        "description": "Affordable land, full owner financing, no credit check. FL, TX, CO, NV, NM.",
+    },
+    {
+        "source_id": "rawestate",
+        "name": "Raw Estate Enterprise",
+        "base_url": "https://www.rawestateenterprise.com",
+        "enabled": True,
+        "scraper_type": "rawestate",
+        "description": "AZ, TX, NV land. FSBO, no credit checks, low monthly payments.",
+    },
+    {
+        "source_id": "landlimited",
+        "name": "Land Limited",
+        "base_url": "https://landlimited.com",
+        "enabled": True,
+        "scraper_type": "landlimited",
+        "description": "Rural land across all 50 states. Cabin, off-grid, recreation, single family.",
+    },
+    {
+        "source_id": "landandfarm",
+        "name": "LandAndFarm",
+        "base_url": "https://www.landandfarm.com",
+        "enabled": True,
+        "scraper_type": "landandfarm",
+        "description": "Major marketplace — farms, ranches, cheap land. Owner financing filter.",
+    },
+    {
+        "source_id": "landsearch",
+        "name": "LandSearch",
+        "base_url": "https://www.landsearch.com",
+        "enabled": True,
+        "scraper_type": "landsearch",
+        "description": "Large aggregator — 370K+ listings, all 50 states. 2,500+ WA properties.",
+    },
+    {
+        "source_id": "landwatch",
+        "name": "LandWatch",
+        "base_url": "https://www.landwatch.com",
+        "enabled": True,
+        "scraper_type": "landwatch",
+        "description": "Major marketplace — 4,400+ WA listings. Farms, ranches, recreational land.",
+    },
+    {
+        "source_id": "horizonlandsales",
+        "name": "Horizon Land Sales",
+        "base_url": "https://horizonlandsales.com",
+        "enabled": True,
+        "scraper_type": "horizonlandsales",
+        "description": "Below-market-value land. WA, MT properties. Owner financing, deep discounts.",
+    },
 ]
 
 # LandCentral state slugs
@@ -313,11 +401,17 @@ async def _fetch_with_retry(client: httpx.AsyncClient, url: str, retries: int = 
     return None
 
 
+# Global scrape mode — set before scraping starts, read by _smart_upsert
+_scrape_mode = "full"  # "full" | "new_only" | "favorites"
+
+
 async def _smart_upsert(col, listing_hash: str, fresh_data: dict):
     """Insert new listing or update only volatile fields (price, availability).
 
     Preserves detail fields (description, down_payment, monthly_payment, etc.)
     that were scraped separately. Tracks price history.
+
+    In 'new_only' mode: only insert brand-new listings, skip existing entirely.
     """
     existing = await col.find_one({"hash": listing_hash})
     now = datetime.now(timezone.utc).isoformat()
@@ -333,6 +427,10 @@ async def _smart_upsert(col, listing_hash: str, fresh_data: dict):
             ]
         await col.insert_one(fresh_data)
         return True
+
+    # In new_only mode — skip updates for existing listings entirely
+    if _scrape_mode == "new_only":
+        return False
 
     # Existing listing — only update volatile fields, keep detail data
     update_set = {"scraped_at": now}
@@ -1792,6 +1890,1951 @@ async def _scrape_detail_landzero(db, client: httpx.AsyncClient, listing: dict) 
     return listing
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# BILLYLAND — https://www.billyland.com/{State}-Land-for-Sale/Auctions
+# ─────────────────────────────────────────────────────────────────────────
+
+BILLYLAND_STATES = [
+    "Alaska", "Arizona", "Arkansas", "California", "Colorado",
+    "Florida", "Georgia", "Hawaii", "Kentucky", "Minnesota",
+    "Missouri", "New-Mexico", "Oregon", "South-Carolina",
+    "Tennessee", "Texas",
+]
+
+
+async def _scrape_billyland(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape BillyLand.com — auction-style land per state."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    states = BILLYLAND_STATES
+    if states_filter:
+        states = [s for s in BILLYLAND_STATES if _slug_to_state(s).lower() in states_filter]
+
+    _scrape_progress["states_total"] = len(states)
+    _scrape_progress["states_done"] = 0
+
+    for idx, state_slug in enumerate(states):
+        url = f"https://www.billyland.com/{state_slug}-Land-for-Sale/Auctions"
+        state_name = _slug_to_state(state_slug)
+        try:
+            resp = await _fetch_with_retry(client, url)
+            if not resp:
+                _scrape_progress["errors"] += 1
+                _scrape_progress["states_done"] = idx + 1
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Auction links: /{State}-Land-for-Sale/Auctions/{id}/ViewAuction
+            links = soup.find_all("a", href=re.compile(r"/Auctions/\d+/ViewAuction"))
+            seen = set()
+
+            for link in links:
+                href = link.get("href", "")
+                if not href or href in seen:
+                    continue
+                seen.add(href)
+                if href.startswith("/"):
+                    href = f"https://www.billyland.com{href}"
+
+                name = link.get_text(strip=True)
+                if not name or len(name) < 5:
+                    continue
+
+                # Walk up for card text
+                card = link
+                for _ in range(5):
+                    if card.parent:
+                        card = card.parent
+                    else:
+                        break
+                card_text = card.get_text(" ", strip=True)
+
+                # Acreage from title: "5.1 Acres of Colorado Land"
+                acreage = None
+                am = re.search(r"([\d.]+)\s*Acres?", name, re.I)
+                if am:
+                    acreage = float(am.group(1))
+
+                # Price: Current Bid: $725.00
+                price = None
+                pm = re.search(r"Current\s*Bid[:\s]*\$([\d,]+\.?\d*)", card_text, re.I)
+                if pm:
+                    price = _parse_price(pm.group(1))
+
+                # Image
+                img = card.find("img")
+                img_url = None
+                if img:
+                    src = img.get("src") or ""
+                    if src and not src.startswith("data:") and "spacer" not in src:
+                        if src.startswith("/"):
+                            src = f"https://www.billyland.com{src}"
+                        img_url = src
+
+                listing_hash = _hash(f"billyland:{href}")
+                fresh = {
+                    "hash": listing_hash,
+                    "source": "billyland",
+                    "source_name": "BillyLand",
+                    "name": name[:200],
+                    "url": href,
+                    "property_id": "",
+                    "state": state_name,
+                    "county": "",
+                    "acreage": acreage,
+                    "price": price,
+                    "original_price": None,
+                    "down_payment": None,
+                    "monthly_payment": None,
+                    "financing_available": True,
+                    "land_type": None,
+                    "image_url": img_url,
+                    "description": "",
+                    "is_foreclosure": False,
+                }
+                await _smart_upsert(col, listing_hash, fresh)
+                count += 1
+                _scrape_progress["listings_found"] = count
+
+            _scrape_progress["states_done"] = idx + 1
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"BillyLand scrape error ({state_slug}): {e}")
+            _scrape_progress["errors"] += 1
+            _scrape_progress["states_done"] = idx + 1
+
+    return count
+
+
+async def _scrape_detail_billyland(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape BillyLand auction detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Monthly payment
+        mp_m = re.search(r"\$([\d,]+\.?\d*)\s*/\s*(?:mo|month)", text, re.I)
+        if mp_m:
+            listing["monthly_payment"] = _parse_price(mp_m.group(1))
+
+        # Down payment
+        dp_m = re.search(r"(?:down\s*(?:payment)?)\s*[:=]?\s*\$([\d,]+\.?\d*)", text, re.I)
+        if dp_m:
+            listing["down_payment"] = _parse_price(dp_m.group(1))
+
+        # County
+        cm = re.search(r"([\w\s]+?)\s*County", text)
+        if cm and not listing.get("county"):
+            listing["county"] = cm.group(1).strip()
+
+        # Acreage (backup)
+        if not listing.get("acreage"):
+            am = re.search(r"([\d.]+)\s*Acres?", text, re.I)
+            if am:
+                listing["acreage"] = float(am.group(1))
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"BillyLand detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# ELEGMENT LAND — https://land.elegment.com/all-land/
+# ─────────────────────────────────────────────────────────────────────────
+
+ELEGMENT_STATES = [
+    "alabama", "arkansas", "california", "colorado", "north-carolina",
+    "oklahoma", "south-carolina", "tennessee", "texas", "washington",
+]
+
+
+async def _scrape_elegmentland(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape Elegment Land — property pages by state."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    states = ELEGMENT_STATES
+    if states_filter:
+        states = [s for s in ELEGMENT_STATES if _slug_to_state(s).lower() in states_filter]
+
+    # Build URLs: per-state pages + main all-land page
+    urls = [("all", "https://land.elegment.com/all-land/")]
+    for s in states:
+        urls.append((s, f"https://land.elegment.com/land-for-sale/{s}/"))
+
+    _scrape_progress["states_total"] = len(urls)
+    _scrape_progress["states_done"] = 0
+
+    for idx, (state_slug, page_url) in enumerate(urls):
+        try:
+            resp = await _fetch_with_retry(client, page_url)
+            if not resp:
+                _scrape_progress["states_done"] = idx + 1
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Property links: /property-for-sale/{slug}
+            links = soup.find_all("a", href=re.compile(r"/property-for-sale/[\w_-]+"))
+            seen = set()
+
+            for link in links:
+                href = link.get("href", "")
+                clean = href.split("?")[0].rstrip("/")
+                if not href or clean in seen:
+                    continue
+                seen.add(clean)
+
+                if href.startswith("/"):
+                    href = f"https://land.elegment.com{href}"
+
+                name = link.get_text(strip=True)
+                if not name or len(name) < 5 or name.lower() in ("view property", "view more"):
+                    continue
+
+                card = link
+                for _ in range(5):
+                    if card.parent:
+                        card = card.parent
+                    else:
+                        break
+                card_text = card.get_text(" ", strip=True)
+
+                # Acreage from title: "0.09 Acre" or "2.06 Acres"
+                acreage = None
+                am = re.search(r"([\d.]+)\s*Acres?", name, re.I)
+                if am:
+                    acreage = float(am.group(1))
+
+                # Price: "$46,900 Cash Price"
+                price = None
+                pm = re.search(r"\$([\d,]+)\s*(?:Cash\s*Price)?", card_text)
+                if pm:
+                    price = _parse_price(pm.group(1))
+
+                # State from title or context
+                state = _extract_state_from_text(name)
+                if not state and state_slug != "all":
+                    state = _slug_to_state(state_slug)
+                if states_filter and state and state.lower() not in states_filter:
+                    continue
+
+                # Image
+                img = card.find("img")
+                img_url = None
+                if img:
+                    src = img.get("src") or img.get("data-src") or ""
+                    if src and not src.startswith("data:"):
+                        img_url = src
+
+                listing_hash = _hash(f"elegment:{clean}")
+                fresh = {
+                    "hash": listing_hash,
+                    "source": "elegmentland",
+                    "source_name": "Elegment Land",
+                    "name": name[:200],
+                    "url": href,
+                    "property_id": "",
+                    "state": state,
+                    "county": "",
+                    "acreage": acreage,
+                    "price": price,
+                    "original_price": None,
+                    "down_payment": None,
+                    "monthly_payment": None,
+                    "financing_available": True,
+                    "land_type": None,
+                    "image_url": img_url,
+                    "description": "",
+                    "is_foreclosure": False,
+                }
+                await _smart_upsert(col, listing_hash, fresh)
+                count += 1
+                _scrape_progress["listings_found"] = count
+
+            _scrape_progress["states_done"] = idx + 1
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Elegment scrape error ({state_slug}): {e}")
+            _scrape_progress["errors"] += 1
+            _scrape_progress["states_done"] = idx + 1
+
+    return count
+
+
+async def _scrape_detail_elegmentland(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape Elegment Land property detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Monthly payment
+        mp_m = re.search(r"\$([\d,]+\.?\d*)\s*/\s*(?:mo|month)", text, re.I)
+        if mp_m:
+            listing["monthly_payment"] = _parse_price(mp_m.group(1))
+
+        # Down payment
+        dp_m = re.search(r"(?:down\s*(?:payment)?)\s*[:=]?\s*\$([\d,]+\.?\d*)", text, re.I)
+        if dp_m:
+            listing["down_payment"] = _parse_price(dp_m.group(1))
+
+        # County
+        cm = re.search(r"([\w\s]+?)\s*County", text)
+        if cm and not listing.get("county"):
+            listing["county"] = cm.group(1).strip()
+
+        # Description
+        desc = soup.find("div", class_=re.compile(r"product.*description|entry-content|woocommerce-product-details", re.I))
+        if desc:
+            listing["description"] = desc.get_text(" ", strip=True)[:2000]
+
+        # HOA
+        if "no hoa" in text.lower():
+            listing["hoa"] = "no"
+
+        # Zoning
+        zm = re.search(r"[Zz]oning\s*[:=]?\s*([^.\n<]+)", text)
+        if zm:
+            listing["zoning"] = zm.group(1).strip()[:200]
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"Elegment detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# LAND EQUITIES — https://landequities.com/{state}
+# ─────────────────────────────────────────────────────────────────────────
+
+LANDEQUITIES_STATES = [
+    "arizona", "california", "colorado", "hawaii", "nevada",
+    "new-mexico", "oregon", "texas", "other-states",
+]
+
+
+async def _scrape_landequities(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape LandEquities.com — Squarespace, per-state pages."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    states = LANDEQUITIES_STATES
+    if states_filter:
+        states = [s for s in LANDEQUITIES_STATES
+                  if _slug_to_state(s).lower() in states_filter or s == "other-states"]
+
+    _scrape_progress["states_total"] = len(states)
+    _scrape_progress["states_done"] = 0
+
+    for idx, state_slug in enumerate(states):
+        url = f"https://landequities.com/{state_slug}"
+        state_name = _slug_to_state(state_slug)
+        try:
+            resp = await _fetch_with_retry(client, url)
+            if not resp:
+                _scrape_progress["states_done"] = idx + 1
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Links to individual property pages: /oregon/326374 etc
+            links = soup.find_all("a", href=re.compile(rf"/{re.escape(state_slug)}/[\w-]+$"))
+            seen = set()
+
+            for link in links:
+                href = link.get("href", "")
+                clean = href.split("?")[0].rstrip("/")
+                if not href or clean in seen:
+                    continue
+                seen.add(clean)
+
+                if href.startswith("/"):
+                    href = f"https://landequities.com{href}"
+
+                name = link.get_text(strip=True)
+                if not name or len(name) < 10:
+                    continue
+                # Skip non-property links
+                if name.lower() in ("home", "contact", "about", "faq", "sign me up!", "sold"):
+                    continue
+
+                card = link
+                for _ in range(4):
+                    if card.parent:
+                        card = card.parent
+                    else:
+                        break
+                card_text = card.get_text(" ", strip=True)
+
+                # Price: "Sale Price:$12,995.00"
+                price = None
+                pm = re.search(r"Sale\s*Price\s*:\s*\$([\d,]+\.?\d*)", card_text, re.I)
+                if pm:
+                    price = _parse_price(pm.group(1))
+
+                # Original price
+                orig_price = None
+                op = re.search(r"Original\s*Price\s*:\s*\$([\d,]+\.?\d*)", card_text, re.I)
+                if op:
+                    orig_price = _parse_price(op.group(1))
+
+                # Extract acreage from name
+                acreage = None
+                am = re.search(r"([\d.]+)\s*ACRES?", name, re.I)
+                if am:
+                    acreage = float(am.group(1))
+
+                # Extract city from name: often "... LOT #X SOME ST. CITY, STATE"
+                # State from URL slug
+                state = state_name if state_slug != "other-states" else _extract_state_from_text(name)
+                if states_filter and state and state.lower() not in states_filter:
+                    continue
+
+                # Check SOLD / AVAILABLE status
+                is_sold = "SOLD" in card_text.upper() and "AVAILABLE" not in card_text.upper()
+                if is_sold:
+                    continue  # Skip sold
+
+                # Image
+                img = card.find("img")
+                img_url = None
+                if img:
+                    src = img.get("src") or img.get("data-src") or ""
+                    if src and not src.startswith("data:"):
+                        img_url = src
+
+                listing_hash = _hash(f"landequities:{clean}")
+                fresh = {
+                    "hash": listing_hash,
+                    "source": "landequities",
+                    "source_name": "Land Equities",
+                    "name": name[:200],
+                    "url": href,
+                    "property_id": "",
+                    "state": state,
+                    "county": "",
+                    "acreage": acreage,
+                    "price": price,
+                    "original_price": orig_price,
+                    "down_payment": None,
+                    "monthly_payment": None,
+                    "financing_available": True,
+                    "land_type": None,
+                    "image_url": img_url,
+                    "description": "",
+                    "is_foreclosure": False,
+                }
+                await _smart_upsert(col, listing_hash, fresh)
+                count += 1
+                _scrape_progress["listings_found"] = count
+
+            _scrape_progress["states_done"] = idx + 1
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"LandEquities scrape error ({state_slug}): {e}")
+            _scrape_progress["errors"] += 1
+            _scrape_progress["states_done"] = idx + 1
+
+    return count
+
+
+async def _scrape_detail_landequities(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape Land Equities property detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Monthly payment
+        mp_m = re.search(r"\$([\d,]+\.?\d*)\s*/\s*(?:mo|month)", text, re.I)
+        if mp_m:
+            listing["monthly_payment"] = _parse_price(mp_m.group(1))
+
+        # Description
+        desc = soup.find("div", class_=re.compile(r"sqs-block-content|entry-content", re.I))
+        if desc:
+            listing["description"] = desc.get_text(" ", strip=True)[:2000]
+
+        # County
+        cm = re.search(r"([\w\s]+?)\s*County", text)
+        if cm and not listing.get("county"):
+            listing["county"] = cm.group(1).strip()
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"LandEquities detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# YOURCHEAPLAND — https://yourcheapland.com/land-for-sale/
+# ─────────────────────────────────────────────────────────────────────────
+
+YOURCHEAPLAND_STATES = [
+    ("arizona", "5"), ("colorado", "9"), ("florida", "10"),
+    ("new-mexico", "1"), ("oklahoma", "2"), ("texas", "4"), ("utah", "7"),
+]
+
+
+async def _scrape_yourcheapland(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape YourCheapLand.com — state pages + subdivisions."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    states = YOURCHEAPLAND_STATES
+    if states_filter:
+        states = [(s, i) for s, i in YOURCHEAPLAND_STATES
+                  if _slug_to_state(s).lower() in states_filter]
+
+    # Also scrape main land-for-sale page
+    urls = [("all", "https://yourcheapland.com/land-for-sale/")]
+    for s, sid in states:
+        urls.append((s, f"https://yourcheapland.com/state/{s}/{sid}/"))
+
+    _scrape_progress["states_total"] = len(urls)
+    _scrape_progress["states_done"] = 0
+
+    for idx, (state_slug, page_url) in enumerate(urls):
+        try:
+            resp = await _fetch_with_retry(client, page_url)
+            if not resp:
+                _scrape_progress["states_done"] = idx + 1
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Property links: /subdivision/{name}/lot/{id} or /subdivision/{name}/{id}
+            links = soup.find_all("a", href=re.compile(r"/subdivision/"))
+            seen = set()
+
+            for link in links:
+                href = link.get("href", "")
+                clean = href.split("?")[0].rstrip("/")
+                if not href or clean in seen:
+                    continue
+                seen.add(clean)
+
+                if href.startswith("/"):
+                    href = f"https://yourcheapland.com{href}"
+
+                name = link.get_text(strip=True)
+                if not name or len(name) < 5:
+                    continue
+                if name.lower() in ("more property details »", "view properties »", "see more info"):
+                    # Try parent text  
+                    parent_name = link.parent.get_text(strip=True) if link.parent else ""
+                    if len(parent_name) > 10 and "$" not in parent_name[:5]:
+                        name = parent_name[:200]
+                    else:
+                        continue
+
+                card = link
+                for _ in range(5):
+                    if card.parent:
+                        card = card.parent
+                    else:
+                        break
+                card_text = card.get_text(" ", strip=True)
+
+                # Acreage
+                acreage = None
+                am = re.search(r"([\d.]+)\s*(?:Acres?|Ac\b)", card_text, re.I)
+                if am:
+                    acreage = float(am.group(1))
+
+                # Price
+                price = None
+                pm = re.search(r"\$([\d,]+\.?\d*)", card_text)
+                if pm:
+                    price = _parse_price(pm.group(1))
+
+                # Monthly payment: $227.96/Month
+                monthly = None
+                mm = re.search(r"\$([\d,]+\.?\d*)\s*/\s*(?:Month|mo)", card_text, re.I)
+                if mm:
+                    monthly = _parse_price(mm.group(1))
+
+                # State
+                state = _slug_to_state(state_slug) if state_slug != "all" else ""
+                if not state:
+                    state = _extract_state_from_text(card_text)
+                if states_filter and state and state.lower() not in states_filter:
+                    continue
+
+                listing_hash = _hash(f"ycl:{clean}")
+                fresh = {
+                    "hash": listing_hash,
+                    "source": "yourcheapland",
+                    "source_name": "YourCheapLand",
+                    "name": name[:200],
+                    "url": href,
+                    "property_id": "",
+                    "state": state,
+                    "county": "",
+                    "acreage": acreage,
+                    "price": price,
+                    "original_price": None,
+                    "down_payment": None,
+                    "monthly_payment": monthly,
+                    "financing_available": True,
+                    "land_type": None,
+                    "image_url": None,
+                    "description": "",
+                    "is_foreclosure": False,
+                }
+                await _smart_upsert(col, listing_hash, fresh)
+                count += 1
+                _scrape_progress["listings_found"] = count
+
+            _scrape_progress["states_done"] = idx + 1
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"YourCheapLand scrape error ({state_slug}): {e}")
+            _scrape_progress["errors"] += 1
+            _scrape_progress["states_done"] = idx + 1
+
+    return count
+
+
+async def _scrape_detail_yourcheapland(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape YourCheapLand property detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Cash price
+        cp = re.search(r"Cash\s*Price\s*[:=]?\s*\$([\d,]+\.?\d*)", text, re.I)
+        if cp:
+            listing["price"] = _parse_price(cp.group(1))
+
+        # Down payment
+        dp = re.search(r"(?:down\s*(?:payment)?)\s*[:=]?\s*\$([\d,]+\.?\d*)", text, re.I)
+        if dp:
+            listing["down_payment"] = _parse_price(dp.group(1))
+
+        # Monthly
+        mp = re.search(r"\$([\d,]+\.?\d*)\s*/\s*(?:mo|month)", text, re.I)
+        if mp:
+            listing["monthly_payment"] = _parse_price(mp.group(1))
+
+        # County
+        cm = re.search(r"([\w\s]+?)\s*County", text)
+        if cm and not listing.get("county"):
+            listing["county"] = cm.group(1).strip()
+
+        # Description
+        desc = soup.find("div", class_=re.compile(r"property.*detail|content|description", re.I))
+        if desc:
+            listing["description"] = desc.get_text(" ", strip=True)[:2000]
+
+        # Acreage (backup)
+        if not listing.get("acreage"):
+            am = re.search(r"([\d.]+)\s*Acres?", text, re.I)
+            if am:
+                listing["acreage"] = float(am.group(1))
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"YourCheapLand detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# TERRA PRIME LOTS — https://www.terraprimelots.com/en/properties
+# ─────────────────────────────────────────────────────────────────────────
+
+
+async def _scrape_terraprimelots(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape TerraPrimeLots.com — single properties page."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    _scrape_progress["states_total"] = 1
+    _scrape_progress["states_done"] = 0
+
+    try:
+        resp = await _fetch_with_retry(client, "https://www.terraprimelots.com/en/properties")
+        if not resp:
+            _scrape_progress["errors"] += 1
+            return 0
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Property links: /en/properties/{slug}
+        links = soup.find_all("a", href=re.compile(r"/en/properties/[\w-]+"))
+        seen = set()
+
+        for link in links:
+            href = link.get("href", "")
+            clean = href.split("?")[0].rstrip("/")
+            if not href or clean in seen or clean.endswith("/properties"):
+                continue
+            seen.add(clean)
+
+            if href.startswith("/"):
+                href = f"https://www.terraprimelots.com{href}"
+
+            # Card text — walk up
+            card = link
+            for _ in range(5):
+                if card.parent:
+                    card = card.parent
+                else:
+                    break
+            card_text = card.get_text(" ", strip=True)
+
+            name = ""
+            # Extract meaningful name from card text
+            nm = re.search(r"([\d.]+\s*Acres?\s+in\s+.+?)(?:AVAILABLE|STARTING|Land Use|$)", card_text, re.I)
+            if nm:
+                name = nm.group(1).strip()
+            if not name:
+                nm2 = re.search(r"(Affordable .+?)(?:AVAILABLE|STARTING|$)", card_text, re.I)
+                if nm2:
+                    name = nm2.group(1).strip()
+            if not name:
+                name = link.get_text(strip=True)
+            if not name or len(name) < 5 or name.lower() == "view details":
+                continue
+
+            # Acreage
+            acreage = None
+            am = re.search(r"([\d.]+)\s*(?:-?\s*)?Acres?", card_text, re.I)
+            if am:
+                acreage = float(am.group(1))
+
+            # Cash price: "$7,900cash"
+            price = None
+            pm = re.search(r"\$([\d,]+)\s*cash", card_text, re.I)
+            if pm:
+                price = _parse_price(pm.group(1))
+
+            # Monthly: "STARTING AT $149 /month"
+            monthly = None
+            mm = re.search(r"\$([\d,]+)\s*/\s*month", card_text, re.I)
+            if mm:
+                monthly = _parse_price(mm.group(1))
+
+            # State and county from text: "Highlands County, FL"
+            state = ""
+            county = ""
+            loc_m = re.search(r"([\w\s]+?)\s*County,\s*([A-Z]{2})", card_text)
+            if loc_m:
+                county = loc_m.group(1).strip()
+                st_abbr = loc_m.group(2)
+                state = STATE_ABBREVS.get(st_abbr, st_abbr)
+
+            if not state:
+                state = _extract_state_from_text(card_text)
+            if states_filter and state and state.lower() not in states_filter:
+                continue
+
+            listing_hash = _hash(f"terraprime:{clean}")
+            fresh = {
+                "hash": listing_hash,
+                "source": "terraprimelots",
+                "source_name": "Terra Prime Lots",
+                "name": name[:200],
+                "url": href,
+                "property_id": "",
+                "state": state,
+                "county": county,
+                "acreage": acreage,
+                "price": price,
+                "original_price": None,
+                "down_payment": None,
+                "monthly_payment": monthly,
+                "financing_available": True,
+                "land_type": None,
+                "image_url": None,
+                "description": "",
+                "is_foreclosure": False,
+            }
+            await _smart_upsert(col, listing_hash, fresh)
+            count += 1
+            _scrape_progress["listings_found"] = count
+
+        _scrape_progress["states_done"] = 1
+    except Exception as e:
+        logger.error(f"TerraPrimeLots scrape error: {e}")
+        _scrape_progress["errors"] += 1
+
+    return count
+
+
+async def _scrape_detail_terraprimelots(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape Terra Prime Lots property detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Cash price
+        cp = re.search(r"\$([\d,]+)\s*cash", text, re.I)
+        if cp:
+            listing["price"] = _parse_price(cp.group(1))
+
+        # Down payment
+        dp = re.search(r"(?:down\s*(?:payment)?)\s*[:=]?\s*\$([\d,]+\.?\d*)", text, re.I)
+        if dp:
+            listing["down_payment"] = _parse_price(dp.group(1))
+
+        # Monthly
+        mp = re.search(r"\$([\d,]+\.?\d*)\s*/\s*(?:mo|month)", text, re.I)
+        if mp:
+            listing["monthly_payment"] = _parse_price(mp.group(1))
+
+        # Zoning / land use
+        zm = re.search(r"(?:Land\s*Use|Zoning)\s*[:=]?\s*([^.\n<]+)", text, re.I)
+        if zm:
+            listing["zoning"] = zm.group(1).strip()[:200]
+
+        # Road access
+        if re.search(r"Road\s*Access", text, re.I):
+            listing["road_access"] = "Yes"
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"TerraPrimeLots detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# RAW ESTATE ENTERPRISE — https://www.rawestateenterprise.com/store-2
+# ─────────────────────────────────────────────────────────────────────────
+
+
+async def _scrape_rawestate(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape RawEstateEnterprise.com — Wix product pages."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    _scrape_progress["states_total"] = 1
+    _scrape_progress["states_done"] = 0
+
+    for page_url in [
+        "https://www.rawestateenterprise.com/",
+        "https://www.rawestateenterprise.com/store-2",
+    ]:
+        try:
+            resp = await _fetch_with_retry(client, page_url)
+            if not resp:
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Product links: /product-page/{slug}
+            links = soup.find_all("a", href=re.compile(r"/product-page/"))
+            seen = set()
+
+            for link in links:
+                href = link.get("href", "")
+                clean = href.split("?")[0].rstrip("/")
+                if not href or clean in seen:
+                    continue
+                seen.add(clean)
+
+                if href.startswith("/"):
+                    href = f"https://www.rawestateenterprise.com{href}"
+
+                name = link.get_text(strip=True)
+                if not name or len(name) < 8:
+                    continue
+                # Skip buttons
+                if name.lower() in ("reserve now", "buy now", "add to cart", "recently sold"):
+                    continue
+
+                card = link
+                for _ in range(4):
+                    if card.parent:
+                        card = card.parent
+                    else:
+                        break
+                card_text = card.get_text(" ", strip=True)
+
+                # Title pattern: "4.64-acre $11,000 ($389 Initial Payment) - Apache County, Arizona near Sanders"
+                # Acreage
+                acreage = None
+                am = re.search(r"([\d.]+)\s*-?\s*acres?", name, re.I)
+                if am:
+                    acreage = float(am.group(1))
+
+                # Price from title: "$11,000"
+                price = None
+                pm = re.search(r"\$([\d,]+)\s", name)
+                if pm:
+                    price = _parse_price(pm.group(1))
+
+                # Monthly: "$190/month"
+                monthly = None
+                mm = re.search(r"\$([\d,]+)\s*/\s*month", card_text, re.I)
+                if mm:
+                    monthly = _parse_price(mm.group(1))
+
+                # Initial Payment (=down)
+                down = None
+                ip = re.search(r"\$([\d,]+)\s*Initial\s*Payment", name, re.I)
+                if ip:
+                    down = _parse_price(ip.group(1))
+
+                # State and county from title
+                state = _extract_state_from_text(name)
+                county = ""
+                cm = re.search(r"([\w\s]+?)\s*County", name)
+                if cm:
+                    county = cm.group(1).strip()
+
+                if states_filter and state and state.lower() not in states_filter:
+                    continue
+
+                # Image
+                img = card.find("img")
+                img_url = None
+                if img:
+                    src = img.get("src") or ""
+                    if src and not src.startswith("data:"):
+                        img_url = src
+
+                # Price from card (Wix shows Price $xxx.00 which is the initial payment, not total)
+                # Use the price from title if available
+                wix_price = None
+                wp = re.search(r"Price\s*\$([\d,]+\.?\d*)", card_text)
+                if wp:
+                    wix_price = _parse_price(wp.group(1))
+                if not price and not down and wix_price:
+                    down = wix_price
+
+                listing_hash = _hash(f"rawestate:{clean}")
+                fresh = {
+                    "hash": listing_hash,
+                    "source": "rawestate",
+                    "source_name": "Raw Estate Enterprise",
+                    "name": name[:200],
+                    "url": href,
+                    "property_id": "",
+                    "state": state,
+                    "county": county,
+                    "acreage": acreage,
+                    "price": price,
+                    "original_price": None,
+                    "down_payment": down,
+                    "monthly_payment": monthly,
+                    "financing_available": True,
+                    "land_type": None,
+                    "image_url": img_url,
+                    "description": "",
+                    "is_foreclosure": False,
+                }
+                await _smart_upsert(col, listing_hash, fresh)
+                count += 1
+                _scrape_progress["listings_found"] = count
+
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"RawEstate scrape error: {e}")
+            _scrape_progress["errors"] += 1
+
+    _scrape_progress["states_done"] = 1
+    return count
+
+
+async def _scrape_detail_rawestate(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape Raw Estate Enterprise product detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Description
+        desc = soup.find("div", class_=re.compile(r"product.*description|rich-content", re.I))
+        if desc:
+            listing["description"] = desc.get_text(" ", strip=True)[:2000]
+
+        # Zoning
+        zm = re.search(r"[Zz]oning\s*[:=]?\s*([^.\n<]+)", text)
+        if zm:
+            listing["zoning"] = zm.group(1).strip()[:200]
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"RawEstate detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# LAND LIMITED — https://landlimited.com/properties/state/{ST}
+# ─────────────────────────────────────────────────────────────────────────
+
+LANDLIMITED_STATES_ABBR = [
+    "AZ", "AR", "CA", "CO", "FL", "GA", "HI", "ID", "KY",
+    "MI", "MO", "MT", "NV", "NM", "NC", "OH", "OK", "OR",
+    "SC", "TN", "TX", "UT", "VA", "WA", "WV", "WI", "WY",
+]
+
+
+async def _scrape_landlimited(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape LandLimited.com — per-state listing pages."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    st_list = LANDLIMITED_STATES_ABBR
+    if states_filter:
+        st_list = [ab for ab in LANDLIMITED_STATES_ABBR
+                   if STATE_ABBREVS.get(ab, "").lower() in states_filter]
+
+    _scrape_progress["states_total"] = len(st_list)
+    _scrape_progress["states_done"] = 0
+
+    for idx, abbr in enumerate(st_list):
+        state_name = STATE_ABBREVS.get(abbr, abbr)
+        url = f"https://landlimited.com/properties/state/{abbr}"
+        try:
+            resp = await _fetch_with_retry(client, url)
+            if not resp:
+                _scrape_progress["states_done"] = idx + 1
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Property links: /properties/{slug} or /properties/detail/{id}
+            links = soup.find_all("a", href=re.compile(r"/properties/(?!state|all)[\w-]+"))
+            seen = set()
+
+            for link in links:
+                href = link.get("href", "")
+                clean = href.split("?")[0].rstrip("/")
+                if not href or clean in seen:
+                    continue
+                seen.add(clean)
+
+                if href.startswith("/"):
+                    href = f"https://landlimited.com{href}"
+
+                name = link.get_text(strip=True)
+                if not name or len(name) < 5:
+                    continue
+                if name.lower() in ("view all", "see more", "buy", "search"):
+                    continue
+
+                card = link
+                for _ in range(5):
+                    if card.parent:
+                        card = card.parent
+                    else:
+                        break
+                card_text = card.get_text(" ", strip=True)
+
+                # Acreage
+                acreage = None
+                am = re.search(r"([\d.]+)\s*(?:Acres?|Ac\b)", card_text, re.I)
+                if am:
+                    acreage = float(am.group(1))
+
+                # Price
+                price = None
+                pm = re.search(r"\$([\d,]+\.?\d*)", card_text)
+                if pm:
+                    price = _parse_price(pm.group(1))
+
+                # Monthly
+                monthly = None
+                mm = re.search(r"\$([\d,]+\.?\d*)\s*/\s*(?:mo|month)", card_text, re.I)
+                if mm:
+                    monthly = _parse_price(mm.group(1))
+
+                # County
+                county = ""
+                cm = re.search(r"([\w\s]+?)\s*County", card_text)
+                if cm:
+                    county = cm.group(1).strip()
+
+                # Image
+                img = card.find("img")
+                img_url = None
+                if img:
+                    src = img.get("src") or img.get("data-src") or ""
+                    if src and not src.startswith("data:"):
+                        img_url = src
+
+                listing_hash = _hash(f"landlimited:{clean}")
+                fresh = {
+                    "hash": listing_hash,
+                    "source": "landlimited",
+                    "source_name": "Land Limited",
+                    "name": name[:200],
+                    "url": href,
+                    "property_id": "",
+                    "state": state_name,
+                    "county": county,
+                    "acreage": acreage,
+                    "price": price,
+                    "original_price": None,
+                    "down_payment": None,
+                    "monthly_payment": monthly,
+                    "financing_available": True,
+                    "land_type": None,
+                    "image_url": img_url,
+                    "description": "",
+                    "is_foreclosure": False,
+                }
+                await _smart_upsert(col, listing_hash, fresh)
+                count += 1
+                _scrape_progress["listings_found"] = count
+
+            _scrape_progress["states_done"] = idx + 1
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"LandLimited scrape error ({abbr}): {e}")
+            _scrape_progress["errors"] += 1
+            _scrape_progress["states_done"] = idx + 1
+
+    return count
+
+
+async def _scrape_detail_landlimited(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape Land Limited property detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Down payment
+        dp = re.search(r"(?:down\s*(?:payment)?)\s*[:=]?\s*\$([\d,]+\.?\d*)", text, re.I)
+        if dp:
+            listing["down_payment"] = _parse_price(dp.group(1))
+
+        # Monthly
+        mp = re.search(r"\$([\d,]+\.?\d*)\s*/\s*(?:mo|month)", text, re.I)
+        if mp:
+            listing["monthly_payment"] = _parse_price(mp.group(1))
+
+        # Description
+        desc = soup.find("div", class_=re.compile(r"description|detail|content", re.I))
+        if desc:
+            listing["description"] = desc.get_text(" ", strip=True)[:2000]
+
+        # Zoning
+        zm = re.search(r"[Zz]oning\s*[:=]?\s*([^.\n<]+)", text)
+        if zm:
+            listing["zoning"] = zm.group(1).strip()[:200]
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"LandLimited detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# LANDANDFARM — https://www.landandfarm.com/search/cheap-land-for-sale/
+# ─────────────────────────────────────────────────────────────────────────
+
+LANDANDFARM_MAX_PAGES = 10  # 20 listings per page
+
+
+async def _scrape_landandfarm(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape LandAndFarm.com — major marketplace, server-rendered pages."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    _scrape_progress["states_total"] = LANDANDFARM_MAX_PAGES
+    _scrape_progress["states_done"] = 0
+
+    for page in range(1, LANDANDFARM_MAX_PAGES + 1):
+        url = f"https://www.landandfarm.com/search/cheap-land-for-sale/page-{page}/" if page > 1 else "https://www.landandfarm.com/search/cheap-land-for-sale/"
+        try:
+            resp = await _fetch_with_retry(client, url)
+            if not resp:
+                _scrape_progress["states_done"] = page
+                continue
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # Property links: /property/{slug}/
+            links = soup.find_all("a", href=re.compile(r"/property/[\w-]+-\d+/$"))
+            seen = set()
+            found_any = False
+
+            for link in links:
+                href = link.get("href", "")
+                clean = href.split("?")[0].rstrip("/")
+                if not href or clean in seen:
+                    continue
+                seen.add(clean)
+                found_any = True
+
+                if href.startswith("/"):
+                    href = f"https://www.landandfarm.com{href}"
+
+                name = link.get_text(strip=True)
+                if not name or len(name) < 3:
+                    continue
+                # Skip nav links
+                if name.lower() in ("listing details page", "contact", "more"):
+                    continue
+
+                card = link
+                for _ in range(6):
+                    if card.parent:
+                        card = card.parent
+                    else:
+                        break
+                card_text = card.get_text(" ", strip=True)
+
+                # Price and acreage: "$6,944 2 Acres"
+                price = None
+                acreage = None
+                pa = re.search(r"\$([\d,]+)\s+([\d.]+)\s*Acres?", card_text, re.I)
+                if pa:
+                    price = _parse_price(pa.group(1))
+                    acreage = float(pa.group(2))
+                else:
+                    pm = re.search(r"\$([\d,]+)", card_text)
+                    if pm:
+                        price = _parse_price(pm.group(1))
+                    am = re.search(r"([\d.]+)\s*Acres?", card_text, re.I)
+                    if am:
+                        acreage = float(am.group(1))
+
+                # Location: city, state, zip, county
+                state = ""
+                county = ""
+                # Pattern: "City, ST, XXXXX, County" or "City, ST, County"
+                loc_m = re.search(r"([A-Z][a-z]+(?:\s[A-Z][a-z]+)?),\s*([A-Z]{2}),?\s*\d*,?\s*([\w\s]*County)?", card_text)
+                if loc_m:
+                    state = STATE_ABBREVS.get(loc_m.group(2), loc_m.group(2))
+                    if loc_m.group(3):
+                        county = loc_m.group(3).replace("County", "").strip()
+                if not state:
+                    state = _extract_state_from_text(card_text)
+
+                if states_filter and state and state.lower() not in states_filter:
+                    continue
+
+                listing_hash = _hash(f"landandfarm:{clean}")
+                fresh = {
+                    "hash": listing_hash,
+                    "source": "landandfarm",
+                    "source_name": "LandAndFarm",
+                    "name": name[:200],
+                    "url": href,
+                    "property_id": "",
+                    "state": state,
+                    "county": county,
+                    "acreage": acreage,
+                    "price": price,
+                    "original_price": None,
+                    "down_payment": None,
+                    "monthly_payment": None,
+                    "financing_available": None,
+                    "land_type": None,
+                    "image_url": None,
+                    "description": "",
+                    "is_foreclosure": False,
+                }
+                await _smart_upsert(col, listing_hash, fresh)
+                count += 1
+                _scrape_progress["listings_found"] = count
+
+            _scrape_progress["states_done"] = page
+
+            if not found_any:
+                break
+
+            await asyncio.sleep(1.0)  # Be polite to larger platforms
+        except Exception as e:
+            logger.error(f"LandAndFarm scrape error (page {page}): {e}")
+            _scrape_progress["errors"] += 1
+            _scrape_progress["states_done"] = page
+
+    return count
+
+
+async def _scrape_detail_landandfarm(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape LandAndFarm property detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Description
+        desc = soup.find("div", class_=re.compile(r"description|detail|listing-content", re.I))
+        if desc:
+            listing["description"] = desc.get_text(" ", strip=True)[:2000]
+
+        # Zoning
+        zm = re.search(r"[Zz]oning\s*[:=]?\s*([^.\n<]+)", text)
+        if zm:
+            listing["zoning"] = zm.group(1).strip()[:200]
+
+        # HOA
+        if "no hoa" in text.lower():
+            listing["hoa"] = "no"
+        elif re.search(r"hoa\s*(?:fee|dues)", text, re.I):
+            listing["hoa"] = "yes"
+
+        # County (backup)
+        cm = re.search(r"([\w\s]+?)\s*County", text)
+        if cm and not listing.get("county"):
+            listing["county"] = cm.group(1).strip()
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"LandAndFarm detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# LANDSEARCH — https://www.landsearch.com/properties/washington
+# ─────────────────────────────────────────────────────────────────────────
+
+LANDSEARCH_STATES = [
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new-hampshire", "new-jersey", "new-mexico", "new-york",
+    "north-carolina", "north-dakota", "ohio", "oklahoma", "oregon",
+    "pennsylvania", "rhode-island", "south-carolina", "south-dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+    "west-virginia", "wisconsin", "wyoming",
+]
+
+LANDSEARCH_MAX_PAGES = 10  # pages per state
+
+
+async def _scrape_landsearch(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape LandSearch.com — large listing aggregator with state-based pages."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    states = LANDSEARCH_STATES
+    if states_filter:
+        states = [s for s in LANDSEARCH_STATES if _slug_to_state(s).lower() in states_filter]
+
+    _scrape_progress["states_total"] = len(states)
+    _scrape_progress["states_done"] = 0
+
+    for si, state_slug in enumerate(states):
+        for page in range(1, LANDSEARCH_MAX_PAGES + 1):
+            if page == 1:
+                url = f"https://www.landsearch.com/properties/{state_slug}"
+            else:
+                url = f"https://www.landsearch.com/properties/{state_slug}/p{page}"
+            try:
+                resp = await _fetch_with_retry(client, url)
+                if not resp:
+                    break
+
+                soup = BeautifulSoup(resp.text, "html.parser")
+
+                # Property links: /properties/{address-slug}/{id}
+                links = soup.find_all("a", href=re.compile(r"/properties/[^/]+/\d+$"))
+                seen = set()
+                found_any = False
+
+                for link in links:
+                    href = link.get("href", "")
+                    clean = href.split("?")[0].rstrip("/")
+                    if not href or clean in seen:
+                        continue
+                    seen.add(clean)
+                    found_any = True
+
+                    full_url = f"https://www.landsearch.com{href}" if href.startswith("/") else href
+
+                    name = link.get_text(strip=True)
+                    if not name or len(name) < 5:
+                        continue
+
+                    # Walk up to find card container
+                    card = link
+                    for _ in range(6):
+                        if card.parent:
+                            card = card.parent
+                        else:
+                            break
+                    card_text = card.get_text(" ", strip=True)
+
+                    # Extract price: $174,999
+                    price = None
+                    pm = re.search(r"\$([\d,]+(?:\.\d+)?)", card_text)
+                    if pm:
+                        price = _parse_price(pm.group(1))
+                    # Skip lease listings
+                    if "/mo" in card_text.lower() and not price:
+                        continue
+
+                    # Extract acreage: "101 acres" or "0.3 acres"
+                    acreage = None
+                    am = re.search(r"([\d,.]+)\s*acres?", card_text, re.I)
+                    if am:
+                        acreage = float(am.group(1).replace(",", ""))
+
+                    # Extract county: "Okanogan County"
+                    county = ""
+                    cm = re.search(r"([\w\s]+?)\s*County", card_text)
+                    if cm:
+                        county = cm.group(1).strip()
+
+                    # Extract state: "WA 98855" or state from slug
+                    state = _slug_to_state(state_slug)
+
+                    listing_hash = _hash(f"landsearch:{clean}")
+                    fresh = {
+                        "hash": listing_hash,
+                        "source": "landsearch",
+                        "source_name": "LandSearch",
+                        "name": name[:200],
+                        "url": full_url,
+                        "property_id": "",
+                        "state": state,
+                        "county": county,
+                        "acreage": acreage,
+                        "price": price,
+                        "original_price": None,
+                        "down_payment": None,
+                        "monthly_payment": None,
+                        "financing_available": None,
+                        "land_type": None,
+                        "image_url": None,
+                        "description": "",
+                        "is_foreclosure": False,
+                    }
+                    await _smart_upsert(col, listing_hash, fresh)
+                    count += 1
+                    _scrape_progress["listings_found"] = count
+
+                if not found_any:
+                    break
+                await asyncio.sleep(0.8)
+            except Exception as e:
+                logger.error(f"LandSearch scrape error ({state_slug} p{page}): {e}")
+                _scrape_progress["errors"] += 1
+
+        _scrape_progress["states_done"] = si + 1
+    return count
+
+
+async def _scrape_detail_landsearch(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape LandSearch.com property detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Description
+        desc_div = soup.find("div", class_=re.compile(r"description|detail|listing-content", re.I))
+        if desc_div:
+            listing["description"] = desc_div.get_text(" ", strip=True)[:2000]
+        elif not listing.get("description"):
+            # Fallback: find large text blocks
+            for p in soup.find_all("p"):
+                pt = p.get_text(strip=True)
+                if len(pt) > 100:
+                    listing["description"] = pt[:2000]
+                    break
+
+        # Zoning
+        zm = re.search(r"[Zz]oning\s*[:=]?\s*([^.\n<]+)", text)
+        if zm:
+            listing["zoning"] = zm.group(1).strip()[:200]
+
+        # HOA
+        if "no hoa" in text.lower():
+            listing["hoa"] = "no"
+        elif re.search(r"hoa\s*(?:fee|dues|:)", text, re.I):
+            listing["hoa"] = "yes"
+
+        # Acreage backup
+        if not listing.get("acreage"):
+            am = re.search(r"([\d,.]+)\s*acres?", text, re.I)
+            if am:
+                listing["acreage"] = float(am.group(1).replace(",", ""))
+
+        # County backup
+        if not listing.get("county"):
+            cm = re.search(r"([\w\s]+?)\s*County", text)
+            if cm:
+                listing["county"] = cm.group(1).strip()
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"LandSearch detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# LANDWATCH — https://www.landwatch.com/<state>-land-for-sale
+# ─────────────────────────────────────────────────────────────────────────
+
+LANDWATCH_STATES = [
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new-hampshire", "new-jersey", "new-mexico", "new-york",
+    "north-carolina", "north-dakota", "ohio", "oklahoma", "oregon",
+    "pennsylvania", "rhode-island", "south-carolina", "south-dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+    "west-virginia", "wisconsin", "wyoming",
+]
+
+LANDWATCH_MAX_PAGES = 5  # pages per state
+
+
+async def _scrape_landwatch(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape LandWatch.com — major land marketplace with thousands of listings."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    states = LANDWATCH_STATES
+    if states_filter:
+        states = [s for s in LANDWATCH_STATES if _slug_to_state(s).lower() in states_filter]
+
+    _scrape_progress["states_total"] = len(states)
+    _scrape_progress["states_done"] = 0
+
+    for si, state_slug in enumerate(states):
+        for page in range(1, LANDWATCH_MAX_PAGES + 1):
+            # LandWatch URL: /washington-land-for-sale, page param
+            if page == 1:
+                url = f"https://www.landwatch.com/{state_slug}-land-for-sale"
+            else:
+                url = f"https://www.landwatch.com/{state_slug}-land-for-sale?page={page}"
+            try:
+                resp = await _fetch_with_retry(client, url)
+                if not resp:
+                    break
+
+                soup = BeautifulSoup(resp.text, "html.parser")
+
+                # Property links: /county-state-type-for-sale/pid/{id}
+                links = soup.find_all("a", href=re.compile(r"/pid/\d+"))
+                seen = set()
+                found_any = False
+
+                for link in links:
+                    href = link.get("href", "")
+                    clean = href.split("?")[0].rstrip("/")
+                    if not href or clean in seen:
+                        continue
+                    seen.add(clean)
+                    found_any = True
+
+                    full_url = f"https://www.landwatch.com{href}" if href.startswith("/") else href
+
+                    name = link.get_text(strip=True)
+                    if not name or len(name) < 3:
+                        continue
+                    # Skip nav/control text
+                    if name.lower() in ("listing details page", "contact", "map", "video", "videomap"):
+                        continue
+
+                    # Walk up to find card container
+                    card = link
+                    for _ in range(8):
+                        if card.parent:
+                            card = card.parent
+                        else:
+                            break
+                    card_text = card.get_text(" ", strip=True)
+
+                    # Price: "$3,335,000" or "$49,950"
+                    price = None
+                    pm = re.search(r"\$([\d,]+(?:\.\d+)?)", card_text)
+                    if pm:
+                        price = _parse_price(pm.group(1))
+
+                    # Acreage: "390 Acres" or "2.03 Acres"
+                    acreage = None
+                    am = re.search(r"([\d,.]+)\s*Acres?", card_text, re.I)
+                    if am:
+                        acreage = float(am.group(1).replace(",", ""))
+
+                    # County from URL slug or text
+                    county = ""
+                    # URL pattern: /ferry-county-washington-.../pid/...
+                    county_m = re.search(r"/([\w-]+)-county-[\w-]+-[\w-]+-for-sale/pid/", href)
+                    if county_m:
+                        county = _slug_to_state(county_m.group(1))
+                    if not county:
+                        cm = re.search(r"([\w\s]+?)\s*County", card_text)
+                        if cm:
+                            county = cm.group(1).strip()
+
+                    state = _slug_to_state(state_slug)
+
+                    # Extract property id from pid
+                    pid_m = re.search(r"/pid/(\d+)", href)
+                    prop_id = pid_m.group(1) if pid_m else ""
+
+                    listing_hash = _hash(f"landwatch:{prop_id or clean}")
+                    fresh = {
+                        "hash": listing_hash,
+                        "source": "landwatch",
+                        "source_name": "LandWatch",
+                        "name": name[:200],
+                        "url": full_url,
+                        "property_id": prop_id,
+                        "state": state,
+                        "county": county,
+                        "acreage": acreage,
+                        "price": price,
+                        "original_price": None,
+                        "down_payment": None,
+                        "monthly_payment": None,
+                        "financing_available": None,
+                        "land_type": None,
+                        "image_url": None,
+                        "description": "",
+                        "is_foreclosure": False,
+                    }
+                    await _smart_upsert(col, listing_hash, fresh)
+                    count += 1
+                    _scrape_progress["listings_found"] = count
+
+                if not found_any:
+                    break
+                await asyncio.sleep(1.0)
+            except Exception as e:
+                logger.error(f"LandWatch scrape error ({state_slug} p{page}): {e}")
+                _scrape_progress["errors"] += 1
+
+        _scrape_progress["states_done"] = si + 1
+    return count
+
+
+async def _scrape_detail_landwatch(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape LandWatch.com property detail page."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Description
+        desc = soup.find("div", class_=re.compile(r"description|listing-detail|detail-content", re.I))
+        if desc:
+            listing["description"] = desc.get_text(" ", strip=True)[:2000]
+        elif not listing.get("description"):
+            for p in soup.find_all("p"):
+                pt = p.get_text(strip=True)
+                if len(pt) > 100:
+                    listing["description"] = pt[:2000]
+                    break
+
+        # Zoning
+        zm = re.search(r"[Zz]oning\s*[:=]?\s*([^.\n<]+)", text)
+        if zm:
+            listing["zoning"] = zm.group(1).strip()[:200]
+
+        # HOA
+        if "no hoa" in text.lower():
+            listing["hoa"] = "no"
+        elif re.search(r"hoa\s*(?:fee|dues|:)", text, re.I):
+            listing["hoa"] = "yes"
+
+        # County backup
+        if not listing.get("county"):
+            cm = re.search(r"([\w\s]+?)\s*County", text)
+            if cm:
+                listing["county"] = cm.group(1).strip()
+
+        # Acreage backup
+        if not listing.get("acreage"):
+            am = re.search(r"([\d,.]+)\s*acres?", text, re.I)
+            if am:
+                listing["acreage"] = float(am.group(1).replace(",", ""))
+
+        # Owner financing
+        if re.search(r"owner\s*financ", text, re.I):
+            listing["financing_available"] = True
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"LandWatch detail error: {e}")
+    return listing
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# HORIZON LAND SALES — https://horizonlandsales.com/
+# ─────────────────────────────────────────────────────────────────────────
+
+
+async def _scrape_horizonlandsales(db, client: httpx.AsyncClient, states_filter: list) -> int:
+    """Scrape HorizonLandSales.com — small inventory, deep-discount land."""
+    col = db[COL_LISTINGS]
+    count = 0
+
+    _scrape_progress["states_total"] = 1
+    _scrape_progress["states_done"] = 0
+
+    # Scrape homepage which lists all featured properties
+    url = "https://horizonlandsales.com/"
+    try:
+        resp = await _fetch_with_retry(client, url)
+        if not resp:
+            return count
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Property links: /property/{slug}/
+        links = soup.find_all("a", href=re.compile(r"horizonlandsales\.com/property/[\w-]+"))
+        seen = set()
+
+        for link in links:
+            href = link.get("href", "")
+            clean = href.split("?")[0].rstrip("/")
+            if not href or clean in seen:
+                continue
+            seen.add(clean)
+
+            full_url = href if href.startswith("http") else f"https://horizonlandsales.com{href}"
+
+            name = link.get_text(strip=True)
+            if not name or len(name) < 5:
+                continue
+            if name.lower() in ("view", "reserve now", "see properties"):
+                continue
+
+            # Walk up for card context
+            card = link
+            for _ in range(6):
+                if card.parent:
+                    card = card.parent
+                else:
+                    break
+            card_text = card.get_text(" ", strip=True)
+
+            # Price: "$124997" (discounted) or "$249997"
+            price = None
+            pm = re.search(r"\$([\d,]+)", card_text)
+            if pm:
+                price = _parse_price(pm.group(1))
+
+            # Original price (strikethrough): second price
+            original_price = None
+            prices = re.findall(r"\$([\d,]+)", card_text)
+            if len(prices) >= 2:
+                p1 = _parse_price(prices[0])
+                p2 = _parse_price(prices[1])
+                if p1 and p2 and p2 > p1:
+                    price = p1
+                    original_price = p2
+                elif p1 and p2 and p1 > p2:
+                    price = p2
+                    original_price = p1
+
+            # Acreage: "74.03 ACREAGE" or "7.47 ACREAGE"
+            acreage = None
+            am = re.search(r"([\d.]+)\s*(?:ACREAGE|acres?)", card_text, re.I)
+            if am:
+                acreage = float(am.group(1))
+
+            # Location: "Lake County, MT LOCATION" or "Jefferson County, WA LOCATION"
+            state = ""
+            county = ""
+            loc_m = re.search(r"([\w\s]+?)\s*County,\s*([A-Z]{2})", card_text)
+            if loc_m:
+                county = loc_m.group(1).strip()
+                state = STATE_ABBREVS.get(loc_m.group(2), loc_m.group(2))
+
+            # Also extract state from name: "... – Forks, WA"
+            if not state:
+                nm = re.search(r",\s*([A-Z]{2})\b", name)
+                if nm:
+                    state = STATE_ABBREVS.get(nm.group(1), nm.group(1))
+            if not state:
+                state = _extract_state_from_text(card_text)
+
+            if states_filter and state and state.lower() not in states_filter:
+                continue
+
+            # Financing info from card
+            monthly = None
+            fm = re.search(r"\$([\d,]+)/mo", card_text)
+            if fm:
+                monthly = _parse_price(fm.group(1))
+
+            down = None
+            dm = re.search(r"\$([\d,]+)\s*down", card_text, re.I)
+            if dm:
+                down = _parse_price(dm.group(1))
+
+            listing_hash = _hash(f"horizon:{clean}")
+            fresh = {
+                "hash": listing_hash,
+                "source": "horizonlandsales",
+                "source_name": "Horizon Land Sales",
+                "name": name[:200],
+                "url": full_url,
+                "property_id": "",
+                "state": state,
+                "county": county,
+                "acreage": acreage,
+                "price": price,
+                "original_price": original_price,
+                "down_payment": down,
+                "monthly_payment": monthly,
+                "financing_available": True if monthly or down else None,
+                "land_type": None,
+                "image_url": None,
+                "description": "",
+                "is_foreclosure": False,
+            }
+            await _smart_upsert(col, listing_hash, fresh)
+            count += 1
+            _scrape_progress["listings_found"] = count
+
+    except Exception as e:
+        logger.error(f"HorizonLandSales scrape error: {e}")
+        _scrape_progress["errors"] += 1
+
+    _scrape_progress["states_done"] = 1
+    return count
+
+
+async def _scrape_detail_horizonlandsales(db, client: httpx.AsyncClient, listing: dict) -> dict:
+    """Scrape HorizonLandSales property detail page — rich property attributes."""
+    url = listing.get("url")
+    if not url:
+        return listing
+    try:
+        resp = await client.get(url, headers=HTTP_HEADERS, timeout=HTTP_TIMEOUT, follow_redirects=True)
+        if resp.status_code != 200:
+            return listing
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # Description section
+        desc_heading = soup.find(string=re.compile(r"Description", re.I))
+        if desc_heading:
+            desc_parent = desc_heading.find_parent()
+            if desc_parent:
+                # Get the next sibling or parent's text
+                desc_section = desc_parent.find_next_sibling()
+                if desc_section:
+                    listing["description"] = desc_section.get_text(" ", strip=True)[:2000]
+        if not listing.get("description"):
+            for p in soup.find_all("p"):
+                pt = p.get_text(strip=True)
+                if len(pt) > 150:
+                    listing["description"] = pt[:2000]
+                    break
+
+        # Property Attributes section
+        # Zoning
+        zm = re.search(r"Zoning\s*:\s*([^\n]+?)(?:\s*More info|$)", text)
+        if zm:
+            listing["zoning"] = zm.group(1).strip()[:200]
+
+        # HOA
+        hoa_m = re.search(r"HOA\s*:\s*(\w+)", text)
+        if hoa_m:
+            val = hoa_m.group(1).lower()
+            listing["hoa"] = "no" if "none" in val or "no" in val else "yes"
+
+        # County
+        cm = re.search(r"County\s*:\s*([\w\s]+?)(?:,\s*[A-Z]{2})?(?:\s|$)", text)
+        if cm and not listing.get("county"):
+            listing["county"] = cm.group(1).strip()
+
+        # Parcel number
+        pn = re.search(r"Parcel\s*(?:Number)?\s*:\s*([\w-]+)", text)
+        if pn:
+            listing["property_id"] = pn.group(1).strip()
+
+        # Taxes
+        tax_m = re.search(r"Taxes?\s*:\s*(?:Approx\.?\s*)?\$([\d,]+)", text)
+        if tax_m:
+            pass  # Could store if needed
+
+        # Cash price
+        cp = re.search(r"Cash\s*Price\s*(?:Discount)?\s*\$?([\d,]+)", text)
+        if cp:
+            p = _parse_price(cp.group(1))
+            if p and (not listing.get("price") or p < listing["price"]):
+                listing["price"] = p
+
+        # Finance terms: "$X down" and "$Y/mo for Z months"
+        dp = re.search(r"Finance.*?\$([\d,]+)\s*down", text, re.I)
+        if dp:
+            listing["down_payment"] = _parse_price(dp.group(1))
+            listing["financing_available"] = True
+
+        mp = re.search(r"\$([\d,]+)/mo\s*for\s*(\d+)\s*months", text)
+        if mp:
+            listing["monthly_payment"] = _parse_price(mp.group(1))
+            listing["financing_available"] = True
+
+        # Mobile homes
+        mob = re.search(r"Mobile\s*Homes?\s*Allowed\s*:\s*(\w+)", text, re.I)
+        if mob and "yes" in mob.group(1).lower():
+            listing["land_type"] = "Mobile Home OK"
+
+        listing["detail_scraped"] = True
+    except Exception as e:
+        logger.warning(f"HorizonLandSales detail error: {e}")
+    return listing
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # API ROUTES — Listings
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1954,6 +3997,28 @@ async def scrape_listing_detail(listing_hash: str, db=Depends(get_mongodb)):
             doc = await _scrape_detail_ownerfinancedland(db, client, doc)
         elif source == "landzero":
             doc = await _scrape_detail_landzero(db, client, doc)
+        elif source == "billyland":
+            doc = await _scrape_detail_billyland(db, client, doc)
+        elif source == "elegmentland":
+            doc = await _scrape_detail_elegmentland(db, client, doc)
+        elif source == "landequities":
+            doc = await _scrape_detail_landequities(db, client, doc)
+        elif source == "yourcheapland":
+            doc = await _scrape_detail_yourcheapland(db, client, doc)
+        elif source == "terraprimelots":
+            doc = await _scrape_detail_terraprimelots(db, client, doc)
+        elif source == "rawestate":
+            doc = await _scrape_detail_rawestate(db, client, doc)
+        elif source == "landlimited":
+            doc = await _scrape_detail_landlimited(db, client, doc)
+        elif source == "landandfarm":
+            doc = await _scrape_detail_landandfarm(db, client, doc)
+        elif source == "landsearch":
+            doc = await _scrape_detail_landsearch(db, client, doc)
+        elif source == "landwatch":
+            doc = await _scrape_detail_landwatch(db, client, doc)
+        elif source == "horizonlandsales":
+            doc = await _scrape_detail_horizonlandsales(db, client, doc)
 
     # Save updated listing
     update_data = {
@@ -2088,8 +4153,17 @@ async def delete_source(source_id: str, db=Depends(get_mongodb)):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-async def _run_scrape_background(source_ids: list):
-    """Background scrape worker — runs outside the HTTP request lifecycle."""
+async def _run_scrape_background(source_ids: list, mode: str = "full",
+                                  exclude_hashes: set = None):
+    """Background scrape worker — runs outside the HTTP request lifecycle.
+
+    Modes:
+      - full: scrape listings + update existing + detail scrape new (skip excluded hashes)
+      - new_only: scrape listings but only INSERT new (skip existing) + detail scrape new
+      - favorites: skip listing scrape, only detail-scrape favorited listings
+    """
+    global _scrape_mode
+    _scrape_mode = mode
     from app.database import get_mongodb
     db = get_mongodb()
 
@@ -2101,69 +4175,115 @@ async def _run_scrape_background(source_ids: list):
     _scrape_progress["states_done"] = 0
     _scrape_progress["states_total"] = 0
     _scrape_progress["error_msg"] = None
+    _scrape_progress["mode"] = mode
+
+    if exclude_hashes is None:
+        exclude_hashes = set()
 
     filters = await _get_filter_settings(db)
     results = {}
 
     try:
-        async with httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=5, max_keepalive_connections=3),
-        ) as client:
-            for sid in source_ids:
-                _scrape_progress["source"] = sid
-                try:
-                    if sid == "landcentral":
-                        count = await _scrape_landcentral(db, client, filters["states"])
-                    elif sid == "classiccountryland":
-                        count = await _scrape_classiccountryland(db, client, filters["states"])
-                    elif sid == "landmodo":
-                        count = await _scrape_landmodo(db, client, filters["states"])
-                    elif sid == "discountlots":
-                        count = await _scrape_discountlots(db, client, filters["states"])
-                    elif sid == "landcentury":
-                        count = await _scrape_landcentury(db, client, filters["states"])
-                    elif sid == "ownerfinancedland":
-                        count = await _scrape_ownerfinancedland(db, client, filters["states"])
-                    elif sid == "landzero":
-                        count = await _scrape_landzero(db, client, filters["states"])
-                    else:
-                        count = 0
-                    results[sid] = count
+        # ── Phase 1: Scrape listing pages (skip in favorites mode) ──
+        if mode != "favorites":
+            async with httpx.AsyncClient(
+                limits=httpx.Limits(max_connections=5, max_keepalive_connections=3),
+            ) as client:
+                for sid in source_ids:
+                    _scrape_progress["source"] = sid
+                    try:
+                        if sid == "landcentral":
+                            count = await _scrape_landcentral(db, client, filters["states"])
+                        elif sid == "classiccountryland":
+                            count = await _scrape_classiccountryland(db, client, filters["states"])
+                        elif sid == "landmodo":
+                            count = await _scrape_landmodo(db, client, filters["states"])
+                        elif sid == "discountlots":
+                            count = await _scrape_discountlots(db, client, filters["states"])
+                        elif sid == "landcentury":
+                            count = await _scrape_landcentury(db, client, filters["states"])
+                        elif sid == "ownerfinancedland":
+                            count = await _scrape_ownerfinancedland(db, client, filters["states"])
+                        elif sid == "landzero":
+                            count = await _scrape_landzero(db, client, filters["states"])
+                        elif sid == "billyland":
+                            count = await _scrape_billyland(db, client, filters["states"])
+                        elif sid == "elegmentland":
+                            count = await _scrape_elegmentland(db, client, filters["states"])
+                        elif sid == "landequities":
+                            count = await _scrape_landequities(db, client, filters["states"])
+                        elif sid == "yourcheapland":
+                            count = await _scrape_yourcheapland(db, client, filters["states"])
+                        elif sid == "terraprimelots":
+                            count = await _scrape_terraprimelots(db, client, filters["states"])
+                        elif sid == "rawestate":
+                            count = await _scrape_rawestate(db, client, filters["states"])
+                        elif sid == "landlimited":
+                            count = await _scrape_landlimited(db, client, filters["states"])
+                        elif sid == "landandfarm":
+                            count = await _scrape_landandfarm(db, client, filters["states"])
+                        elif sid == "landsearch":
+                            count = await _scrape_landsearch(db, client, filters["states"])
+                        elif sid == "landwatch":
+                            count = await _scrape_landwatch(db, client, filters["states"])
+                        elif sid == "horizonlandsales":
+                            count = await _scrape_horizonlandsales(db, client, filters["states"])
+                        else:
+                            count = 0
+                        results[sid] = count
 
-                    await db[COL_META].update_one(
-                        {"key": f"last_scrape_{sid}"},
-                        {
-                            "$set": {
-                                "key": f"last_scrape_{sid}",
-                                "value": datetime.now(timezone.utc).isoformat(),
-                                "count": count,
-                            }
-                        },
-                        upsert=True,
-                    )
-                except Exception as e:
-                    logger.error(f"Scrape error for {sid}: {e}")
-                    results[sid] = f"error: {str(e)}"
-                    _scrape_progress["error_msg"] = str(e)
+                        await db[COL_META].update_one(
+                            {"key": f"last_scrape_{sid}"},
+                            {
+                                "$set": {
+                                    "key": f"last_scrape_{sid}",
+                                    "value": datetime.now(timezone.utc).isoformat(),
+                                    "count": count,
+                                }
+                            },
+                            upsert=True,
+                        )
+                    except Exception as e:
+                        logger.error(f"Scrape error for {sid}: {e}")
+                        results[sid] = f"error: {str(e)}"
+                        _scrape_progress["error_msg"] = str(e)
 
-        await db[COL_META].update_one(
-            {"key": "last_scrape_all"},
-            {
-                "$set": {
-                    "key": "last_scrape_all",
-                    "value": datetime.now(timezone.utc).isoformat(),
-                    "results": results,
-                }
-            },
-            upsert=True,
-        )
+            await db[COL_META].update_one(
+                {"key": "last_scrape_all"},
+                {
+                    "$set": {
+                        "key": "last_scrape_all",
+                        "value": datetime.now(timezone.utc).isoformat(),
+                        "results": results,
+                    }
+                },
+                upsert=True,
+            )
 
-        # ── Phase 2: scrape detail pages for listings without zoning ──
+        # ── Phase 2: scrape detail pages ──
         _scrape_progress["source"] = "details"
         col = db[COL_LISTINGS]
-        # Find listings that haven't been detail-scraped yet
+
+        if mode == "favorites":
+            # Only detail-scrape favorited listings (force re-scrape)
+            fav_hashes = []
+            async for fav in db[COL_FAVORITES].find({}, {"listing_hash": 1}):
+                fav_hashes.append(fav["listing_hash"])
+            if fav_hashes:
+                # Reset detail_scraped so we re-fetch fresh data
+                await col.update_many(
+                    {"hash": {"$in": fav_hashes}},
+                    {"$set": {"detail_scraped": False}},
+                )
+            detail_query = {"hash": {"$in": fav_hashes}} if fav_hashes else {"_never_match_": True}
+        else:
+            # Detail-scrape listings not yet scraped, excluding hidden hashes
+            detail_query = {"detail_scraped": {"$ne": True}}
+            if exclude_hashes:
+                detail_query["hash"] = {"$nin": list(exclude_hashes)}
+
         no_detail = await col.find(
-            {"detail_scraped": {"$ne": True}},
+            detail_query,
             {"hash": 1, "url": 1, "source": 1, "_id": 0},
         ).to_list(length=2000)
 
@@ -2196,6 +4316,28 @@ async def _run_scrape_background(source_ids: list):
                             doc = await _scrape_detail_ownerfinancedland(db, detail_client, doc)
                         elif source == "landzero":
                             doc = await _scrape_detail_landzero(db, detail_client, doc)
+                        elif source == "billyland":
+                            doc = await _scrape_detail_billyland(db, detail_client, doc)
+                        elif source == "elegmentland":
+                            doc = await _scrape_detail_elegmentland(db, detail_client, doc)
+                        elif source == "landequities":
+                            doc = await _scrape_detail_landequities(db, detail_client, doc)
+                        elif source == "yourcheapland":
+                            doc = await _scrape_detail_yourcheapland(db, detail_client, doc)
+                        elif source == "terraprimelots":
+                            doc = await _scrape_detail_terraprimelots(db, detail_client, doc)
+                        elif source == "rawestate":
+                            doc = await _scrape_detail_rawestate(db, detail_client, doc)
+                        elif source == "landlimited":
+                            doc = await _scrape_detail_landlimited(db, detail_client, doc)
+                        elif source == "landandfarm":
+                            doc = await _scrape_detail_landandfarm(db, detail_client, doc)
+                        elif source == "landsearch":
+                            doc = await _scrape_detail_landsearch(db, detail_client, doc)
+                        elif source == "landwatch":
+                            doc = await _scrape_detail_landwatch(db, detail_client, doc)
+                        elif source == "horizonlandsales":
+                            doc = await _scrape_detail_horizonlandsales(db, detail_client, doc)
                         else:
                             _scrape_progress["states_done"] = i + 1
                             continue
@@ -2219,6 +4361,7 @@ async def _run_scrape_background(source_ids: list):
         logger.error(f"Background scrape fatal: {e}\n{traceback.format_exc()}")
         _scrape_progress["error_msg"] = str(e)
     finally:
+        _scrape_mode = "full"  # reset global mode
         _scrape_progress["running"] = False
         _scrape_progress["finished_at"] = datetime.now(timezone.utc).isoformat()
         _scrape_progress["source"] = None
@@ -2262,14 +4405,28 @@ async def scrape_source(source_id: str, db=Depends(get_mongodb)):
 
 
 @router.post("/scrape-all")
-async def scrape_all(db=Depends(get_mongodb)):
-    """Start scraping all enabled sources in background."""
+async def scrape_all(
+    db=Depends(get_mongodb),
+    mode: str = Query("full", regex="^(full|new_only|favorites)$"),
+    hidden_hashes: str = Query("", description="Comma-separated hidden listing hashes"),
+):
+    """Start scraping all enabled sources in background.
+
+    Modes:
+      - full: update all listings + find new + detail-scrape (skip hidden in detail phase)
+      - new_only: only insert brand-new listings, skip existing
+      - favorites: only re-scrape detail pages for favorited listings
+    """
     if _scrape_progress["running"]:
         return {
             "ok": False,
             "message": f"Scrape already running ({_scrape_progress['source']})",
             "progress": dict(_scrape_progress),
         }
+
+    exclude = set()
+    if hidden_hashes:
+        exclude = set(h.strip() for h in hidden_hashes.split(",") if h.strip())
 
     sources = []
     async for doc in db[COL_SOURCES].find({"enabled": True}):
@@ -2281,8 +4438,16 @@ async def scrape_all(db=Depends(get_mongodb)):
             sources.append(doc)
 
     source_ids = [s["source_id"] for s in sources]
-    asyncio.create_task(_run_scrape_background(source_ids))
-    return {"ok": True, "message": f"Scraping {len(source_ids)} sources in background"}
+
+    mode_labels = {
+        "full": "Update all & find new",
+        "new_only": "Find new only",
+        "favorites": "Update favorites",
+    }
+    label = mode_labels.get(mode, mode)
+
+    asyncio.create_task(_run_scrape_background(source_ids, mode=mode, exclude_hashes=exclude))
+    return {"ok": True, "message": f"{label}: {len(source_ids)} sources"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

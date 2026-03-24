@@ -5,16 +5,35 @@
       <v-icon size="32" color="brown-lighten-1" class="mr-3">mdi-terrain</v-icon>
       <div class="text-h4 font-weight-bold">Real Estate — Affordable Land</div>
       <v-spacer />
-      <v-btn
-        color="brown"
-        variant="tonal"
-        prepend-icon="mdi-refresh"
-        @click="scrapeAll"
-        :loading="scraping"
-        class="mr-2"
-      >
-        Scrape All
-      </v-btn>
+      <v-btn-group variant="tonal" density="comfortable" class="mr-2" divided>
+        <v-btn
+          color="brown"
+          prepend-icon="mdi-refresh"
+          @click="scrapeMode('full')"
+          :loading="scraping"
+          size="small"
+        >
+          Update All
+        </v-btn>
+        <v-btn
+          color="teal"
+          prepend-icon="mdi-magnify-plus-outline"
+          @click="scrapeMode('new_only')"
+          :loading="scraping"
+          size="small"
+        >
+          Find New
+        </v-btn>
+        <v-btn
+          color="red"
+          prepend-icon="mdi-heart-pulse"
+          @click="scrapeMode('favorites')"
+          :loading="scraping"
+          size="small"
+        >
+          Update Favorites
+        </v-btn>
+      </v-btn-group>
       <v-chip v-if="lastScrape" variant="tonal" color="grey" size="small">
         Last: {{ fmtDate(lastScrape) }}
       </v-chip>
@@ -24,6 +43,9 @@
     <v-alert v-if="scrapeProgress && scrapeProgress.running" type="info" variant="tonal" density="compact" class="mb-3">
       <div class="d-flex align-center">
         <v-progress-circular indeterminate size="18" width="2" class="mr-2" />
+        <v-chip v-if="scrapeProgress.mode" size="x-small" variant="flat" :color="scrapeProgress.mode === 'favorites' ? 'red' : scrapeProgress.mode === 'new_only' ? 'teal' : 'brown'" class="mr-2">
+          {{ {full: 'Update All', new_only: 'Find New', favorites: 'Favorites'}[scrapeProgress.mode] || scrapeProgress.mode }}
+        </v-chip>
         <span v-if="scrapeProgress.source === 'details'">
           Scraping details <strong>{{ scrapeProgress.states_done }}/{{ scrapeProgress.states_total }}</strong> listings
           <span v-if="scrapeProgress.errors"> ({{ scrapeProgress.errors }} errors)</span>
@@ -1414,12 +1436,21 @@ export default {
       } catch {}
     },
 
-    // ---- Scrape All (background + polling) ----
-    async scrapeAll() {
+    // ---- Scrape with mode (background + polling) ----
+    async scrapeMode(mode = 'full') {
       this.scraping = true
       this.scrapeProgress = null
       try {
-        const { data } = await api.post(`${API}/scrape-all`)
+        // Build query params
+        const params = new URLSearchParams({ mode })
+        // For 'full' mode, pass hidden hashes so detail phase skips them
+        if (mode === 'full') {
+          const hidden = Object.keys(this.hiddenHashes)
+          if (hidden.length > 0) {
+            params.set('hidden_hashes', hidden.join(','))
+          }
+        }
+        const { data } = await api.post(`${API}/scrape-all?${params.toString()}`)
         if (data.ok) {
           this.notify(data.message || 'Scraping started...')
           this._startPolling()
@@ -1434,6 +1465,10 @@ export default {
         this.notify('Scrape failed: ' + (e.response?.data?.detail || e.message), 'error')
         this.scraping = false
       }
+    },
+    // Backwards compat
+    async scrapeAll() {
+      return this.scrapeMode('full')
     },
     async scrapeSource(sourceId) {
       this.scraping = true
