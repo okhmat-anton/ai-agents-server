@@ -75,6 +75,12 @@
             @click="handleLogout"
             rounded="xl"
           />
+          <v-list-item
+            :prepend-icon="rail ? 'mdi-chevron-right' : 'mdi-chevron-left'"
+            :title="rail ? 'Expand' : 'Collapse'"
+            @click="rail = !rail"
+            rounded="xl"
+          />
         </v-list>
       </template>
     </v-navigation-drawer>
