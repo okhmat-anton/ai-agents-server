@@ -24,7 +24,11 @@
     <v-alert v-if="scrapeProgress && scrapeProgress.running" type="info" variant="tonal" density="compact" class="mb-3">
       <div class="d-flex align-center">
         <v-progress-circular indeterminate size="18" width="2" class="mr-2" />
-        <span>
+        <span v-if="scrapeProgress.source === 'details'">
+          Scraping details <strong>{{ scrapeProgress.states_done }}/{{ scrapeProgress.states_total }}</strong> listings
+          <span v-if="scrapeProgress.errors"> ({{ scrapeProgress.errors }} errors)</span>
+        </span>
+        <span v-else>
           Scraping <strong>{{ scrapeProgress.source || '...' }}</strong>
           — {{ scrapeProgress.states_done }}/{{ scrapeProgress.states_total }} states,
           {{ scrapeProgress.listings_found }} listings found
@@ -125,6 +129,18 @@
             style="max-width: 140px"
           />
           <v-select
+            v-model="filterZoning"
+            :items="zoningOptions"
+            label="Zoning"
+            variant="outlined"
+            density="compact"
+            clearable
+            multiple
+            chips
+            closable-chips
+            style="min-width: 180px; max-width: 350px"
+          />
+          <v-select
             v-model="sortBy"
             :items="sortOptions"
             label="Sort"
@@ -157,9 +173,20 @@
             <v-btn value="table" size="small"><v-icon>mdi-view-list</v-icon></v-btn>
           </v-btn-toggle>
           <span class="text-body-2 text-medium-emphasis">
-            {{ listings.length }} of {{ listingsTotal }} listings
+            {{ visibleListings.length }} of {{ listingsTotal }} listings
+            <span v-if="hiddenCount > 0" class="text-grey"> ({{ hiddenCount }} hidden)</span>
           </span>
           <v-spacer />
+          <v-btn
+            v-if="hiddenCount > 0"
+            variant="text"
+            size="small"
+            :prepend-icon="showHidden ? 'mdi-eye-off' : 'mdi-eye'"
+            @click="showHidden = !showHidden"
+            class="mr-2"
+          >
+            {{ showHidden ? 'Hide dismissed' : 'Show dismissed' }}
+          </v-btn>
           <v-btn
             v-if="listingsTotal > listings.length"
             variant="text"
@@ -172,16 +199,20 @@
         </div>
 
         <!-- CARD view -->
-        <v-row v-if="viewMode === 'cards' && listings.length > 0">
+        <v-row v-if="viewMode === 'cards' && visibleListings.length > 0">
           <v-col
-            v-for="item in listings"
+            v-for="item in visibleListings"
             :key="item.hash"
             cols="12"
             sm="6"
             md="4"
             lg="3"
           >
-            <v-card variant="outlined" class="h-100 d-flex flex-column">
+            <v-card
+              variant="outlined"
+              class="h-100 d-flex flex-column"
+              :style="hiddenHashes[item.hash] ? 'opacity: 0.45; text-decoration: line-through' : ''"
+            >
               <!-- Image -->
               <v-img
                 v-if="item.image_url"
@@ -201,18 +232,7 @@
               </div>
 
               <v-card-text class="flex-grow-1">
-                <div class="d-flex align-center mb-1">
-                  <div class="text-subtitle-1 font-weight-bold text-truncate flex-grow-1">{{ item.name }}</div>
-                  <v-btn
-                    icon
-                    variant="text"
-                    size="x-small"
-                    @click.stop="toggleFavorite(item)"
-                    :color="item.is_favorite ? 'red' : 'grey'"
-                  >
-                    <v-icon>{{ item.is_favorite ? 'mdi-heart' : 'mdi-heart-outline' }}</v-icon>
-                  </v-btn>
-                </div>
+                <div class="text-subtitle-1 font-weight-bold text-truncate mb-1">{{ item.name }}</div>
 
                 <div class="mb-1">
                   <v-chip size="x-small" color="green" variant="tonal" class="mr-1" v-if="item.price">
@@ -240,6 +260,14 @@
                 <div class="text-caption text-grey mt-1" v-if="item.tracts_available">
                   {{ item.tracts_available }} tracts available
                 </div>
+                <div class="mt-1" v-if="item.zoning || item.zoning_code">
+                  <v-chip size="x-small" color="purple" variant="tonal" class="mr-1" v-if="item.zoning">
+                    <v-icon start size="10">mdi-gavel</v-icon>{{ item.zoning }}
+                  </v-chip>
+                  <v-chip size="x-small" color="deep-purple" variant="tonal" v-if="item.zoning_code">
+                    {{ item.zoning_code }}
+                  </v-chip>
+                </div>
               </v-card-text>
 
               <v-card-actions class="px-3 pb-3">
@@ -266,16 +294,35 @@
                 >
                   Visit
                 </v-btn>
+                <v-btn
+                  icon
+                  variant="text"
+                  size="small"
+                  @click.stop="toggleFavorite(item)"
+                  :color="item.is_favorite ? 'red' : 'grey'"
+                >
+                  <v-icon>{{ item.is_favorite ? 'mdi-heart' : 'mdi-heart-outline' }}</v-icon>
+                  <v-tooltip activator="parent" location="top">{{ item.is_favorite ? 'Unfavorite' : 'Favorite' }}</v-tooltip>
+                </v-btn>
+                <v-btn
+                  icon
+                  variant="text"
+                  size="small"
+                  @click.stop="toggleHidden(item)"
+                  :color="hiddenHashes[item.hash] ? 'orange' : 'grey'"
+                >
+                  <v-icon>{{ hiddenHashes[item.hash] ? 'mdi-eye-off' : 'mdi-eye-off-outline' }}</v-icon>
+                  <v-tooltip activator="parent" location="top">{{ hiddenHashes[item.hash] ? 'Restore' : 'Dismiss' }}</v-tooltip>
+                </v-btn>
               </v-card-actions>
             </v-card>
           </v-col>
         </v-row>
 
         <!-- TABLE view -->
-        <v-table v-if="viewMode === 'table' && listings.length > 0" density="compact" hover>
+        <v-table v-if="viewMode === 'table' && visibleListings.length > 0" density="compact" hover>
           <thead>
             <tr>
-              <th style="width: 30px"></th>
               <th>Name</th>
               <th>State</th>
               <th>County</th>
@@ -284,22 +331,16 @@
               <th>Down</th>
               <th>Monthly</th>
               <th>Source</th>
+              <th>Zoning</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in listings" :key="item.hash">
-              <td>
-                <v-btn
-                  icon
-                  variant="text"
-                  size="x-small"
-                  @click="toggleFavorite(item)"
-                  :color="item.is_favorite ? 'red' : 'grey'"
-                >
-                  <v-icon size="16">{{ item.is_favorite ? 'mdi-heart' : 'mdi-heart-outline' }}</v-icon>
-                </v-btn>
-              </td>
+            <tr
+              v-for="item in visibleListings"
+              :key="item.hash"
+              :style="hiddenHashes[item.hash] ? 'opacity: 0.45; text-decoration: line-through' : ''"
+            >
               <td class="font-weight-medium">{{ item.name }}</td>
               <td>{{ item.state }}</td>
               <td>{{ item.county }}</td>
@@ -322,11 +363,22 @@
                 </v-chip>
               </td>
               <td>
+                <v-chip v-if="item.zoning" size="x-small" color="purple" variant="tonal">{{ item.zoning }}</v-chip>
+                <span v-else class="text-grey">—</span>
+              </td>
+              <td style="white-space: nowrap">
                 <v-btn size="x-small" variant="text" icon @click="scrapeDetail(item)" :loading="item._loadingDetail">
                   <v-icon size="16">mdi-information-outline</v-icon>
                 </v-btn>
                 <v-btn size="x-small" variant="text" icon :href="item.url" target="_blank">
                   <v-icon size="16">mdi-open-in-new</v-icon>
+                </v-btn>
+                <v-btn size="x-small" variant="text" icon @click="toggleFavorite(item)" :color="item.is_favorite ? 'red' : 'grey'">
+                  <v-icon size="16">{{ item.is_favorite ? 'mdi-heart' : 'mdi-heart-outline' }}</v-icon>
+                </v-btn>
+                <v-btn size="x-small" variant="text" icon @click="toggleHidden(item)" :color="hiddenHashes[item.hash] ? 'orange' : 'grey'">
+                  <v-icon size="16">{{ hiddenHashes[item.hash] ? 'mdi-eye-off' : 'mdi-eye-off-outline' }}</v-icon>
+                  <v-tooltip activator="parent" location="top">{{ hiddenHashes[item.hash] ? 'Restore' : 'Dismiss' }}</v-tooltip>
                 </v-btn>
               </td>
             </tr>
@@ -336,6 +388,9 @@
         <!-- Empty state -->
         <v-alert v-if="!loadingListings && listings.length === 0" type="info" variant="tonal" class="mt-3">
           No listings found. Click <strong>Scrape All</strong> to fetch land listings, or adjust your filters.
+        </v-alert>
+        <v-alert v-else-if="!loadingListings && visibleListings.length === 0" type="info" variant="tonal" class="mt-3">
+          All listings are dismissed. Click <strong>Show dismissed</strong> to see them.
         </v-alert>
       </v-window-item>
 
@@ -740,6 +795,34 @@
             <v-chip v-if="detailItem.septic_allowed" size="small" color="blue" variant="tonal" prepend-icon="mdi-pipe">Septic</v-chip>
           </div>
 
+          <!-- Zoning info -->
+          <div v-if="detailItem.zoning || detailItem.zoning_code" class="mt-3">
+            <div class="text-subtitle-2 mb-1"><v-icon size="16" class="mr-1">mdi-gavel</v-icon>Zoning</div>
+            <div class="d-flex flex-wrap ga-2 mb-2">
+              <v-chip v-if="detailItem.zoning" size="small" color="purple" variant="tonal">{{ detailItem.zoning }}</v-chip>
+              <v-chip v-if="detailItem.zoning_code" size="small" color="deep-purple" variant="tonal">{{ detailItem.zoning_code }}</v-chip>
+            </div>
+            <div v-if="detailItem.zoning_definition" class="text-body-2 pa-3 bg-grey-darken-3 rounded" style="max-height: 200px; overflow-y: auto; font-size: 0.85em">
+              {{ detailItem.zoning_definition }}
+            </div>
+          </div>
+
+          <!-- Extra details -->
+          <v-list v-if="detailItem.road_access || detailItem.slope || detailItem.usage_potential" density="compact" class="bg-transparent mt-2">
+            <v-list-item v-if="detailItem.road_access">
+              <template #prepend><v-icon size="18" class="mr-2">mdi-road</v-icon></template>
+              <v-list-item-title>Road: {{ detailItem.road_access }}</v-list-item-title>
+            </v-list-item>
+            <v-list-item v-if="detailItem.slope">
+              <template #prepend><v-icon size="18" class="mr-2">mdi-image-filter-hdr</v-icon></template>
+              <v-list-item-title>Slope: {{ detailItem.slope }}</v-list-item-title>
+            </v-list-item>
+            <v-list-item v-if="detailItem.usage_potential">
+              <template #prepend><v-icon size="18" class="mr-2">mdi-land-plots</v-icon></template>
+              <v-list-item-title>Usage: {{ detailItem.usage_potential }}</v-list-item-title>
+            </v-list-item>
+          </v-list>
+
           <div v-if="detailItem.description" class="text-body-2 mt-3 pa-3 bg-grey-darken-3 rounded">
             {{ detailItem.description }}
           </div>
@@ -849,10 +932,14 @@ export default {
       loadingListings: false,
       loadingMore: false,
       viewMode: localStorage.getItem('re_view') || 'cards',
+      hiddenHashes: (() => { try { const arr = JSON.parse(localStorage.getItem('re_hidden') || '[]'); const obj = {}; arr.forEach(h => obj[h] = true); return obj } catch { return {} } })(),
+      showHidden: localStorage.getItem('re_showHidden') === 'true',
       filterSource: (() => { try { return JSON.parse(localStorage.getItem('re_filterSource')) } catch { return null } })(),
       filterState: (() => { try { const v = JSON.parse(localStorage.getItem('re_filterState')); return Array.isArray(v) ? v : [] } catch { return [] } })(),
       filterMaxPrice: (() => { try { return JSON.parse(localStorage.getItem('re_filterMaxPrice')) } catch { return null } })(),
       filterMinAcreage: (() => { try { return JSON.parse(localStorage.getItem('re_filterMinAcreage')) } catch { return null } })(),
+      filterZoning: (() => { try { const v = JSON.parse(localStorage.getItem('re_filterZoning')); return Array.isArray(v) ? v : [] } catch { return [] } })(),
+      zoningOptions: [],
       sortBy: localStorage.getItem('re_sortBy') || 'price',
       sortDir: localStorage.getItem('re_sortDir') || 'asc',
       sortOptions: [
@@ -956,11 +1043,17 @@ export default {
     filterMinAcreage(v) {
       localStorage.setItem('re_filterMinAcreage', JSON.stringify(v))
     },
+    filterZoning(v) {
+      localStorage.setItem('re_filterZoning', JSON.stringify(v || []))
+    },
     sortBy(v) {
       localStorage.setItem('re_sortBy', v)
     },
     sortDir(v) {
       localStorage.setItem('re_sortDir', v)
+    },
+    showHidden(v) {
+      localStorage.setItem('re_showHidden', String(v))
     },
   },
 
@@ -968,6 +1061,7 @@ export default {
     this.loadSettings()
     this.loadStats()
     this.loadScrapeStatus()
+    this.loadZoningOptions()
     this.loadTabData(this.activeTab)
     // Check if scrape is already running (e.g. page refresh during scrape)
     try {
@@ -983,7 +1077,33 @@ export default {
     this._stopPolling()
   },
 
+  computed: {
+    visibleListings() {
+      if (this.showHidden) return this.listings
+      return this.listings.filter(i => !this.hiddenHashes[i.hash])
+    },
+    hiddenCount() {
+      return Object.keys(this.hiddenHashes).length
+    },
+  },
+
   methods: {
+    async loadZoningOptions() {
+      try {
+        const { data } = await api.get(`${API}/zoning-values`)
+        this.zoningOptions = data.values || []
+      } catch {}
+    },
+    toggleHidden(item) {
+      if (this.hiddenHashes[item.hash]) {
+        delete this.hiddenHashes[item.hash]
+      } else {
+        this.hiddenHashes[item.hash] = true
+      }
+      // trigger reactivity
+      this.hiddenHashes = { ...this.hiddenHashes }
+      localStorage.setItem('re_hidden', JSON.stringify(Object.keys(this.hiddenHashes)))
+    },
     // ---- Formatting ----
     fmtDate(d) {
       if (!d) return '—'
@@ -1129,6 +1249,7 @@ export default {
           this.scrapeProgress = null
           this.loadStats()
           this.loadScrapeStatus()
+          this.loadZoningOptions()
           this.loadTabData(this.activeTab)
         }
       } catch {
@@ -1150,6 +1271,7 @@ export default {
         if (this.filterState && this.filterState.length) params.state = this.filterState.join(',')
         if (this.filterMaxPrice) params.max_price = this.filterMaxPrice
         if (this.filterMinAcreage) params.min_acreage = this.filterMinAcreage
+        if (this.filterZoning && this.filterZoning.length) params.zoning = this.filterZoning.join(',')
 
         const { data } = await api.get(`${API}/listings`, { params })
         this.listings = (data.items || []).map(i => ({ ...i, _loadingDetail: false }))
@@ -1171,6 +1293,7 @@ export default {
         if (this.filterState && this.filterState.length) params.state = this.filterState.join(',')
         if (this.filterMaxPrice) params.max_price = this.filterMaxPrice
         if (this.filterMinAcreage) params.min_acreage = this.filterMinAcreage
+        if (this.filterZoning && this.filterZoning.length) params.zoning = this.filterZoning.join(',')
 
         const { data } = await api.get(`${API}/listings`, { params })
         const newItems = (data.items || []).map(i => ({ ...i, _loadingDetail: false }))

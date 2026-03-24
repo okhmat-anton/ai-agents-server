@@ -612,6 +612,26 @@ async def _scrape_detail_landcentral(
         if desc_el:
             listing["description"] = desc_el.get_text(" ", strip=True)[:2000]
 
+        # Zoning info — LandCentral has a properties table with Zoning rows
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr"):
+                cells = row.find_all(["th", "td"])
+                if len(cells) == 2:
+                    label = cells[0].get_text(strip=True)
+                    value = cells[1].get_text(" ", strip=True)
+                    if label == "Zoning" and value:
+                        listing["zoning"] = value
+                    elif label == "Zoning Code" and value:
+                        listing["zoning_code"] = value
+                    elif label == "Zoning Definition" and value:
+                        listing["zoning_definition"] = value[:2000]
+                    elif label == "Road Access" and value:
+                        listing["road_access"] = value
+                    elif label == "Slope Description" and value:
+                        listing["slope"] = value
+                    elif label == "On Property Usage/Potential" and value:
+                        listing["usage_potential"] = value
+
         # Additional images
         images = soup.find_all("img", src=re.compile(r"property|listing|land", re.I))
         if images and not listing.get("image_url"):
@@ -620,6 +640,8 @@ async def _scrape_detail_landcentral(
                 if src.startswith("/"):
                     src = f"https://www.landcentral.com{src}"
                 listing["image_url"] = src
+
+        listing["detail_scraped"] = True
 
     except Exception as e:
         logger.warning(f"Detail scrape error: {e}")
@@ -669,6 +691,26 @@ async def _scrape_detail_ccl(
         if desc_el:
             listing["description"] = desc_el.get_text(" ", strip=True)[:2000]
 
+        # Zoning info — CCL has it in FAQ section
+        for btn in soup.find_all("button", class_="faq-question"):
+            q = btn.get_text(strip=True).lower()
+            if "zoned" in q or "zoning" in q:
+                ans_div = btn.find_next_sibling("div", class_="faq-answer")
+                if ans_div:
+                    ans_text = ans_div.get_text(" ", strip=True)
+                    # Extract zoning type from "The zoning allows X" or "zoned X"
+                    zm = re.search(
+                        r"(?:zoning\s+allows|zoned\s+(?:as\s+)?)([^.;]+)",
+                        ans_text, re.I,
+                    )
+                    if zm:
+                        listing["zoning"] = zm.group(1).strip()
+                    # Store full answer as definition
+                    listing["zoning_definition"] = ans_text[:2000]
+                break
+
+        listing["detail_scraped"] = True
+
     except Exception as e:
         logger.warning(f"CCL detail scrape error: {e}")
 
@@ -680,6 +722,16 @@ async def _scrape_detail_ccl(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@router.get("/zoning-values")
+async def get_zoning_values(db=Depends(get_mongodb)):
+    """Get distinct zoning values from all listings."""
+    col = db[COL_LISTINGS]
+    values = await col.distinct("zoning")
+    # Filter out None/empty and sort
+    values = sorted([v for v in values if v])
+    return {"values": values}
+
+
 @router.get("/listings")
 async def list_listings(
     source: Optional[str] = Query(None, description="Filter by source id"),
@@ -688,6 +740,7 @@ async def list_listings(
     max_price: Optional[float] = Query(None),
     min_acreage: Optional[float] = Query(None),
     max_acreage: Optional[float] = Query(None),
+    zoning: Optional[str] = Query(None, description="Filter by zoning (comma-separated)"),
     favorites_only: bool = Query(False),
     sort_by: str = Query("price", description="price, acreage, scraped_at, state"),
     sort_dir: str = Query("asc", description="asc or desc"),
@@ -715,6 +768,12 @@ async def list_listings(
         query.setdefault("acreage", {})["$gte"] = min_acreage
     if max_acreage is not None:
         query.setdefault("acreage", {})["$lte"] = max_acreage
+    if zoning:
+        zoning_values = [z.strip() for z in zoning.split(",") if z.strip()]
+        if len(zoning_values) == 1:
+            query["zoning"] = {"$regex": re.escape(zoning_values[0]), "$options": "i"}
+        elif len(zoning_values) > 1:
+            query["zoning"] = {"$in": zoning_values}
 
     if favorites_only:
         fav_hashes = set()
@@ -972,6 +1031,54 @@ async def _run_scrape_background(source_ids: list):
             },
             upsert=True,
         )
+
+        # ── Phase 2: scrape detail pages for listings without zoning ──
+        _scrape_progress["source"] = "details"
+        col = db[COL_LISTINGS]
+        # Find listings that haven't been detail-scraped yet
+        no_detail = await col.find(
+            {"detail_scraped": {"$ne": True}},
+            {"hash": 1, "url": 1, "source": 1, "_id": 0},
+        ).to_list(length=2000)
+
+        if no_detail:
+            _scrape_progress["states_total"] = len(no_detail)
+            _scrape_progress["states_done"] = 0
+            logger.info(f"Detail scrape phase: {len(no_detail)} listings to process")
+
+            async with httpx.AsyncClient(
+                limits=httpx.Limits(max_connections=3, max_keepalive_connections=2),
+            ) as detail_client:
+                for i, stub in enumerate(no_detail):
+                    try:
+                        doc = await col.find_one({"hash": stub["hash"]})
+                        if not doc:
+                            continue
+
+                        source = doc.get("source", "")
+                        if source == "landcentral":
+                            doc = await _scrape_detail_landcentral(db, detail_client, doc)
+                        elif source == "classiccountryland":
+                            doc = await _scrape_detail_ccl(db, detail_client, doc)
+                        else:
+                            _scrape_progress["states_done"] = i + 1
+                            continue
+
+                        # Save detail data
+                        update_data = {
+                            k: v for k, v in doc.items() if k != "_id"
+                        }
+                        await col.update_one(
+                            {"hash": stub["hash"]},
+                            {"$set": update_data},
+                        )
+                    except Exception as e:
+                        logger.warning(f"Detail scrape error for {stub.get('hash')}: {e}")
+                        _scrape_progress["errors"] += 1
+
+                    _scrape_progress["states_done"] = i + 1
+                    # Throttle to avoid bans
+                    await asyncio.sleep(0.5)
     except Exception as e:
         logger.error(f"Background scrape fatal: {e}\n{traceback.format_exc()}")
         _scrape_progress["error_msg"] = str(e)
