@@ -141,6 +141,15 @@
             style="min-width: 180px; max-width: 350px"
           />
           <v-select
+            v-model="filterHoa"
+            :items="hoaOptions"
+            label="HOA"
+            variant="outlined"
+            density="compact"
+            clearable
+            style="max-width: 140px"
+          />
+          <v-select
             v-model="sortBy"
             :items="sortOptions"
             label="Sort"
@@ -260,6 +269,12 @@
                 <div class="text-caption text-grey mt-1" v-if="item.tracts_available">
                   {{ item.tracts_available }} tracts available
                 </div>
+                <div class="mt-1" v-if="item.hoa">
+                  <v-chip size="x-small" :color="item.hoa === 'yes' ? 'red' : 'green'" variant="tonal">
+                    <v-icon start size="10">{{ item.hoa === 'yes' ? 'mdi-alert' : 'mdi-check-circle' }}</v-icon>
+                    HOA: {{ item.hoa === 'yes' ? (item.hoa_dues || 'Yes') : 'None' }}
+                  </v-chip>
+                </div>
                 <div class="mt-1" v-if="item.zoning || item.zoning_code">
                   <v-chip size="x-small" color="purple" variant="tonal" class="mr-1" v-if="item.zoning">
                     <v-icon start size="10">mdi-gavel</v-icon>{{ item.zoning }}
@@ -331,6 +346,7 @@
               <th>Down</th>
               <th>Monthly</th>
               <th>Source</th>
+              <th>HOA</th>
               <th>Zoning</th>
               <th>Actions</th>
             </tr>
@@ -339,7 +355,10 @@
             <tr
               v-for="item in visibleListings"
               :key="item.hash"
-              :style="hiddenHashes[item.hash] ? 'opacity: 0.45; text-decoration: line-through' : ''"
+              :style="[
+                hiddenHashes[item.hash] ? 'opacity: 0.45; text-decoration: line-through' : '',
+                lastClickedHash === item.hash ? 'background: rgba(255, 183, 77, 0.15); box-shadow: inset 3px 0 0 #FFB74D' : '',
+              ]"
             >
               <td class="font-weight-medium">{{ item.name }}</td>
               <td>{{ item.state }}</td>
@@ -363,6 +382,12 @@
                 </v-chip>
               </td>
               <td>
+                <v-chip v-if="item.hoa" size="x-small" :color="item.hoa === 'yes' ? 'red' : 'green'" variant="tonal">
+                  {{ item.hoa === 'yes' ? (item.hoa_dues || 'Yes') : 'None' }}
+                </v-chip>
+                <span v-else class="text-grey">—</span>
+              </td>
+              <td>
                 <v-chip v-if="item.zoning" size="x-small" color="purple" variant="tonal">{{ item.zoning }}</v-chip>
                 <span v-else class="text-grey">—</span>
               </td>
@@ -370,7 +395,7 @@
                 <v-btn size="x-small" variant="text" icon @click="scrapeDetail(item)" :loading="item._loadingDetail">
                   <v-icon size="16">mdi-information-outline</v-icon>
                 </v-btn>
-                <v-btn size="x-small" variant="text" icon :href="item.url" target="_blank">
+                <v-btn size="x-small" variant="text" icon :href="item.url" target="_blank" @click="lastClickedHash = item.hash">
                   <v-icon size="16">mdi-open-in-new</v-icon>
                 </v-btn>
                 <v-btn size="x-small" variant="text" icon @click="toggleFavorite(item)" :color="item.is_favorite ? 'red' : 'grey'">
@@ -795,6 +820,24 @@
             <v-chip v-if="detailItem.septic_allowed" size="small" color="blue" variant="tonal" prepend-icon="mdi-pipe">Septic</v-chip>
           </div>
 
+          <!-- HOA info -->
+          <div v-if="detailItem.hoa" class="mt-3">
+            <div class="text-subtitle-2 mb-1"><v-icon size="16" class="mr-1">mdi-home-group</v-icon>HOA</div>
+            <div class="d-flex flex-wrap ga-2">
+              <v-chip size="small" :color="detailItem.hoa === 'yes' ? 'red' : 'green'" variant="tonal">
+                {{ detailItem.hoa === 'yes' ? 'Has HOA' : 'No HOA' }}
+              </v-chip>
+              <v-chip v-if="detailItem.hoa_dues" size="small" color="orange" variant="tonal">
+                Dues: {{ detailItem.hoa_dues }}
+              </v-chip>
+              <v-chip v-if="detailItem.annual_taxes" size="small" color="amber" variant="tonal">
+                Taxes: {{ detailItem.annual_taxes }}
+              </v-chip>
+            </div>
+            <div v-if="detailItem.hoa_name" class="text-body-2 mt-1 text-medium-emphasis">{{ detailItem.hoa_name }}</div>
+            <div v-if="detailItem.hoa_info" class="text-body-2 mt-1 pa-2 bg-grey-darken-3 rounded" style="font-size: 0.85em">{{ detailItem.hoa_info }}</div>
+          </div>
+
           <!-- Zoning info -->
           <div v-if="detailItem.zoning || detailItem.zoning_code" class="mt-3">
             <div class="text-subtitle-2 mb-1"><v-icon size="16" class="mr-1">mdi-gavel</v-icon>Zoning</div>
@@ -932,6 +975,7 @@ export default {
       loadingListings: false,
       loadingMore: false,
       viewMode: localStorage.getItem('re_view') || 'cards',
+      lastClickedHash: null,
       hiddenHashes: (() => { try { const arr = JSON.parse(localStorage.getItem('re_hidden') || '[]'); const obj = {}; arr.forEach(h => obj[h] = true); return obj } catch { return {} } })(),
       showHidden: localStorage.getItem('re_showHidden') === 'true',
       filterSource: (() => { try { return JSON.parse(localStorage.getItem('re_filterSource')) } catch { return null } })(),
@@ -940,6 +984,11 @@ export default {
       filterMinAcreage: (() => { try { return JSON.parse(localStorage.getItem('re_filterMinAcreage')) } catch { return null } })(),
       filterZoning: (() => { try { const v = JSON.parse(localStorage.getItem('re_filterZoning')); return Array.isArray(v) ? v : [] } catch { return [] } })(),
       zoningOptions: [],
+      filterHoa: (() => { try { return JSON.parse(localStorage.getItem('re_filterHoa')) } catch { return null } })(),
+      hoaOptions: [
+        { title: 'No HOA', value: 'no' },
+        { title: 'Has HOA', value: 'yes' },
+      ],
       sortBy: localStorage.getItem('re_sortBy') || 'price',
       sortDir: localStorage.getItem('re_sortDir') || 'asc',
       sortOptions: [
@@ -1045,6 +1094,9 @@ export default {
     },
     filterZoning(v) {
       localStorage.setItem('re_filterZoning', JSON.stringify(v || []))
+    },
+    filterHoa(v) {
+      localStorage.setItem('re_filterHoa', JSON.stringify(v))
     },
     sortBy(v) {
       localStorage.setItem('re_sortBy', v)
@@ -1272,6 +1324,7 @@ export default {
         if (this.filterMaxPrice) params.max_price = this.filterMaxPrice
         if (this.filterMinAcreage) params.min_acreage = this.filterMinAcreage
         if (this.filterZoning && this.filterZoning.length) params.zoning = this.filterZoning.join(',')
+        if (this.filterHoa) params.hoa = this.filterHoa
 
         const { data } = await api.get(`${API}/listings`, { params })
         this.listings = (data.items || []).map(i => ({ ...i, _loadingDetail: false }))
@@ -1294,6 +1347,7 @@ export default {
         if (this.filterMaxPrice) params.max_price = this.filterMaxPrice
         if (this.filterMinAcreage) params.min_acreage = this.filterMinAcreage
         if (this.filterZoning && this.filterZoning.length) params.zoning = this.filterZoning.join(',')
+        if (this.filterHoa) params.hoa = this.filterHoa
 
         const { data } = await api.get(`${API}/listings`, { params })
         const newItems = (data.items || []).map(i => ({ ...i, _loadingDetail: false }))

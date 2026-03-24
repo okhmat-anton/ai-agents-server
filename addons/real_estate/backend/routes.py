@@ -378,7 +378,10 @@ async def _scrape_landcentral(db, client: httpx.AsyncClient, states_filter: list
                 if not parent:
                     continue
 
-                text_block = parent.get_text(" ", strip=True)
+                # Go up to grandparent (article wrapper) which contains
+                # both header and property-details (with acreage, county, etc.)
+                card = parent.parent or parent
+                text_block = card.get_text(" ", strip=True)
 
                 # Extract property #
                 prop_match = re.search(r"Property\s*#?\s*(\d+)", text_block)
@@ -390,7 +393,7 @@ async def _scrape_landcentral(db, client: httpx.AsyncClient, states_filter: list
 
                 # Extract county
                 county = ""
-                county_el = parent.find(string=re.compile(r"County", re.I))
+                county_el = card.find(string=re.compile(r"County", re.I))
                 if county_el:
                     county_text = county_el.parent.get_text(strip=True) if county_el.parent else str(county_el)
                     cm = re.match(r"^(\w[\w\s]*?)$", county_text)
@@ -416,7 +419,7 @@ async def _scrape_landcentral(db, client: httpx.AsyncClient, states_filter: list
 
                 # Try to get image
                 image_url = None
-                img = parent.find("img")
+                img = card.find("img")
                 if img:
                     img_src = img.get("src") or img.get("data-src") or ""
                     if img_src and not img_src.startswith("data:"):
@@ -612,14 +615,18 @@ async def _scrape_detail_landcentral(
         if desc_el:
             listing["description"] = desc_el.get_text(" ", strip=True)[:2000]
 
-        # Zoning info — LandCentral has a properties table with Zoning rows
+        # Zoning info & extra details — LandCentral has a properties table
         for table in soup.find_all("table"):
             for row in table.find_all("tr"):
                 cells = row.find_all(["th", "td"])
                 if len(cells) == 2:
                     label = cells[0].get_text(strip=True)
                     value = cells[1].get_text(" ", strip=True)
-                    if label == "Zoning" and value:
+                    if label == "Size" and value and not listing.get("acreage"):
+                        am = re.search(r"([\d.]+)", value)
+                        if am:
+                            listing["acreage"] = float(am.group(1))
+                    elif label == "Zoning" and value:
                         listing["zoning"] = value
                     elif label == "Zoning Code" and value:
                         listing["zoning_code"] = value
@@ -631,6 +638,23 @@ async def _scrape_detail_landcentral(
                         listing["slope"] = value
                     elif label == "On Property Usage/Potential" and value:
                         listing["usage_potential"] = value
+                    elif "hoa" in label.lower():
+                        if "dues" in label.lower() and value:
+                            listing["hoa_dues"] = value
+                            # Parse numeric amount
+                            dues_match = re.search(r"\$(\d[\d,.]*)", value)
+                            if dues_match:
+                                amt = _parse_price(dues_match.group(1))
+                                listing["hoa_amount"] = amt or 0
+                                listing["hoa"] = "yes" if amt and amt > 0 else "no"
+                            else:
+                                listing["hoa"] = "no" if value.strip() in ("$0", "0", "", "None", "N/A") else "yes"
+                        elif label == "HOA" and value.strip():
+                            listing["hoa_name"] = value.strip()
+                        elif label == "HOA Info" and value.strip():
+                            listing["hoa_info"] = value.strip()[:500]
+                    elif label == "Estimated Annual Taxes" and value:
+                        listing["annual_taxes"] = value
 
         # Additional images
         images = soup.find_all("img", src=re.compile(r"property|listing|land", re.I))
@@ -741,6 +765,7 @@ async def list_listings(
     min_acreage: Optional[float] = Query(None),
     max_acreage: Optional[float] = Query(None),
     zoning: Optional[str] = Query(None, description="Filter by zoning (comma-separated)"),
+    hoa: Optional[str] = Query(None, description="Filter by HOA: yes, no, or any"),
     favorites_only: bool = Query(False),
     sort_by: str = Query("price", description="price, acreage, scraped_at, state"),
     sort_dir: str = Query("asc", description="asc or desc"),
@@ -774,6 +799,9 @@ async def list_listings(
             query["zoning"] = {"$regex": re.escape(zoning_values[0]), "$options": "i"}
         elif len(zoning_values) > 1:
             query["zoning"] = {"$in": zoning_values}
+
+    if hoa and hoa.lower() in ("yes", "no"):
+        query["hoa"] = hoa.lower()
 
     if favorites_only:
         fav_hashes = set()
