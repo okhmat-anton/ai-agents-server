@@ -5,6 +5,7 @@
   "icon": "mdi-currency-usd",
   "version": "1.0.0",
   "author": "system",
+  "menu_mode": "secondary",
   "route": {
     "path": "/addons/funding",
     "name": "Funding",

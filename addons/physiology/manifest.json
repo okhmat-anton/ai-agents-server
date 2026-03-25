@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "icon": "mdi-human",
   "enabled": false,
+  "menu_mode": "secondary",
   "settings": [
     {
       "key": "physiology_default_model",

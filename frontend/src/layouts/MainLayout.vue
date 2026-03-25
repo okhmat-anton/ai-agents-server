@@ -52,12 +52,11 @@
           :value="item.path"
           rounded="xl"
         />
-        <!-- Addons -->
-        <template v-if="addonsNav.length">
+        <!-- Direct Addons (shown as top-level items) -->
+        <template v-if="directAddonsNav.length">
           <v-divider class="my-2" />
-          <v-list-subheader v-if="!rail">ADDONS</v-list-subheader>
           <v-list-item
-            v-for="item in addonsNav"
+            v-for="item in directAddonsNav"
             :key="item.path"
             :to="item.path"
             :prepend-icon="item.icon"
@@ -65,6 +64,30 @@
             :value="item.path"
             rounded="xl"
           />
+        </template>
+        <!-- Secondary Addons (collapsible group) -->
+        <template v-if="secondaryAddonsNav.length">
+          <v-divider v-if="!directAddonsNav.length" class="my-2" />
+          <v-list-group value="addons-secondary" class="addon-secondary-group">
+            <template #activator="{ props }">
+              <v-list-item
+                v-bind="props"
+                prepend-icon="mdi-puzzle"
+                title="Addons"
+                rounded="xl"
+              />
+            </template>
+            <v-list-item
+              v-for="item in secondaryAddonsNav"
+              :key="item.path"
+              :to="item.path"
+              :prepend-icon="item.icon"
+              :title="item.title"
+              :value="item.path"
+              rounded="xl"
+              class="addon-secondary-item"
+            />
+          </v-list-group>
         </template>
       </v-list>
       <template #append>
@@ -244,7 +267,8 @@ const navItems = [
   { path: '/models', icon: 'mdi-brain', title: 'Models' },
 ]
 
-const addonsNav = ref([])
+const directAddonsNav = ref([])
+const secondaryAddonsNav = ref([])
 
 const settingsNav = [
   { path: '/settings', icon: 'mdi-cog', title: 'Settings' },
@@ -260,8 +284,12 @@ onMounted(() => {
   }).catch(() => {})
   // Load enabled addons for nav
   api.get('/addons').then(({ data }) => {
-    addonsNav.value = data
-      .filter(a => a.enabled && a.route)
+    const enabled = data.filter(a => a.enabled && a.route)
+    directAddonsNav.value = enabled
+      .filter(a => a.menu_mode !== 'secondary')
+      .map(a => ({ path: a.route.path, icon: a.icon || 'mdi-puzzle', title: a.route.title || a.name }))
+    secondaryAddonsNav.value = enabled
+      .filter(a => a.menu_mode === 'secondary')
       .map(a => ({ path: a.route.path, icon: a.icon || 'mdi-puzzle', title: a.route.title || a.name }))
   }).catch(() => {})
 })
@@ -432,5 +460,25 @@ const handleLogout = async () => {
   bottom: 24px;
   right: 24px;
   z-index: 90;
+}
+</style>
+
+<!-- Unscoped style for deep Vuetify list-group overrides -->
+<style>
+.addon-secondary-group .v-list-group__items {
+  --indent-padding: 0px !important;
+}
+.addon-secondary-group .v-list-group__items .addon-secondary-item {
+  padding-inline-start: 8px !important;
+}
+.addon-secondary-group .v-list-group__items .addon-secondary-item .v-list-item__prepend {
+  width: 24px;
+  margin-inline-end: 8px;
+}
+.addon-secondary-group .v-list-group__items .addon-secondary-item .v-list-item-title {
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

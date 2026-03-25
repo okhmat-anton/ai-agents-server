@@ -5,6 +5,7 @@
   "icon": "mdi-chart-timeline-variant",
   "version": "1.0.0",
   "author": "system",
+  "menu_mode": "direct",
   "route": {
     "path": "/addons/polymarket",
     "name": "Polymarket",

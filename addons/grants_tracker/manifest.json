@@ -5,6 +5,7 @@
   "icon": "mdi-trophy-award",
   "version": "1.0.0",
   "author": "system",
+  "menu_mode": "secondary",
   "route": {
     "path": "/addons/grants-tracker",
     "name": "GrantsTracker",

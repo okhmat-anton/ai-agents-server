@@ -5,6 +5,7 @@
   "icon": "mdi-terrain",
   "version": "1.0.0",
   "author": "system",
+  "menu_mode": "secondary",
   "route": {
     "path": "/addons/real-estate",
     "name": "RealEstate",

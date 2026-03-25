@@ -5,6 +5,7 @@
   "icon": "mdi-wallet-outline",
   "version": "1.0.0",
   "author": "system",
+  "menu_mode": "direct",
   "route": {
     "path": "/addons/budgeting",
     "name": "Budgeting",

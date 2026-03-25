@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "icon": "mdi-earth",
   "enabled": false,
+  "menu_mode": "secondary",
   "settings": [
     {
       "key": "geopolitics_scrape_interval",
