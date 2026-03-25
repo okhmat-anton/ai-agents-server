@@ -1,0 +1,13 @@
+{
+  "name": "Seattle Craigslist",
+  "source_type": "craigslist",
+  "enabled": true,
+  "url": "https://seattle.craigslist.org",
+  "keywords": [],
+  "exclude_keywords": [],
+  "min_keyword_matches": 1,
+  "max_results": 100,
+  "scrape_interval_hours": 24,
+  "last_scraped": "",
+  "notes": ""
+}

@@ -6,6 +6,7 @@ Includes job sub-modules: CVs, job criterias, parsed jobs, and job sources (Crai
 Integrates with AKM-Advisor CRM to push leads and deals.
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -39,11 +40,14 @@ CONNECTIONS_COL = "leadgen_connections"
 CVS_COL = "leadgen_cvs"
 JOB_CRITERIAS_COL = "leadgen_job_criterias"
 PARSED_JOBS_COL = "leadgen_parsed_jobs"
-JOB_SOURCES_COL = "leadgen_job_sources"
 
 # CV file storage
 CV_UPLOAD_DIR = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))).resolve() / "data" / "leadgen_cvs"
 CV_MAX_SIZE = 20 * 1024 * 1024  # 20 MB
+
+# Job sources — stored as JSON files in addons/lead_generation/sources/ (git-tracked)
+SOURCES_DIR = Path(os.path.dirname(os.path.dirname(__file__))).resolve() / "sources"
+SOURCES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -580,44 +584,79 @@ async def save_parsed_as_job(job_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Job Sources — CRUD + manual scrape trigger
+# Job Sources — file-based CRUD (git-tracked JSON in sources/ directory)
 # ---------------------------------------------------------------------------
+
+def _source_id_from_path(p: Path) -> str:
+    """Derive source ID from filename (stem without .json)."""
+    return p.stem
+
+
+def _read_source_file(p: Path) -> dict:
+    """Read a single source JSON file and attach _id from filename."""
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data["_id"] = _source_id_from_path(p)
+    return data
+
+
+def _write_source_file(source_id: str, data: dict):
+    """Write source dict to JSON file. Removes _id before writing."""
+    out = {k: v for k, v in data.items() if k != "_id"}
+    fp = SOURCES_DIR / f"{source_id}.json"
+    fp.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _slugify(name: str) -> str:
+    """Convert a source name to a filesystem-safe slug."""
+    import re as _re
+    slug = _re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+    return slug or _make_id()[:8]
+
 
 @router.get("/job-sources")
 async def list_job_sources():
-    db = get_mongodb()
-    cursor = db[JOB_SOURCES_COL].find().sort("created_at", -1)
-    items = [_obj_id(doc) async for doc in cursor]
+    items = []
+    for fp in sorted(SOURCES_DIR.glob("*.json")):
+        try:
+            items.append(_read_source_file(fp))
+        except Exception as e:
+            logger.warning(f"Failed to read source file {fp.name}: {e}")
     return {"items": items}
 
 
 @router.post("/job-sources")
 async def create_job_source(body: JobSourceCreate):
-    db = get_mongodb()
     doc = body.model_dump()
-    doc["_id"] = _make_id()
+    source_id = _slugify(body.name)
+    # Ensure unique filename
+    fp = SOURCES_DIR / f"{source_id}.json"
+    if fp.exists():
+        source_id = f"{source_id}_{_make_id()[:6]}"
     doc["created_at"] = _now_iso()
     doc["updated_at"] = _now_iso()
-    await db[JOB_SOURCES_COL].insert_one(doc)
-    return _obj_id(doc)
+    _write_source_file(source_id, doc)
+    doc["_id"] = source_id
+    return doc
 
 
 @router.patch("/job-sources/{source_id}")
 async def update_job_source(source_id: str, body: dict):
-    db = get_mongodb()
-    body["updated_at"] = _now_iso()
-    result = await db[JOB_SOURCES_COL].update_one({"_id": source_id}, {"$set": body})
-    if result.matched_count == 0:
+    fp = SOURCES_DIR / f"{source_id}.json"
+    if not fp.exists():
         raise HTTPException(404, "Source not found")
+    current = _read_source_file(fp)
+    current.update(body)
+    current["updated_at"] = _now_iso()
+    _write_source_file(source_id, current)
     return {"ok": True}
 
 
 @router.delete("/job-sources/{source_id}")
 async def delete_job_source(source_id: str):
-    db = get_mongodb()
-    result = await db[JOB_SOURCES_COL].delete_one({"_id": source_id})
-    if result.deleted_count == 0:
+    fp = SOURCES_DIR / f"{source_id}.json"
+    if not fp.exists():
         raise HTTPException(404, "Source not found")
+    fp.unlink()
     return {"ok": True}
 
 
@@ -627,17 +666,17 @@ async def trigger_scrape(source_id: str):
     Currently supports: craigslist.
     """
     db = get_mongodb()
-    src = await db[JOB_SOURCES_COL].find_one({"_id": source_id})
-    if not src:
+    fp = SOURCES_DIR / f"{source_id}.json"
+    if not fp.exists():
         raise HTTPException(404, "Source not found")
+    src = _read_source_file(fp)
 
     if src.get("source_type") == "craigslist":
         result = await _scrape_craigslist(db, src)
-        # Update last_scraped
-        await db[JOB_SOURCES_COL].update_one(
-            {"_id": source_id},
-            {"$set": {"last_scraped": _now_iso(), "updated_at": _now_iso()}},
-        )
+        # Update last_scraped in the file
+        src["last_scraped"] = _now_iso()
+        src["updated_at"] = _now_iso()
+        _write_source_file(source_id, src)
         return result
     else:
         raise HTTPException(400, f"Scraping not yet implemented for source type: {src.get('source_type')}")
@@ -960,7 +999,6 @@ async def clear_all():
     r2 = await db[JOBS_COL].delete_many({})
     r3 = await db[CONNECTIONS_COL].delete_many({})
     r4 = await db[PARSED_JOBS_COL].delete_many({})
-    r5 = await db[JOB_SOURCES_COL].delete_many({})
     r6 = await db[CVS_COL].delete_many({})
     await db[JOB_CRITERIAS_COL].delete_many({})
     # Clean CV files
@@ -968,11 +1006,11 @@ async def clear_all():
         for f in CV_UPLOAD_DIR.iterdir():
             if f.is_file():
                 f.unlink()
+    # Note: job source JSON files are NOT deleted by clear-all (they are git-tracked config)
     return {
         "deleted_clients": r1.deleted_count,
         "deleted_jobs": r2.deleted_count,
         "deleted_connections": r3.deleted_count,
         "deleted_parsed_jobs": r4.deleted_count,
-        "deleted_sources": r5.deleted_count,
         "deleted_cvs": r6.deleted_count,
     }
