@@ -79,8 +79,8 @@
           @end="onDragEnd(group.category)"
         >
           <template #item="{ element: note }">
-            <v-card variant="flat" class="note-card" :class="{ 'note-completed': note.status === 'completed', 'note-no-context': !note.in_context }">
-              <div class="card-accent" :class="priorityAccentClass(note.priority)" />
+            <v-card variant="flat" class="note-card" :class="{ 'note-completed': note.status === 'completed', 'note-no-context': !note.in_context, 'note-pinned': note.pinned }">
+              <div class="card-accent" :class="note.pinned ? 'accent-amber' : priorityAccentClass(note.priority)" />
               <v-card-text class="pa-5 pl-7">
                 <div class="d-flex align-start">
                   <div class="drag-handle mr-2 mt-1" title="Drag to reorder" @click.stop>
@@ -97,6 +97,7 @@
                   </v-btn>
                   <div class="flex-grow-1" @click="toggleExpand(note.id)" style="cursor: pointer;">
                     <div class="d-flex align-center mb-1 ga-2 flex-wrap">
+                      <v-icon v-if="note.pinned" size="16" color="amber">mdi-pin</v-icon>
                       <span class="text-subtitle-1 font-weight-medium">{{ note.title }}</span>
                       <v-chip :color="priorityColor(note.priority)" size="x-small" variant="tonal">
                         {{ note.priority }}
@@ -124,6 +125,9 @@
                     </div>
                   </div>
                   <div class="d-flex ml-3 ga-1">
+                    <v-btn icon size="small" variant="text" :color="note.pinned ? 'amber' : undefined" @click.stop="togglePin(note)" :title="note.pinned ? 'Unpin' : 'Pin to top'">
+                      <v-icon>{{ note.pinned ? 'mdi-pin' : 'mdi-pin-outline' }}</v-icon>
+                    </v-btn>
                     <v-btn icon size="small" variant="text" @click.stop="editNote(note)">
                       <v-icon>mdi-pencil</v-icon>
                     </v-btn>
@@ -154,8 +158,8 @@
       @end="onDragEndFlat"
     >
       <template #item="{ element: note }">
-        <v-card variant="flat" class="note-card" :class="{ 'note-completed': note.status === 'completed', 'note-no-context': !note.in_context }">
-          <div class="card-accent" :class="priorityAccentClass(note.priority)" />
+        <v-card variant="flat" class="note-card" :class="{ 'note-completed': note.status === 'completed', 'note-no-context': !note.in_context, 'note-pinned': note.pinned }">
+          <div class="card-accent" :class="note.pinned ? 'accent-amber' : priorityAccentClass(note.priority)" />
           <v-card-text class="pa-5 pl-7">
             <div class="d-flex align-start">
               <div class="drag-handle mr-2 mt-1" title="Drag to reorder" @click.stop>
@@ -172,6 +176,7 @@
               </v-btn>
               <div class="flex-grow-1" @click="toggleExpand(note.id)" style="cursor: pointer;">
                 <div class="d-flex align-center mb-1 ga-2 flex-wrap">
+                  <v-icon v-if="note.pinned" size="16" color="amber">mdi-pin</v-icon>
                   <span class="text-subtitle-1 font-weight-medium">{{ note.title }}</span>
                   <v-chip :color="priorityColor(note.priority)" size="x-small" variant="tonal">
                     {{ note.priority }}
@@ -199,6 +204,9 @@
                 </div>
               </div>
               <div class="d-flex ml-3 ga-1">
+                <v-btn icon size="small" variant="text" :color="note.pinned ? 'amber' : undefined" @click.stop="togglePin(note)" :title="note.pinned ? 'Unpin' : 'Pin to top'">
+                  <v-icon>{{ note.pinned ? 'mdi-pin' : 'mdi-pin-outline' }}</v-icon>
+                </v-btn>
                 <v-btn icon size="small" variant="text" @click.stop="editNote(note)">
                   <v-icon>mdi-pencil</v-icon>
                 </v-btn>
@@ -483,6 +491,17 @@ async function saveNote() {
   }
 }
 
+async function togglePin(note) {
+  try {
+    await api.patch(`/notes/${note.id}`, { pinned: !note.pinned })
+    note.pinned = !note.pinned
+    showSnackbar?.(note.pinned ? 'Pinned' : 'Unpinned', 'success')
+    await loadNotes()
+  } catch (e) {
+    showSnackbar?.('Failed to update', 'error')
+  }
+}
+
 async function toggleContext(note) {
   try {
     await api.patch(`/notes/${note.id}`, { in_context: !note.in_context })
@@ -571,10 +590,15 @@ async function onDragEndFlat() {
 
 .accent-teal { background: rgb(var(--v-theme-teal, 77, 182, 172)); }
 .accent-red { background: rgb(var(--v-theme-error)); }
+.accent-amber { background: #ffb300; }
 .accent-grey { background: #9e9e9e; }
 
 .note-completed {
   opacity: 0.5;
+}
+
+.note-pinned {
+  border-color: rgba(255, 179, 0, 0.25) !important;
 }
 
 .note-no-context {

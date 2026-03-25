@@ -48,6 +48,7 @@ class NoteUpdate(BaseModel):
     status: Optional[str] = None
     tags: Optional[List[str]] = None
     in_context: Optional[bool] = None
+    pinned: Optional[bool] = None
 
 
 # ── Helpers ──────────────────────────────────────────
@@ -62,6 +63,7 @@ def _note_to_response(note: MongoNote) -> dict:
         "status": note.status,
         "tags": note.tags,
         "in_context": note.in_context,
+        "pinned": getattr(note, 'pinned', False),
         "sort_order": getattr(note, 'sort_order', 0),
         "linked_idea_ids": getattr(note, 'linked_idea_ids', []) or [],
         "linked_fact_ids": getattr(note, 'linked_fact_ids', []) or [],

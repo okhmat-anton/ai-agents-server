@@ -618,7 +618,7 @@ class NoteService(BaseMongoService[MongoNote]):
                 {"title": {"$regex": search, "$options": "i"}},
                 {"content": {"$regex": search, "$options": "i"}},
             ]
-        cursor = self.collection.find(filt).sort([("sort_order", 1), ("created_at", -1)]).skip(skip).limit(limit)
+        cursor = self.collection.find(filt).sort([("pinned", -1), ("sort_order", 1), ("created_at", -1)]).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [self.model_class.from_mongo(doc) for doc in docs]
 

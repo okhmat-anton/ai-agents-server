@@ -139,71 +139,279 @@
         </div>
       </v-window-item>
 
-      <!-- ═══════ JOB SEARCH ═══════ -->
+      <!-- ═══════ JOB SEARCH (sub-tabs) ═══════ -->
       <v-window-item value="jobs">
-        <v-row dense class="mb-3">
-          <v-col cols="12" sm="4">
-            <v-text-field v-model="jobSearch" label="Search jobs..." variant="outlined" density="compact" prepend-inner-icon="mdi-magnify" clearable hide-details @keyup.enter="loadJobs" />
-          </v-col>
-          <v-col cols="6" sm="2">
-            <v-select v-model="jobStatusFilter" :items="jobStatuses" label="Status" variant="outlined" density="compact" clearable hide-details />
-          </v-col>
-          <v-col cols="6" sm="2">
-            <v-select v-model="jobTypeFilter" :items="jobTypes" label="Type" variant="outlined" density="compact" clearable hide-details />
-          </v-col>
-          <v-col cols="6" sm="2">
-            <v-select v-model="jobRemoteFilter" :items="remoteOptions" label="Remote" variant="outlined" density="compact" clearable hide-details />
-          </v-col>
-          <v-col cols="auto">
-            <v-btn color="cyan" variant="tonal" @click="loadJobs" class="mt-1">Search</v-btn>
-          </v-col>
-          <v-spacer />
-          <v-col cols="auto">
-            <v-btn color="purple" variant="tonal" size="small" prepend-icon="mdi-plus" @click="showAddJob = true">Add Job</v-btn>
-          </v-col>
-        </v-row>
+        <v-tabs v-model="jobSubTab" color="purple-accent-2" class="mb-3" density="compact" show-arrows>
+          <v-tab value="cv"><v-icon start size="16">mdi-file-document</v-icon>CV</v-tab>
+          <v-tab value="criterias"><v-icon start size="16">mdi-filter-cog</v-icon>Job Criterias</v-tab>
+          <v-tab value="parsed"><v-icon start size="16">mdi-text-search</v-icon>Parsed</v-tab>
+          <v-tab value="sources"><v-icon start size="16">mdi-web</v-icon>Sources</v-tab>
+        </v-tabs>
 
-        <v-progress-linear v-if="loadingJobs" indeterminate color="purple" class="mb-2" />
+        <v-window v-model="jobSubTab">
 
-        <v-row v-if="jobs.length > 0">
-          <v-col v-for="j in jobs" :key="j._id" cols="12" sm="6" md="4" lg="3">
-            <v-card variant="outlined" class="pa-3 h-100">
-              <div class="d-flex align-center mb-2">
-                <v-icon :color="jobStatusColor(j.status)" size="20" class="mr-2">mdi-briefcase</v-icon>
-                <span class="text-subtitle-2 font-weight-bold text-truncate" style="max-width:200px">{{ j.title }}</span>
-                <v-spacer />
-                <v-btn v-if="j.url" :href="j.url" target="_blank" icon="mdi-open-in-new" size="x-small" variant="text" />
-              </div>
-              <div class="text-body-2 font-weight-medium mb-1">{{ j.company }}</div>
-              <div class="text-caption text-grey mb-1" v-if="j.location">{{ j.location }}</div>
-              <div class="d-flex flex-wrap ga-1 mb-2">
-                <v-chip :color="jobStatusColor(j.status)" size="x-small" variant="tonal">{{ j.status }}</v-chip>
-                <v-chip v-if="j.job_type" size="x-small" variant="outlined">{{ j.job_type }}</v-chip>
-                <v-chip v-if="j.remote && j.remote !== 'any'" size="x-small" variant="tonal" color="teal">{{ j.remote }}</v-chip>
-                <v-chip v-if="j.salary_range" size="x-small" variant="tonal" color="green">{{ j.salary_range }}</v-chip>
-              </div>
-              <div v-if="j.tags && j.tags.length" class="d-flex flex-wrap ga-1 mb-2">
-                <v-chip v-for="t in j.tags" :key="t" size="x-small" variant="tonal" color="cyan">{{ t }}</v-chip>
-              </div>
-              <div class="d-flex mt-auto">
-                <v-btn-group variant="text" density="compact">
-                  <v-btn v-for="s in ['applied','interview','offer']" :key="s" size="x-small" @click="updateJobStatus(j._id, s)"
-                    :color="j.status === s ? jobStatusColor(s) : 'grey'" :variant="j.status === s ? 'tonal' : 'text'">
-                    {{ s }}
-                  </v-btn>
-                </v-btn-group>
-                <v-spacer />
-                <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="deleteJob(j._id)" />
-              </div>
+          <!-- ─── CV ─── -->
+          <v-window-item value="cv">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+              Upload your resumes here. Name each one clearly — agents can reference them when applying to jobs.
+            </v-alert>
+
+            <div class="d-flex justify-end mb-3">
+              <v-btn color="purple" variant="tonal" size="small" prepend-icon="mdi-upload" @click="triggerCvUpload">Upload CV</v-btn>
+              <input ref="cvFileInput" type="file" accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.md" style="display:none" @change="handleCvUpload" />
+            </div>
+
+            <v-progress-linear v-if="loadingCvs" indeterminate color="purple" class="mb-2" />
+
+            <v-card v-if="cvs.length > 0" variant="outlined">
+              <v-table density="compact" hover>
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>File</th>
+                    <th>Description</th>
+                    <th>Date</th>
+                    <th style="width:120px">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="cv in cvs" :key="cv._id">
+                    <td>
+                      <v-text-field v-if="editingCvId === cv._id" v-model="editCvTitle" variant="outlined" density="compact" hide-details style="max-width:200px" @keyup.enter="saveCvEdit(cv._id)" />
+                      <span v-else class="font-weight-medium">{{ cv.title }}</span>
+                    </td>
+                    <td class="text-caption">
+                      <v-chip size="x-small" variant="tonal" color="purple">{{ cv.ext?.toUpperCase() }}</v-chip>
+                      {{ cv.original_name }}
+                    </td>
+                    <td class="text-body-2 text-grey" style="max-width:250px">
+                      <v-text-field v-if="editingCvId === cv._id" v-model="editCvDesc" variant="outlined" density="compact" hide-details placeholder="Description..." />
+                      <span v-else>{{ cv.description || '—' }}</span>
+                    </td>
+                    <td class="text-caption">{{ formatDate(cv.created_at) }}</td>
+                    <td>
+                      <template v-if="editingCvId === cv._id">
+                        <v-btn icon="mdi-check" size="x-small" variant="text" color="green" @click="saveCvEdit(cv._id)" />
+                        <v-btn icon="mdi-close" size="x-small" variant="text" @click="editingCvId = null" />
+                      </template>
+                      <template v-else>
+                        <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="startEditCv(cv)" />
+                        <v-btn icon="mdi-download" size="x-small" variant="text" color="blue" @click="downloadCv(cv._id)" />
+                        <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="deleteCv(cv._id)" />
+                      </template>
+                    </td>
+                  </tr>
+                </tbody>
+              </v-table>
             </v-card>
-          </v-col>
-        </v-row>
+            <v-card v-else-if="!loadingCvs" variant="tonal" class="pa-8 text-center">
+              <v-icon size="48" color="grey">mdi-file-document-outline</v-icon>
+              <div class="text-h6 mt-2 text-grey">No CVs uploaded yet</div>
+            </v-card>
+          </v-window-item>
 
-        <v-card v-else-if="!loadingJobs" variant="tonal" class="pa-8 text-center">
-          <v-icon size="48" color="grey">mdi-briefcase-search-outline</v-icon>
-          <div class="text-h6 mt-2 text-grey">No jobs yet</div>
-          <v-btn color="purple" variant="tonal" class="mt-3" @click="showAddJob = true" prepend-icon="mdi-plus">Add Job</v-btn>
-        </v-card>
+          <!-- ─── JOB CRITERIAS ─── -->
+          <v-window-item value="criterias">
+            <v-card variant="outlined" class="pa-4" style="max-width:1500px">
+              <div class="text-h6 mb-3">Job Search Criterias</div>
+
+              <v-row dense>
+                <v-col cols="12" md="6">
+                  <v-combobox v-model="criterias.industries" label="Priority Industries" variant="outlined" density="compact" multiple chips closable-chips class="mb-3" placeholder="e.g. fintech, healthcare, AI..." hint="Press Enter to add" persistent-hint />
+                </v-col>
+              </v-row>
+
+              <div class="text-subtitle-2 font-weight-bold mb-2">Desired Target Companies</div>
+              <v-row dense>
+                <v-col cols="12" md="4">
+                  <v-textarea v-model="criterias.companies_dream" label="Dream Companies" variant="outlined" density="compact" rows="3" class="mb-3" placeholder="One per line..." hint="Top-choice employers" persistent-hint />
+                </v-col>
+                <v-col cols="12" md="4">
+                  <v-textarea v-model="criterias.companies_good" label="Good Fit Companies" variant="outlined" density="compact" rows="3" class="mb-3" placeholder="One per line..." hint="Solid options you'd accept" persistent-hint />
+                </v-col>
+                <v-col cols="12" md="4">
+                  <v-textarea v-model="criterias.companies_backup" label="Backup Companies" variant="outlined" density="compact" rows="3" class="mb-3" placeholder="One per line..." hint="Fallback / safety net" persistent-hint />
+                </v-col>
+              </v-row>
+
+              <!-- Salary Section -->
+              <v-card variant="tonal" class="pa-3 mb-4">
+                <div class="text-subtitle-2 font-weight-bold mb-2"><v-icon size="16" class="mr-1">mdi-currency-usd</v-icon>Minimum Salary</div>
+                <v-row dense class="mb-2">
+                  <v-col cols="6" md="3">
+                    <v-text-field v-model="criterias.salary_annual_min" label="Annual ($)" variant="outlined" density="compact" type="number" hide-details @input="syncFromAnnual" />
+                  </v-col>
+                  <v-col cols="6" md="3">
+                    <v-text-field v-model="criterias.salary_monthly_min" label="Monthly ($)" variant="outlined" density="compact" type="number" hide-details @input="syncFromMonthly" />
+                  </v-col>
+                  <v-col cols="12" md="3">
+                    <v-select v-model="criterias.tax_state" :items="taxStates" label="State (for tax estimate)" variant="outlined" density="compact" clearable hide-details />
+                  </v-col>
+                  <v-col cols="12" md="3">
+                    <v-alert v-if="takeHomeEstimate" type="info" variant="tonal" density="compact" class="text-body-2 h-100 d-flex align-center">
+                      <div>
+                        <v-icon size="14" class="mr-1">mdi-calculator</v-icon>
+                        <strong>~${{ takeHomeEstimate.monthly }}/mo</strong> after taxes
+                        <span class="text-grey ml-1">(~{{ takeHomeEstimate.eff_rate }}%{{ criterias.tax_state ? ' ' + criterias.tax_state : '' }})</span>
+                      </div>
+                    </v-alert>
+                  </v-col>
+                </v-row>
+              </v-card>
+
+              <v-row dense>
+                <v-col cols="12" md="6">
+                  <v-combobox v-model="criterias.keywords" label="Keywords (title & description)" variant="outlined" density="compact" multiple chips closable-chips class="mb-3" placeholder="e.g. Python, engineer, remote, Kubernetes..." hint="Tags matched against job title and description" persistent-hint />
+                </v-col>
+                <v-col cols="12" md="6">
+                  <v-select v-model="criterias.states" :items="taxStates" label="States" variant="outlined" density="compact" multiple chips closable-chips class="mb-3" hint="Select target states" persistent-hint />
+                </v-col>
+              </v-row>
+
+              <v-row dense>
+                <v-col cols="12">
+                  <v-textarea v-model="criterias.notes" label="Notes" variant="outlined" density="compact" rows="2" class="mb-3" />
+                </v-col>
+              </v-row>
+
+              <v-btn color="purple" variant="tonal" prepend-icon="mdi-content-save" @click="saveCriterias" :loading="savingCriterias">
+                Save Criterias
+              </v-btn>
+            </v-card>
+          </v-window-item>
+
+          <!-- ─── PARSED JOBS ─── -->
+          <v-window-item value="parsed">
+            <v-row dense class="mb-3">
+              <v-col cols="12" sm="4">
+                <v-text-field v-model="parsedSearch" label="Search parsed jobs..." variant="outlined" density="compact" prepend-inner-icon="mdi-magnify" clearable hide-details @keyup.enter="loadParsedJobs" />
+              </v-col>
+              <v-col cols="6" sm="2">
+                <v-select v-model="parsedSourceFilter" :items="sourceNames" label="Source" variant="outlined" density="compact" clearable hide-details />
+              </v-col>
+              <v-col cols="6" sm="2">
+                <v-select v-model="parsedStatusFilter" :items="parsedStatuses" label="Status" variant="outlined" density="compact" clearable hide-details />
+              </v-col>
+              <v-col cols="auto">
+                <v-btn color="cyan" variant="tonal" @click="loadParsedJobs" class="mt-1">Search</v-btn>
+              </v-col>
+            </v-row>
+
+            <v-progress-linear v-if="loadingParsed" indeterminate color="purple" class="mb-2" />
+
+            <v-card v-if="parsedJobs.length > 0" variant="outlined">
+              <v-table density="compact" hover>
+                <thead>
+                  <tr>
+                    <th>Title</th>
+                    <th>Location</th>
+                    <th>Source</th>
+                    <th>Matches</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th style="width:120px">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="pj in parsedJobs" :key="pj._id">
+                    <td>
+                      <a v-if="pj.url" :href="pj.url" target="_blank" class="text-decoration-none font-weight-medium">{{ pj.title }}</a>
+                      <span v-else class="font-weight-medium">{{ pj.title }}</span>
+                      <div v-if="pj.tags && pj.tags.length" class="d-flex flex-wrap ga-1 mt-1">
+                        <v-chip v-for="t in pj.tags" :key="t" size="x-small" variant="tonal" color="cyan">{{ t }}</v-chip>
+                      </div>
+                    </td>
+                    <td class="text-body-2">{{ pj.location }}</td>
+                    <td class="text-caption">{{ pj.source }}</td>
+                    <td class="text-center">
+                      <v-chip size="x-small" :color="pj.keyword_matches >= 3 ? 'green' : pj.keyword_matches >= 2 ? 'amber' : 'grey'" variant="tonal">{{ pj.keyword_matches || 0 }}</v-chip>
+                    </td>
+                    <td>
+                      <v-chip :color="parsedStatusColor(pj.status)" size="x-small" variant="tonal">{{ pj.status }}</v-chip>
+                    </td>
+                    <td class="text-caption">{{ formatDate(pj.parsed_at) }}</td>
+                    <td>
+                      <v-btn v-if="pj.status !== 'saved'" icon="mdi-content-save" size="x-small" variant="text" color="green" title="Save as Job" @click="saveAsJob(pj._id)" />
+                      <v-btn v-if="pj.url" :href="pj.url" target="_blank" icon="mdi-open-in-new" size="x-small" variant="text" />
+                      <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="deleteParsedJob(pj._id)" />
+                    </td>
+                  </tr>
+                </tbody>
+              </v-table>
+            </v-card>
+            <v-card v-else-if="!loadingParsed" variant="tonal" class="pa-8 text-center">
+              <v-icon size="48" color="grey">mdi-text-search-variant</v-icon>
+              <div class="text-h6 mt-2 text-grey">No parsed jobs yet</div>
+              <div class="text-body-2 text-grey">Configure sources and trigger a scrape to populate this list</div>
+            </v-card>
+
+            <div v-if="parsedTotal > parsedJobs.length" class="text-center mt-3">
+              <v-btn variant="text" @click="loadMoreParsed">Load More ({{ parsedTotal - parsedJobs.length }} remaining)</v-btn>
+            </div>
+          </v-window-item>
+
+          <!-- ─── SOURCES ─── -->
+          <v-window-item value="sources">
+            <v-alert type="info" variant="tonal" density="compact" class="mb-3">
+              Configure job listing sources. Add keywords to filter results — only listings matching at least the minimum keyword count will be kept.
+            </v-alert>
+
+            <div class="d-flex justify-end mb-3">
+              <v-btn color="purple" variant="tonal" size="small" prepend-icon="mdi-plus" @click="showAddSource = true">Add Source</v-btn>
+            </div>
+
+            <v-progress-linear v-if="loadingSources" indeterminate color="purple" class="mb-2" />
+
+            <v-row v-if="jobSources.length > 0">
+              <v-col v-for="src in jobSources" :key="src._id" cols="12" md="6">
+                <v-card variant="outlined" class="pa-3 h-100">
+                  <div class="d-flex align-center mb-2">
+                    <v-icon :color="src.enabled ? 'green' : 'grey'" size="20" class="mr-2">
+                      {{ sourceTypeIcon(src.source_type) }}
+                    </v-icon>
+                    <span class="text-subtitle-1 font-weight-bold">{{ src.name }}</span>
+                    <v-spacer />
+                    <v-switch v-model="src.enabled" hide-details density="compact" color="green" class="flex-grow-0" @update:model-value="toggleSource(src)" />
+                  </div>
+
+                  <div class="text-caption text-grey mb-1">{{ src.url || 'Default URL' }}</div>
+                  <div class="text-caption mb-2">Type: <strong>{{ src.source_type }}</strong> &middot; Interval: {{ src.scrape_interval_hours }}h &middot; Max: {{ src.max_results }}</div>
+
+                  <div v-if="src.keywords && src.keywords.length" class="mb-2">
+                    <span class="text-caption text-grey">Keywords:</span>
+                    <div class="d-flex flex-wrap ga-1 mt-1">
+                      <v-chip v-for="kw in src.keywords" :key="kw" size="x-small" variant="tonal" color="cyan">{{ kw }}</v-chip>
+                    </div>
+                  </div>
+
+                  <div v-if="src.exclude_keywords && src.exclude_keywords.length" class="mb-2">
+                    <span class="text-caption text-grey">Exclude:</span>
+                    <div class="d-flex flex-wrap ga-1 mt-1">
+                      <v-chip v-for="kw in src.exclude_keywords" :key="kw" size="x-small" variant="tonal" color="red">{{ kw }}</v-chip>
+                    </div>
+                  </div>
+
+                  <div class="text-caption mb-2">Min keyword matches: <strong>{{ src.min_keyword_matches }}</strong></div>
+
+                  <div v-if="src.last_scraped" class="text-caption text-grey mb-2">Last scraped: {{ formatDate(src.last_scraped) }}</div>
+
+                  <v-divider class="my-2" />
+                  <div class="d-flex ga-1">
+                    <v-btn size="small" variant="tonal" color="cyan" prepend-icon="mdi-play" @click="scrapeSource(src._id)" :loading="scrapingId === src._id" :disabled="!src.enabled">Scrape Now</v-btn>
+                    <v-btn icon="mdi-pencil" size="small" variant="text" @click="editSource(src)" />
+                    <v-btn icon="mdi-delete" size="small" variant="text" color="red" @click="deleteSource(src._id)" />
+                  </div>
+                </v-card>
+              </v-col>
+            </v-row>
+            <v-card v-else-if="!loadingSources" variant="tonal" class="pa-8 text-center">
+              <v-icon size="48" color="grey">mdi-web</v-icon>
+              <div class="text-h6 mt-2 text-grey">No job sources configured</div>
+              <v-btn color="purple" variant="tonal" class="mt-3" @click="showAddSource = true" prepend-icon="mdi-plus">Add Source</v-btn>
+            </v-card>
+          </v-window-item>
+
+        </v-window>
       </v-window-item>
 
       <!-- ═══════ CONNECTION SEARCH ═══════ -->
@@ -558,13 +766,60 @@
       <v-card class="pa-4">
         <v-card-title class="text-red">Clear All Lead Generation Data?</v-card-title>
         <v-card-text>
-          This will delete all clients, jobs, and connections. Type <strong>DELETE</strong> to confirm.
+          This will delete all clients, jobs, connections, CVs, parsed jobs, and sources. Type <strong>DELETE</strong> to confirm.
           <v-text-field v-model="clearConfirmText" label="Type DELETE" variant="outlined" density="compact" class="mt-3" />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn variant="text" @click="confirmClear = false; clearConfirmText = ''">Cancel</v-btn>
           <v-btn color="red" variant="tonal" :disabled="clearConfirmText !== 'DELETE'" @click="clearAll">Delete All</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ═══════ ADD/EDIT JOB SOURCE DIALOG ═══════ -->
+    <v-dialog v-model="showAddSource" max-width="600">
+      <v-card class="pa-4">
+        <v-card-title>{{ editingSource ? 'Edit Source' : 'Add Job Source' }}</v-card-title>
+        <v-card-text>
+          <v-text-field v-model="sourceForm.name" label="Source Name *" variant="outlined" density="compact" class="mb-2" placeholder="e.g. Craigslist SF Bay" />
+          <v-select v-model="sourceForm.source_type" :items="sourceTypes" label="Source Type" variant="outlined" density="compact" class="mb-2" />
+          <v-text-field v-model="sourceForm.url" label="Base URL" variant="outlined" density="compact" class="mb-2" :placeholder="sourceForm.source_type === 'craigslist' ? 'https://sfbay.craigslist.org' : 'https://...'" hint="Leave empty for default" persistent-hint />
+          <v-combobox v-model="sourceForm.keywords" label="Keywords (required)" variant="outlined" density="compact" multiple chips closable-chips class="mb-2" placeholder="e.g. python, developer, remote..." hint="Press Enter to add. Listings matching these keywords will be collected." persistent-hint />
+          <v-combobox v-model="sourceForm.exclude_keywords" label="Exclude Keywords" variant="outlined" density="compact" multiple chips closable-chips class="mb-2" placeholder="e.g. senior, manager..." hint="Listings matching these will be excluded" persistent-hint />
+          <v-row dense class="mb-2">
+            <v-col cols="4">
+              <v-text-field v-model.number="sourceForm.min_keyword_matches" label="Min Keyword Matches" variant="outlined" density="compact" type="number" :min="1" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-text-field v-model.number="sourceForm.max_results" label="Max Results" variant="outlined" density="compact" type="number" :min="10" hide-details />
+            </v-col>
+            <v-col cols="4">
+              <v-select v-model="sourceForm.scrape_interval_hours" :items="[6, 12, 24, 48]" label="Interval (h)" variant="outlined" density="compact" hide-details />
+            </v-col>
+          </v-row>
+          <v-textarea v-model="sourceForm.notes" label="Notes" variant="outlined" density="compact" rows="2" />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="closeSourceDialog">Cancel</v-btn>
+          <v-btn color="purple" variant="tonal" @click="saveSource" :disabled="!sourceForm.name || !sourceForm.keywords.length">{{ editingSource ? 'Save' : 'Add' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- ═══════ CV UPLOAD DIALOG (title/desc before upload) ═══════ -->
+    <v-dialog v-model="showCvDialog" max-width="420">
+      <v-card class="pa-4">
+        <v-card-title>Upload CV</v-card-title>
+        <v-card-text>
+          <v-text-field v-model="cvUploadTitle" label="Resume Title" variant="outlined" density="compact" class="mb-2" placeholder="e.g. Full Stack Developer Resume 2026" />
+          <v-textarea v-model="cvUploadDesc" label="Description" variant="outlined" density="compact" rows="2" placeholder="What does this resume highlight?" />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="showCvDialog = false">Cancel</v-btn>
+          <v-btn color="purple" variant="tonal" @click="doCvUpload" :loading="uploadingCv">Upload</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -577,7 +832,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useSettingsStore } from '@src/stores/settings'
 import api from '@src/api'
 
@@ -611,6 +866,40 @@ const jobTypeFilter = ref(null)
 const jobRemoteFilter = ref(null)
 const showAddJob = ref(false)
 const jobForm = ref(emptyJobForm())
+const jobSubTab = ref(localStorage.getItem('leadgen_job_subtab') || 'cv')
+
+// CVs
+const cvs = ref([])
+const loadingCvs = ref(false)
+const cvFileInput = ref(null)
+const cvPendingFile = ref(null)
+const showCvDialog = ref(false)
+const cvUploadTitle = ref('')
+const cvUploadDesc = ref('')
+const uploadingCv = ref(false)
+const editingCvId = ref(null)
+const editCvTitle = ref('')
+const editCvDesc = ref('')
+
+// Job Criterias
+const criterias = ref({ industries: [], companies_dream: '', companies_good: '', companies_backup: '', salary_annual_min: '', salary_monthly_min: '', tax_state: '', keywords: [], states: [], notes: '' })
+const savingCriterias = ref(false)
+
+// Parsed Jobs
+const parsedJobs = ref([])
+const parsedTotal = ref(0)
+const loadingParsed = ref(false)
+const parsedSearch = ref('')
+const parsedSourceFilter = ref(null)
+const parsedStatusFilter = ref(null)
+
+// Job Sources
+const jobSources = ref([])
+const loadingSources = ref(false)
+const showAddSource = ref(false)
+const editingSource = ref(null)
+const sourceForm = ref(emptySourceForm())
+const scrapingId = ref(null)
 
 // Connections
 const connections = ref([])
@@ -663,12 +952,69 @@ const remoteOptions = [
   { title: 'Onsite', value: 'onsite' },
 ]
 const relationshipTypes = ['colleague', 'friend', 'mentor', 'client', 'vendor', 'partner', 'recruiter', 'other']
+const sourceTypes = ['craigslist', 'indeed', 'linkedin', 'other']
+const parsedStatuses = ['new', 'reviewed', 'saved', 'rejected']
+const taxStates = [
+  'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut', 'Delaware',
+  'Florida', 'Georgia', 'Hawaii', 'Idaho', 'Illinois', 'Indiana', 'Iowa', 'Kansas', 'Kentucky',
+  'Louisiana', 'Maine', 'Maryland', 'Massachusetts', 'Michigan', 'Minnesota', 'Mississippi',
+  'Missouri', 'Montana', 'Nebraska', 'Nevada', 'New Hampshire', 'New Jersey', 'New Mexico',
+  'New York', 'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon', 'Pennsylvania',
+  'Rhode Island', 'South Carolina', 'South Dakota', 'Tennessee', 'Texas', 'Utah', 'Vermont',
+  'Virginia', 'Washington', 'West Virginia', 'Wisconsin', 'Wyoming',
+]
+// Approximate state income tax rates (top marginal) for take-home estimation
+const stateTaxRates = {
+  'Alabama': 5, 'Alaska': 0, 'Arizona': 2.5, 'Arkansas': 4.4, 'California': 13.3, 'Colorado': 4.4,
+  'Connecticut': 6.99, 'Delaware': 6.6, 'Florida': 0, 'Georgia': 5.49, 'Hawaii': 11, 'Idaho': 5.8,
+  'Illinois': 4.95, 'Indiana': 3.05, 'Iowa': 5.7, 'Kansas': 5.7, 'Kentucky': 4.5, 'Louisiana': 4.25,
+  'Maine': 7.15, 'Maryland': 5.75, 'Massachusetts': 9, 'Michigan': 4.25, 'Minnesota': 9.85,
+  'Mississippi': 5, 'Missouri': 4.8, 'Montana': 6.75, 'Nebraska': 5.84, 'Nevada': 0,
+  'New Hampshire': 0, 'New Jersey': 10.75, 'New Mexico': 5.9, 'New York': 10.9,
+  'North Carolina': 4.5, 'North Dakota': 2.5, 'Ohio': 3.5, 'Oklahoma': 4.75, 'Oregon': 9.9,
+  'Pennsylvania': 3.07, 'Rhode Island': 5.99, 'South Carolina': 6.4, 'South Dakota': 0,
+  'Tennessee': 0, 'Texas': 0, 'Utah': 4.65, 'Vermont': 8.75, 'Virginia': 5.75,
+  'Washington': 0, 'West Virginia': 5.12, 'Wisconsin': 7.65, 'Wyoming': 0,
+}
 const pushModeOptions = [
   { title: 'Manual only', value: 'manual' },
   { title: 'Auto-push as Leads', value: 'auto_leads' },
   { title: 'Auto-push as Deals', value: 'auto_deals' },
   { title: 'Auto-push Both', value: 'auto_both' },
 ]
+
+// ── Computed ──
+const sourceNames = computed(() => jobSources.value.map(s => s.name))
+
+const takeHomeEstimate = computed(() => {
+  const annual = parseFloat(criterias.value.salary_annual_min) || 0
+  if (!annual) return null
+  const st = criterias.value.tax_state
+  const stateRate = st && stateTaxRates[st] !== undefined ? stateTaxRates[st] : 0
+  // Federal effective rate approximation (progressive brackets simplified)
+  function fedRate(a) {
+    if (a <= 0) return 0
+    if (a <= 11600) return 10
+    if (a <= 47150) return 12
+    if (a <= 100525) return 18
+    if (a <= 191950) return 22
+    if (a <= 243725) return 26
+    if (a <= 609350) return 30
+    return 35
+  }
+  // FICA: 7.65% up to ~168k SS + 1.45% Medicare above
+  function ficaRate(a) {
+    if (a <= 0) return 0
+    if (a <= 168600) return 7.65
+    return 6.2 * (168600 / a) + 1.45
+  }
+  const totalRate = fedRate(annual) + stateRate + ficaRate(annual)
+  const takeHome = annual * (1 - totalRate / 100) / 12
+  return {
+    monthly: Math.round(takeHome).toLocaleString(),
+    eff_rate: Math.round(totalRate),
+  }
+})
 
 // ── Form helpers ──
 function emptyClientForm() {
@@ -679,6 +1025,19 @@ function emptyJobForm() {
 }
 function emptyConnForm() {
   return { name: '', company: '', title: '', email: '', phone: '', linkedin: '', relationship: '', met_through: '', notes: '', tags: [], strength: 3 }
+}
+function emptySourceForm() {
+  return { name: '', source_type: 'craigslist', url: '', keywords: [], exclude_keywords: [], min_keyword_matches: 1, max_results: 100, scrape_interval_hours: 24, notes: '' }
+}
+
+// ── Salary sync helpers ──
+function syncFromAnnual() {
+  const annual = parseFloat(criterias.value.salary_annual_min) || 0
+  criterias.value.salary_monthly_min = annual > 0 ? String(Math.round(annual / 12)) : ''
+}
+function syncFromMonthly() {
+  const monthly = parseFloat(criterias.value.salary_monthly_min) || 0
+  criterias.value.salary_annual_min = monthly > 0 ? String(Math.round(monthly * 12)) : ''
 }
 
 // ── Color helpers ──
@@ -697,6 +1056,22 @@ function strengthColor(s) {
   if (s >= 2) return 'orange'
   return 'grey'
 }
+function parsedStatusColor(s) {
+  const map = { new: 'blue', reviewed: 'orange', saved: 'green', rejected: 'red' }
+  return map[s] || 'grey'
+}
+function sourceTypeIcon(t) {
+  const map = { craigslist: 'mdi-newspaper-variant-outline', indeed: 'mdi-briefcase-search', linkedin: 'mdi-linkedin', other: 'mdi-web' }
+  return map[t] || 'mdi-web'
+}
+function formatDate(d) {
+  if (!d) return '—'
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+function cvFileExt(filename) {
+  if (!filename) return '?'
+  return filename.split('.').pop().toUpperCase()
+}
 
 // ── Notify ──
 function notify(text, color = 'success') {
@@ -711,13 +1086,27 @@ watch(activeTab, (val) => {
   loadTabData(val)
 })
 
+watch(jobSubTab, (val) => {
+  localStorage.setItem('leadgen_job_subtab', val)
+  loadJobSubTabData(val)
+})
+
 // ── Load helpers ──
 function loadTabData(tab) {
   switch (tab) {
     case 'clients': loadClients(); break
-    case 'jobs': loadJobs(); break
+    case 'jobs': loadJobs(); loadJobSubTabData(jobSubTab.value); break
     case 'connections': loadConnections(); break
     case 'map': loadMap(); break
+  }
+}
+
+function loadJobSubTabData(sub) {
+  switch (sub) {
+    case 'cv': loadCvs(); break
+    case 'criterias': loadCriterias(); break
+    case 'parsed': loadParsedJobs(); break
+    case 'sources': loadJobSources(); break
   }
 }
 
@@ -836,6 +1225,228 @@ async function deleteJob(id) {
     jobs.value = jobs.value.filter(j => j._id !== id)
     loadStats()
   } catch { notify('Failed to delete', 'error') }
+}
+
+// ── CVs ──
+async function loadCvs() {
+  loadingCvs.value = true
+  try {
+    const { data } = await api.get(`${API}/cvs`)
+    cvs.value = data.items || data || []
+  } catch { notify('Failed to load CVs', 'error') }
+  loadingCvs.value = false
+}
+
+function triggerCvUpload() {
+  cvFileInput.value?.click()
+}
+
+function handleCvUpload(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  cvPendingFile.value = file
+  cvUploadTitle.value = file.name.replace(/\.[^.]+$/, '')
+  cvUploadDesc.value = ''
+  showCvDialog.value = true
+}
+
+async function doCvUpload() {
+  if (!cvPendingFile.value) return
+  uploadingCv.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', cvPendingFile.value)
+    fd.append('title', cvUploadTitle.value || cvPendingFile.value.name)
+    fd.append('description', cvUploadDesc.value)
+    await api.post(`${API}/cvs/upload`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+    notify('CV uploaded')
+    showCvDialog.value = false
+    cvPendingFile.value = null
+    if (cvFileInput.value) cvFileInput.value.value = ''
+    loadCvs()
+    loadStats()
+  } catch { notify('Failed to upload CV', 'error') }
+  uploadingCv.value = false
+}
+
+async function downloadCv(id) {
+  try {
+    const cv = cvs.value.find(c => c._id === id)
+    const { data } = await api.get(`${API}/cvs/${id}/download`, { responseType: 'blob' })
+    const url = URL.createObjectURL(data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = cv?.original_name || 'cv'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch { notify('Failed to download', 'error') }
+}
+
+async function deleteCv(id) {
+  try {
+    await api.delete(`${API}/cvs/${id}`)
+    cvs.value = cvs.value.filter(c => c._id !== id)
+    loadStats()
+  } catch { notify('Failed to delete', 'error') }
+}
+
+function startEditCv(cv) {
+  editingCvId.value = cv._id
+  editCvTitle.value = cv.title || ''
+  editCvDesc.value = cv.description || ''
+}
+
+async function saveCvEdit(id) {
+  try {
+    await api.patch(`${API}/cvs/${id}`, { title: editCvTitle.value, description: editCvDesc.value })
+    const cv = cvs.value.find(c => c._id === id)
+    if (cv) { cv.title = editCvTitle.value; cv.description = editCvDesc.value }
+    editingCvId.value = null
+    notify('CV updated')
+  } catch { notify('Failed to update', 'error') }
+}
+
+// ── Job Criterias ──
+async function loadCriterias() {
+  try {
+    const { data } = await api.get(`${API}/job-criterias`)
+    if (data) {
+      criterias.value = {
+        industries: data.industries || [],
+        companies_dream: data.companies_dream || '',
+        companies_good: data.companies_good || '',
+        companies_backup: data.companies_backup || '',
+        salary_annual_min: data.salary_annual_min || '',
+        salary_monthly_min: data.salary_monthly_min || '',
+        tax_state: data.tax_state || '',
+        keywords: data.keywords || [],
+        states: data.states || [],
+        notes: data.notes || '',
+      }
+    }
+  } catch {}
+}
+
+async function saveCriterias() {
+  savingCriterias.value = true
+  try {
+    await api.put(`${API}/job-criterias`, criterias.value)
+    notify('Job criterias saved')
+  } catch { notify('Failed to save criterias', 'error') }
+  savingCriterias.value = false
+}
+
+// ── Parsed Jobs ──
+async function loadParsedJobs() {
+  loadingParsed.value = true
+  try {
+    const params = { limit: 100, offset: 0 }
+    if (parsedSearch.value) params.search = parsedSearch.value
+    if (parsedSourceFilter.value) params.source = parsedSourceFilter.value
+    if (parsedStatusFilter.value) params.status = parsedStatusFilter.value
+    const { data } = await api.get(`${API}/parsed-jobs`, { params })
+    parsedJobs.value = data.items || []
+    parsedTotal.value = data.total || 0
+  } catch { notify('Failed to load parsed jobs', 'error') }
+  loadingParsed.value = false
+}
+
+async function loadMoreParsed() {
+  try {
+    const params = { limit: 100, offset: parsedJobs.value.length }
+    if (parsedSearch.value) params.search = parsedSearch.value
+    if (parsedSourceFilter.value) params.source = parsedSourceFilter.value
+    if (parsedStatusFilter.value) params.status = parsedStatusFilter.value
+    const { data } = await api.get(`${API}/parsed-jobs`, { params })
+    parsedJobs.value.push(...(data.items || []))
+  } catch { notify('Failed to load more', 'error') }
+}
+
+async function deleteParsedJob(id) {
+  try {
+    await api.delete(`${API}/parsed-jobs/${id}`)
+    parsedJobs.value = parsedJobs.value.filter(j => j._id !== id)
+    parsedTotal.value = Math.max(0, parsedTotal.value - 1)
+    loadStats()
+  } catch { notify('Failed to delete', 'error') }
+}
+
+async function saveAsJob(id) {
+  try {
+    await api.post(`${API}/parsed-jobs/${id}/save-as-job`)
+    const pj = parsedJobs.value.find(j => j._id === id)
+    if (pj) pj.status = 'saved'
+    notify('Saved as job listing')
+    loadStats()
+  } catch { notify('Failed to save as job', 'error') }
+}
+
+// ── Job Sources ──
+async function loadJobSources() {
+  loadingSources.value = true
+  try {
+    const { data } = await api.get(`${API}/job-sources`)
+    jobSources.value = data.items || data || []
+  } catch { notify('Failed to load sources', 'error') }
+  loadingSources.value = false
+}
+
+function editSource(src) {
+  editingSource.value = src._id
+  sourceForm.value = { ...src }
+  showAddSource.value = true
+}
+
+function closeSourceDialog() {
+  showAddSource.value = false
+  editingSource.value = null
+  sourceForm.value = emptySourceForm()
+}
+
+async function saveSource() {
+  try {
+    if (editingSource.value) {
+      const { _id, created_at, updated_at, last_scraped, ...body } = sourceForm.value
+      await api.patch(`${API}/job-sources/${editingSource.value}`, body)
+      notify('Source updated')
+    } else {
+      await api.post(`${API}/job-sources`, sourceForm.value)
+      notify('Source added')
+    }
+    closeSourceDialog()
+    loadJobSources()
+  } catch { notify('Failed to save source', 'error') }
+}
+
+async function deleteSource(id) {
+  try {
+    await api.delete(`${API}/job-sources/${id}`)
+    jobSources.value = jobSources.value.filter(s => s._id !== id)
+  } catch { notify('Failed to delete', 'error') }
+}
+
+async function toggleSource(src) {
+  try {
+    await api.patch(`${API}/job-sources/${src._id}`, { enabled: src.enabled })
+  } catch {
+    src.enabled = !src.enabled
+    notify('Failed to toggle', 'error')
+  }
+}
+
+async function scrapeSource(id) {
+  scrapingId.value = id
+  try {
+    const { data } = await api.post(`${API}/job-sources/${id}/scrape`)
+    notify(`Scraped: ${data.new_jobs || 0} new, ${data.duplicates || 0} duplicates`)
+    const src = jobSources.value.find(s => s._id === id)
+    if (src) src.last_scraped = new Date().toISOString()
+    loadParsedJobs()
+    loadStats()
+  } catch (e) {
+    notify(e.response?.data?.detail || 'Scrape failed', 'error')
+  }
+  scrapingId.value = null
 }
 
 // ── Connections ──
@@ -1013,6 +1624,11 @@ async function clearAll() {
     clients.value = []
     jobs.value = []
     connections.value = []
+    cvs.value = []
+    parsedJobs.value = []
+    parsedTotal.value = 0
+    jobSources.value = []
+    criterias.value = { industries: [], companies_dream: '', companies_good: '', companies_backup: '', salary_annual_min: '', salary_monthly_min: '', tax_state: '', keywords: [], states: [], notes: '' }
     mapData.value = null
     renderedNodes.value = []
     renderedLinks.value = []
