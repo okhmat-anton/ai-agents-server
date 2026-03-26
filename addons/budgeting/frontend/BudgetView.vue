@@ -54,6 +54,10 @@ next month <template>
             <v-icon start size="16">mdi-scale-balance</v-icon>
             Balance: <template v-if="summary.balance_max">from ${{ fmt(summary.balance) }} to&nbsp;<span :class="summary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(summary.balance_max) }}</span></template><template v-else>${{ fmt(summary.balance) }}</template>
           </v-chip>
+          <v-chip variant="tonal" :color="actualResult >= 0 ? 'teal' : 'red'" size="large" v-if="actualResult">
+            <v-icon start size="16">mdi-bank-check</v-icon>
+            Actual: ${{ fmt(actualResult) }}
+          </v-chip>
           <v-chip variant="tonal" color="orange" size="large" v-if="summary.min_daily_earnings > 0">
             <v-icon start size="16">mdi-calendar-clock</v-icon>
             Min ${{ fmt(summary.min_daily_earnings) }}/day ({{ summary.remaining_days }}d left)
@@ -359,6 +363,18 @@ next month <template>
                   <template v-if="summary && summary.balance_max">from ${{ fmt(summary.balance) }} to&nbsp;<span :class="summary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(summary.balance_max) }}</span></template><template v-else>${{ summary ? fmt(summary.balance) : '0.00' }}</template>
                 </span>
               </div>
+
+              <!-- Actual Result -->
+              <v-text-field
+                v-model.number="actualResult"
+                label="Actual Result"
+                type="number"
+                prefix="$"
+                variant="outlined"
+                density="compact"
+                class="mt-2 mb-0"
+                hide-details
+              />
 
               <!-- Available Cash -->
               <v-text-field
@@ -835,6 +851,14 @@ next month <template>
             <v-icon start size="16">mdi-cash-minus</v-icon>
             After Payoff: <template v-if="copySummary.projected_balance_max != null">from ${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }} to&nbsp;<span :class="copySummary.projected_balance_max - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max - totalCopyToPayOff) }}</span></template><template v-else>${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }}</template>
           </v-chip>
+          <v-chip variant="tonal" :color="copyActualResult >= 0 ? 'teal' : 'red'" size="large" v-if="copyActualResult">
+            <v-icon start size="16">mdi-bank-check</v-icon>
+            Actual: ${{ fmt(copyActualResult) }}
+          </v-chip>
+          <v-chip variant="tonal" color="cyan" size="large" v-if="copyAvailableCash > 0">
+            <v-icon start size="16">mdi-cash</v-icon>
+            Cash: ${{ fmt(copyAvailableCash) }}
+          </v-chip>
         </div>
 
         <v-row>
@@ -1073,6 +1097,30 @@ next month <template>
                   </span>
                 </div>
               </template>
+
+              <!-- Actual Result -->
+              <v-text-field
+                v-model.number="copyActualResult"
+                label="Actual Result"
+                type="number"
+                prefix="$"
+                variant="outlined"
+                density="compact"
+                class="mt-3 mb-0"
+                hide-details
+              />
+
+              <!-- Available Cash -->
+              <v-text-field
+                v-model.number="copyAvailableCash"
+                label="Available Cash"
+                type="number"
+                prefix="$"
+                variant="outlined"
+                density="compact"
+                class="mt-2 mb-0"
+                hide-details
+              />
             </v-card>
 
             <v-alert type="info" variant="tonal" density="compact">
@@ -1744,7 +1792,7 @@ next month <template>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import api from '@src/api'
 import { useSettingsStore } from '@src/stores/settings'
 
@@ -1933,9 +1981,13 @@ const transitionLoading = ref(false)
 const expensesCollapsed = ref(localStorage.getItem('budget_expenses_collapsed') === 'true')
 watch(expensesCollapsed, (v) => localStorage.setItem('budget_expenses_collapsed', String(v)))
 
-// Available cash (persisted in localStorage)
-const availableCash = ref(parseFloat(localStorage.getItem('budget_available_cash')) || 0)
-watch(availableCash, (v) => localStorage.setItem('budget_available_cash', String(v ?? 0)))
+// Available cash — per-month (persisted in localStorage)
+const availableCash = ref(parseFloat(localStorage.getItem(`budget_available_cash_${currentMonth.value}`)) || 0)
+watch(availableCash, (v) => localStorage.setItem(`budget_available_cash_${currentMonth.value}`, String(v ?? 0)))
+
+// Actual result — real money left at end of month, per-month (persisted in localStorage)
+const actualResult = ref(parseFloat(localStorage.getItem(`budget_actual_result_${currentMonth.value}`)) || 0)
+watch(actualResult, (v) => localStorage.setItem(`budget_actual_result_${currentMonth.value}`, String(v ?? 0)))
 
 // Calendar
 const calendarData = ref(null)
@@ -1952,6 +2004,10 @@ const copyCreating = ref(false)
 const activeCopy = ref(null)
 const copySummary = ref(null)
 const copySummaryLoading = ref(false)
+const copyAvailableCash = ref(0)
+const copyActualResult = ref(0)
+watch(copyAvailableCash, (v) => { if (activeCopy.value) localStorage.setItem(`budget_copy_cash_${activeCopy.value.id}`, String(v ?? 0)) })
+watch(copyActualResult, (v) => { if (activeCopy.value) localStorage.setItem(`budget_copy_actual_${activeCopy.value.id}`, String(v ?? 0)) })
 const savedCopies = ref([])
 const monthAbbr = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const sortedSavedCopies = computed(() => {
@@ -2162,7 +2218,10 @@ async function refreshAll() {
   }
 }
 
-watch(currentMonth, () => {
+watch(currentMonth, (mk) => {
+  // Reload per-month fields
+  availableCash.value = parseFloat(localStorage.getItem(`budget_available_cash_${mk}`)) || 0
+  actualResult.value = parseFloat(localStorage.getItem(`budget_actual_result_${mk}`)) || 0
   loadEntries()
   loadSummary()
   loadCalendar()
@@ -2613,6 +2672,8 @@ async function loadCopy(copyId) {
     const { data } = await api.get(`/addons/budgeting/copies/${copyId}`)
     activeCopy.value = data
     localStorage.setItem('budget_active_copy_id', copyId)
+    copyAvailableCash.value = parseFloat(localStorage.getItem(`budget_copy_cash_${copyId}`)) || 0
+    copyActualResult.value = parseFloat(localStorage.getItem(`budget_copy_actual_${copyId}`)) || 0
     await loadCopySummary()
     activeTab.value = 'copy-' + copyId
   } catch (e) {
@@ -2731,10 +2792,10 @@ function confirmDeleteCopyEntry(item) {
 // ── Init ────────────────────────────────────────────────────────────
 
 onMounted(async () => {
+  const savedTab = localStorage.getItem('budget_active_tab') || 'budget'
   refreshAll()
   await loadSavedCopies()
-  copiesLoaded.value = true
-  // Restore active copy from localStorage
+  // Restore active copy BEFORE showing tabs to prevent visual jump
   const savedCopyId = localStorage.getItem('budget_active_copy_id')
   if (savedCopyId) {
     try {
@@ -2743,6 +2804,10 @@ onMounted(async () => {
       localStorage.removeItem('budget_active_copy_id')
     }
   }
+  activeTab.value = savedTab
+  copiesLoaded.value = true
+  await nextTick()
+  activeTab.value = savedTab
 })
 </script>
 
