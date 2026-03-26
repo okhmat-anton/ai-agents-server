@@ -1,4 +1,4 @@
-<template>
+next month <template>
   <div style="padding-bottom: 80px;">
     <!-- Header -->
     <div class="d-flex align-center mb-4">
@@ -21,12 +21,12 @@
     </div>
 
     <!-- Tabs -->
-    <v-tabs v-model="activeTab" color="teal-accent-3" class="mb-4">
+    <v-tabs v-if="copiesLoaded" v-model="activeTab" color="teal-accent-3" class="mb-4">
       <v-tab value="budget">
         <v-icon start>mdi-cash-register</v-icon>
         Budget · {{ formatMonthLabel(currentMonth) }}
       </v-tab>
-      <v-tab v-for="c in savedCopies" :key="c.id" :value="'copy-' + c.id" @click="switchCopy(c.id)">
+      <v-tab v-for="c in sortedSavedCopies" :key="c.id" :value="'copy-' + c.id" @click="switchCopy(c.id)">
         <v-icon start>mdi-crystal-ball</v-icon>
         {{ c.name }}
         <v-btn icon="mdi-close" size="x-small" variant="text" density="compact" class="ml-1" @click.stop="confirmDeleteCopy(c)" />
@@ -38,13 +38,13 @@
     </v-tabs>
 
     <!-- ═══════ BUDGET TAB ═══════ -->
-    <v-window v-model="activeTab">
+    <v-window v-if="copiesLoaded" v-model="activeTab">
       <v-window-item value="budget">
         <!-- Budget summary chips -->
         <div class="d-flex flex-wrap ga-2 mb-4" v-if="summary">
           <v-chip variant="tonal" color="green" size="large">
             <v-icon start size="16">mdi-arrow-down</v-icon>
-            Income: ${{ fmt(summary.total_income) }}<template v-if="summary.total_income_max"> — ${{ fmt(summary.total_income_max) }}</template>
+            Income: <template v-if="summary.total_income_max">from ${{ fmt(summary.total_income) }} to ${{ fmt(summary.total_income_max) }}</template><template v-else>${{ fmt(summary.total_income) }}</template>
           </v-chip>
           <v-chip variant="tonal" color="red" size="large">
             <v-icon start size="16">mdi-arrow-up</v-icon>
@@ -52,7 +52,7 @@
           </v-chip>
           <v-chip variant="tonal" :color="summary.balance >= 0 ? 'green' : 'red'" size="large">
             <v-icon start size="16">mdi-scale-balance</v-icon>
-            Balance: ${{ fmt(summary.balance) }}<template v-if="summary.balance_max"> — ${{ fmt(summary.balance_max) }}</template>
+            Balance: <template v-if="summary.balance_max">from ${{ fmt(summary.balance) }} to&nbsp;<span :class="summary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(summary.balance_max) }}</span></template><template v-else>${{ fmt(summary.balance) }}</template>
           </v-chip>
           <v-chip variant="tonal" color="orange" size="large" v-if="summary.min_daily_earnings > 0">
             <v-icon start size="16">mdi-calendar-clock</v-icon>
@@ -222,6 +222,7 @@
                   </template>
                   <v-list-item-title :class="item.is_paid ? 'text-decoration-line-through text-medium-emphasis' : ''">
                     {{ item.name }}
+                    <v-chip v-if="isBudgetEntryPayoff(item)" size="x-small" color="amber" variant="tonal" class="ml-1">last payment</v-chip>
                     <v-chip v-if="item.day_of_month" size="x-small" color="teal" variant="tonal" class="ml-1">{{ item.day_of_month }}th</v-chip>
                     <v-chip v-if="item.frequency === 'daily'" size="x-small" color="blue" variant="tonal" class="ml-1">Daily</v-chip>
                     <v-chip v-else-if="item.frequency === 'weekly'" size="x-small" color="indigo" variant="tonal" class="ml-1">Weekly</v-chip>
@@ -261,7 +262,7 @@
                     v-for="loan in (expensesCollapsed ? sortedLoans.filter(l => !isLoanPaid(l)) : sortedLoans)"
                     :key="'loan-' + loan.id"
                     class="px-0 rounded mb-1"
-                    :class="isLoanPaid(loan) ? 'bg-purple-darken-4' : ''"
+                    :class="isLoanPaid(loan) ? 'bg-purple-darken-4' : (loansToPayOff.has(loan.id) ? 'bg-amber-darken-4' : '')"
                     style="opacity: 0.85"
                   >
                     <template #prepend>
@@ -274,6 +275,7 @@
                     </template>
                     <v-list-item-title :class="isLoanPaid(loan) ? 'text-decoration-line-through text-medium-emphasis' : ''">
                       {{ loan.bank }}
+                      <v-chip v-if="loansToPayOff.has(loan.id)" size="x-small" color="amber" variant="tonal" class="ml-1">last payment</v-chip>
                     </v-list-item-title>
                     <v-list-item-subtitle>
                       <v-chip size="x-small" variant="text" class="px-0">Loan Payment</v-chip>
@@ -343,7 +345,7 @@
                 <v-divider class="my-2" />
                 <div class="d-flex justify-space-between">
                   <span class="font-weight-bold">Total Income</span>
-                  <span class="font-weight-bold text-green">${{ fmt(summary.total_income) }}</span>
+                  <span class="font-weight-bold text-green"><template v-if="summary.total_income_max">from ${{ fmt(summary.total_income) }} to ${{ fmt(summary.total_income_max) }}</template><template v-else>${{ fmt(summary.total_income) }}</template></span>
                 </div>
               </div>
               <div v-else class="text-medium-emphasis text-body-2">No income yet</div>
@@ -354,7 +356,7 @@
               <div class="d-flex justify-space-between mb-2">
                 <span class="text-h6">Balance</span>
                 <span class="text-h6" :class="summary && summary.balance >= 0 ? 'text-green' : 'text-red'">
-                  ${{ summary ? fmt(summary.balance) : '0.00' }}
+                  <template v-if="summary && summary.balance_max">from ${{ fmt(summary.balance) }} to&nbsp;<span :class="summary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(summary.balance_max) }}</span></template><template v-else>${{ summary ? fmt(summary.balance) : '0.00' }}</template>
                 </span>
               </div>
 
@@ -477,7 +479,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="loan in sortedLoans" :key="loan.id">
+                  <tr v-for="loan in sortedLoans" :key="loan.id" :style="loansToPayOff.has(loan.id) ? 'background: rgba(255, 179, 0, 0.15)' : ''">
                     <td class="font-weight-bold">{{ loan.bank }}</td>
                     <td class="text-medium-emphasis">{{ loan.purpose || '—' }}</td>
                     <td class="text-red font-weight-bold" style="white-space: nowrap">
@@ -811,7 +813,7 @@
         <div class="d-flex flex-wrap ga-2 mb-4" v-if="copySummary">
           <v-chip variant="tonal" color="green" size="large">
             <v-icon start size="16">mdi-arrow-down</v-icon>
-            Income: ${{ fmt(copySummary.total_income) }}<template v-if="copySummary.total_income_max"> — ${{ fmt(copySummary.total_income_max) }}</template>
+            Income: <template v-if="copySummary.total_income_max">from ${{ fmt(copySummary.total_income) }} to ${{ fmt(copySummary.total_income_max) }}</template><template v-else>${{ fmt(copySummary.total_income) }}</template>
           </v-chip>
           <v-chip variant="tonal" color="red" size="large">
             <v-icon start size="16">mdi-arrow-up</v-icon>
@@ -819,7 +821,7 @@
           </v-chip>
           <v-chip variant="tonal" :color="copySummary.balance >= 0 ? 'green' : 'red'" size="large">
             <v-icon start size="16">mdi-scale-balance</v-icon>
-            Balance: ${{ fmt(copySummary.balance) }}<template v-if="copySummary.balance_max"> — ${{ fmt(copySummary.balance_max) }}</template>
+            Balance: <template v-if="copySummary.balance_max">from ${{ fmt(copySummary.balance) }} to&nbsp;<span :class="copySummary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.balance_max) }}</span></template><template v-else>${{ fmt(copySummary.balance) }}</template>
           </v-chip>
           <v-chip variant="tonal" color="cyan" size="large" v-if="copySummary.starting_balance">
             <v-icon start size="16">mdi-bank</v-icon>
@@ -827,7 +829,11 @@
           </v-chip>
           <v-chip variant="tonal" :color="copySummary.projected_balance >= 0 ? 'green' : 'red'" size="large">
             <v-icon start size="16">mdi-crystal-ball</v-icon>
-            Projected: ${{ fmt(copySummary.projected_balance) }}<template v-if="copySummary.projected_balance_max"> — ${{ fmt(copySummary.projected_balance_max) }}</template>
+            Projected: <template v-if="copySummary.projected_balance_max">from ${{ fmt(copySummary.projected_balance) }} to&nbsp;<span :class="copySummary.projected_balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max) }}</span></template><template v-else>${{ fmt(copySummary.projected_balance) }}</template>
+          </v-chip>
+          <v-chip v-if="totalCopyToPayOff > 0" variant="tonal" :color="(copySummary.projected_balance_max != null ? copySummary.projected_balance_max : copySummary.projected_balance) - totalCopyToPayOff >= 0 ? 'green' : 'red'" size="large">
+            <v-icon start size="16">mdi-cash-minus</v-icon>
+            After Payoff: <template v-if="copySummary.projected_balance_max != null">from ${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }} to&nbsp;<span :class="copySummary.projected_balance_max - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max - totalCopyToPayOff) }}</span></template><template v-else>${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }}</template>
           </v-chip>
         </div>
 
@@ -891,7 +897,7 @@
                       </div>
                     </span>
                     <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEditCopyEntry(item)" />
-                    <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="deleteCopyEntry(item)" />
+                    <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="confirmDeleteCopyEntry(item)" />
                   </template>
                 </v-list-item>
               </v-list>
@@ -909,19 +915,19 @@
                 <v-icon color="red" class="mr-2">mdi-arrow-up-bold</v-icon>
                 <span class="text-h6">Expenses</span>
                 <v-spacer />
-                <span class="text-h6 text-red">${{ fmt(copyTotalExpense) }}</span>
+                <span class="text-h6 text-red">${{ fmt(copyTotalExpenseWithLoans) }}</span>
               </div>
 
-              <div v-if="copyExpenseEntries.length === 0" class="text-center text-medium-emphasis py-4">
+              <div v-if="copyRegularExpenses.length === 0 && copyLoans.length === 0" class="text-center text-medium-emphasis py-4">
                 No expense entries
               </div>
 
               <v-list density="compact" class="bg-transparent">
                 <v-list-item
-                  v-for="item in copyExpenseEntries"
+                  v-for="item in copyRegularExpenses"
                   :key="'ce-' + item.id"
                   class="px-0 rounded mb-1"
-                  :class="item.is_paid ? 'bg-red-darken-4' : (item.source === 'loan' ? 'bg-purple-darken-4' : (item.source === 'asset' ? 'bg-deep-orange-darken-4' : ''))"
+                  :class="item.is_paid ? 'bg-red-darken-4' : (isCopyEntryPayoff(item) ? 'bg-amber-darken-4' : (item.source === 'asset' ? 'bg-deep-orange-darken-4' : ''))"
                 >
                   <template #prepend>
                     <v-checkbox-btn
@@ -933,6 +939,7 @@
                   </template>
                   <v-list-item-title :class="item.is_paid ? 'text-decoration-line-through text-medium-emphasis' : ''">
                     {{ item.name }}
+                    <v-chip v-if="isCopyEntryPayoff(item)" size="x-small" color="amber" variant="tonal" class="ml-1">last payment</v-chip>
                     <v-chip v-if="item.day_of_month" size="x-small" color="teal" variant="tonal" class="ml-1">{{ item.day_of_month }}th</v-chip>
                     <v-chip v-if="item.frequency === 'daily'" size="x-small" color="blue" variant="tonal" class="ml-1">Daily</v-chip>
                     <v-chip v-else-if="item.frequency === 'weekly'" size="x-small" color="indigo" variant="tonal" class="ml-1">Weekly</v-chip>
@@ -948,7 +955,7 @@
                       <span v-else-if="item.frequency === 'weekly'" class="text-caption text-indigo">/wk</span>
                     </span>
                     <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEditCopyEntry(item)" />
-                    <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="deleteCopyEntry(item)" />
+                    <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="confirmDeleteCopyEntry(item)" />
                   </template>
                 </v-list-item>
               </v-list>
@@ -956,6 +963,44 @@
               <v-btn block variant="tonal" color="red" class="mt-2" prepend-icon="mdi-plus" @click="openAddCopyEntry('expense')">
                 Add Expense
               </v-btn>
+
+              <!-- Auto loan payments (copy) -->
+              <div v-if="copyLoans.length" class="mt-3">
+                <v-divider class="mb-2" />
+                <div class="text-caption text-medium-emphasis mb-1">
+                  <v-icon size="14" class="mr-1">mdi-bank</v-icon>
+                  Loan Payments (auto)
+                </div>
+                <v-list density="compact" class="bg-transparent">
+                  <v-list-item
+                    v-for="loan in sortedCopyLoans"
+                    :key="'copy-loan-auto-' + loan.id"
+                    class="px-0 rounded mb-1"
+                    :class="isCopyLoanPaid(loan) ? 'bg-purple-darken-4' : (copyLoansToPayOff.has(loan.id) ? 'bg-amber-darken-4' : '')"
+                    style="opacity: 0.85"
+                  >
+                    <template #prepend>
+                      <v-checkbox-btn
+                        :model-value="isCopyLoanPaid(loan)"
+                        color="purple"
+                        density="compact"
+                        @update:model-value="toggleCopyLoanPaid(loan)"
+                      />
+                    </template>
+                    <v-list-item-title :class="isCopyLoanPaid(loan) ? 'text-decoration-line-through text-medium-emphasis' : ''">
+                      {{ loan.bank }}
+                      <v-chip v-if="copyLoansToPayOff.has(loan.id)" size="x-small" color="amber" variant="tonal" class="ml-1">last payment</v-chip>
+                    </v-list-item-title>
+                    <v-list-item-subtitle>
+                      <v-chip size="x-small" variant="text" class="px-0">Loan Payment</v-chip>
+                      <v-chip v-if="loan.payment_date" size="x-small" color="teal" variant="tonal" class="ml-1">{{ loan.payment_date }}th</v-chip>
+                    </v-list-item-subtitle>
+                    <template #append>
+                      <span class="text-purple font-weight-bold">${{ fmt(loan.monthly_payment) }}</span>
+                    </template>
+                  </v-list-item>
+                </v-list>
+              </div>
             </v-card>
           </v-col>
 
@@ -1005,7 +1050,7 @@
               <div class="d-flex justify-space-between mb-2">
                 <span class="text-subtitle-1">Monthly Balance</span>
                 <span class="text-subtitle-1" :class="copySummary && copySummary.balance >= 0 ? 'text-green' : 'text-red'">
-                  ${{ copySummary ? fmt(copySummary.balance) : '0.00' }}<template v-if="copySummary && copySummary.balance_max"> — ${{ fmt(copySummary.balance_max) }}</template>
+                  <template v-if="copySummary && copySummary.balance_max">from ${{ fmt(copySummary.balance) }} to&nbsp;<span :class="copySummary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.balance_max) }}</span></template><template v-else>${{ copySummary ? fmt(copySummary.balance) : '0.00' }}</template>
                 </span>
               </div>
               <div class="d-flex justify-space-between mb-2" v-if="copySummary">
@@ -1016,9 +1061,18 @@
               <div class="d-flex justify-space-between">
                 <span class="text-h6">Projected End Balance</span>
                 <span class="text-h6" :class="copySummary && copySummary.projected_balance >= 0 ? 'text-green' : 'text-red'">
-                  ${{ copySummary ? fmt(copySummary.projected_balance) : '0.00' }}<template v-if="copySummary && copySummary.projected_balance_max"> — ${{ fmt(copySummary.projected_balance_max) }}</template>
+                  <template v-if="copySummary && copySummary.projected_balance_max">from ${{ fmt(copySummary.projected_balance) }} to&nbsp;<span :class="copySummary.projected_balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max) }}</span></template><template v-else>${{ copySummary ? fmt(copySummary.projected_balance) : '0.00' }}</template>
                 </span>
               </div>
+              <!-- After payoff: projected minus checked-for-payoff loan debts -->
+              <template v-if="totalCopyToPayOff > 0 && copySummary">
+                <div class="d-flex justify-space-between mt-1">
+                  <span class="text-subtitle-2 text-medium-emphasis">After Payoff (−${{ fmt(totalCopyToPayOff) }})</span>
+                  <span class="text-subtitle-2" :class="(copySummary.projected_balance_max != null ? copySummary.projected_balance_max : copySummary.projected_balance) - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">
+                    <template v-if="copySummary.projected_balance_max != null">from ${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }} to&nbsp;<span :class="copySummary.projected_balance_max - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max - totalCopyToPayOff) }}</span></template><template v-else>${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }}</template>
+                  </span>
+                </div>
+              </template>
             </v-card>
 
             <v-alert type="info" variant="tonal" density="compact">
@@ -1072,13 +1126,18 @@
               <v-card-title class="d-flex align-center">
                 <v-icon class="mr-2">mdi-credit-card-clock</v-icon>
                 Loans & Credits
-                <v-chip size="x-small" variant="tonal" color="blue-grey" class="ml-2">read-only</v-chip>
                 <v-spacer />
-                <span class="text-subtitle-1 text-red">
-                  ${{ fmt(totalDebt) }}
+                <span class="text-subtitle-1 text-red mr-3">
+                  ${{ fmt(totalCopyDebt) }}
                 </span>
+                <v-chip v-if="totalCopyToPayOff > 0" size="small" color="orange" variant="tonal" class="mr-2">
+                  Pay off: ${{ fmt(totalCopyToPayOff) }}
+                </v-chip>
+                <v-btn color="teal" variant="tonal" prepend-icon="mdi-plus" size="x-small" @click="openAddCopyLoan">
+                  Add
+                </v-btn>
               </v-card-title>
-              <v-table density="compact" v-if="loans.length">
+              <v-table density="compact" v-if="copyLoans.length">
                 <thead>
                   <tr>
                     <th>Bank / Lender</th>
@@ -1088,13 +1147,24 @@
                     <th>Monthly</th>
                     <th>Remaining</th>
                     <th>Pay Day</th>
+                    <th style="width: 80px"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="loan in sortedLoans" :key="'copy-loan-' + loan.id">
+                  <tr v-for="loan in sortedCopyLoans" :key="'copy-loan-' + loan.id" :style="copyLoansToPayOff.has(loan.id) ? 'background: rgba(255, 179, 0, 0.15)' : ''">
                     <td class="font-weight-bold">{{ loan.bank }}</td>
                     <td class="text-medium-emphasis">{{ loan.purpose || '—' }}</td>
-                    <td class="text-red font-weight-bold">${{ fmt(loan.remaining_debt) }}</td>
+                    <td class="text-red font-weight-bold" style="white-space: nowrap">
+                      <v-checkbox-btn
+                        :model-value="copyLoansToPayOff.has(loan.id)"
+                        color="orange"
+                        density="compact"
+                        class="d-inline-flex mr-n1"
+                        style="vertical-align: middle"
+                        @update:model-value="v => { const s = new Set(copyLoansToPayOff); v ? s.add(loan.id) : s.delete(loan.id); copyLoansToPayOff = s }"
+                      />
+                      ${{ fmt(loan.remaining_debt) }}
+                    </td>
                     <td>{{ loan.credit_limit ? '$' + fmt(loan.credit_limit) : '—' }}</td>
                     <td class="text-orange font-weight-bold">${{ fmt(loan.monthly_payment) }}</td>
                     <td>
@@ -1104,12 +1174,41 @@
                       <span v-else>—</span>
                     </td>
                     <td>{{ loan.payment_date ? loan.payment_date : '—' }}</td>
+                    <td>
+                      <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEditCopyLoan(loan)" />
+                      <v-btn icon="mdi-delete" size="x-small" variant="text" color="red" @click="confirmDeleteCopyLoan(loan)" />
+                    </td>
                   </tr>
                 </tbody>
               </v-table>
               <v-card-text v-else class="text-center text-medium-emphasis py-3 text-body-2">
                 No loans yet
               </v-card-text>
+
+              <!-- Paid Off loans (stored in copy doc, displayed for one month only) -->
+              <template v-if="(activeCopy?.paid_off_loans || []).length">
+                <v-divider />
+                <v-card-title class="d-flex align-center text-body-2 py-2" style="min-height: 36px">
+                  <v-icon class="mr-2" size="18" color="green">mdi-check-circle</v-icon>
+                  <span class="text-green">Paid Off</span>
+                  <v-spacer />
+                  <span class="text-subtitle-2 text-green">${{ fmt(totalPaidOffDebt) }}</span>
+                </v-card-title>
+                <v-table density="compact">
+                  <tbody>
+                    <tr v-for="loan in activeCopy.paid_off_loans" :key="'paidoff-' + loan.id" style="opacity: 0.5">
+                      <td style="text-decoration: line-through">{{ loan.bank }}</td>
+                      <td class="text-medium-emphasis" style="text-decoration: line-through">{{ loan.purpose || '—' }}</td>
+                      <td class="text-green" style="text-decoration: line-through">${{ fmt(loan.remaining_debt) }}</td>
+                      <td style="text-decoration: line-through">{{ loan.credit_limit ? '$' + fmt(loan.credit_limit) : '—' }}</td>
+                      <td style="text-decoration: line-through">${{ fmt(loan.monthly_payment) }}</td>
+                      <td></td>
+                      <td>{{ loan.payment_date ? loan.payment_date : '—' }}</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </v-table>
+              </template>
             </v-card>
           </v-col>
         </v-row>
@@ -1452,8 +1551,8 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn variant="text" @click="loanDialog = false">Cancel</v-btn>
-          <v-btn color="teal" variant="flat" @click="saveLoan" :loading="loanSaving">
+          <v-btn variant="text" @click="loanDialog = false; editingCopyLoan = false">Cancel</v-btn>
+          <v-btn color="teal" variant="flat" @click="editingCopyLoan ? saveCopyLoan() : saveLoan()" :loading="loanSaving">
             {{ editingLoan ? 'Save' : 'Add' }}
           </v-btn>
         </v-card-actions>
@@ -1654,6 +1753,7 @@ const settingsStore = useSettingsStore()
 // ── State ───────────────────────────────────────────────────────────
 
 const loading = ref(false)
+const copiesLoaded = ref(false)
 const activeTab = ref(localStorage.getItem('budget_active_tab') || 'budget')
 watch(activeTab, (v) => localStorage.setItem('budget_active_tab', v || 'budget'))
 
@@ -1670,7 +1770,8 @@ const entries = ref([])
 const summary = ref(null)
 const accounts = ref([])
 const loans = ref([])
-const loansToPayOff = ref(new Set())
+const loansToPayOff = ref(new Set(JSON.parse(localStorage.getItem('budget_loans_payoff') || '[]')))
+watch(loansToPayOff, (v) => localStorage.setItem('budget_loans_payoff', JSON.stringify([...v])), { deep: true })
 // Sort helper: by frequency, day_of_month ascending, recurring items grouped
 function sortByDay(a, b) {
   const freqOrder = { once: 0, weekly: 1, daily: 2 }
@@ -1724,6 +1825,7 @@ function effectiveAmountMax(e) {
 // Entry background class based on paid status and frequency
 function entryBgClass(item, paidColor) {
   if (item.is_paid) return `bg-${paidColor}-darken-4`
+  if (isBudgetEntryPayoff(item)) return 'bg-amber-darken-4'
   const freq = item.frequency || 'once'
   if (freq === 'daily') return 'bg-blue-darken-4'
   if (freq === 'weekly') return 'bg-indigo-darken-4'
@@ -1734,6 +1836,20 @@ function entryBgClass(item, paidColor) {
 const incomeEntries = computed(() => entries.value.filter(e => e.type === 'income').sort(sortByDay))
 const expenseEntries = computed(() => entries.value.filter(e => e.type === 'expense').sort(sortByDay))
 const sortedLoans = computed(() => [...loans.value].sort((a, b) => (a.payment_date || 999) - (b.payment_date || 999)))
+const payoffLoanBanks = computed(() => new Set(
+  loans.value.filter(l => loansToPayOff.value.has(l.id)).map(l => l.bank)
+))
+
+function isBudgetEntryPayoff(item) {
+  if (item.type !== 'expense') return false
+  if (!loansToPayOff.value.size) return false
+  // Match by category "Loan Payment" and name "Loan: BankName"
+  if (item.category === 'Loan Payment' || (item.name || '').startsWith('Loan: ')) {
+    const bankName = (item.name || '').replace(/^Loan:\s*/, '')
+    return payoffLoanBanks.value.has(bankName)
+  }
+  return false
+}
 const totalIncome = computed(() => incomeEntries.value.reduce((s, e) => s + effectiveAmount(e), 0))
 const totalIncomeMax = computed(() => {
   const hasRange = incomeEntries.value.some(e => e.amount_max)
@@ -1837,6 +1953,18 @@ const activeCopy = ref(null)
 const copySummary = ref(null)
 const copySummaryLoading = ref(false)
 const savedCopies = ref([])
+const monthAbbr = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const sortedSavedCopies = computed(() => {
+  return [...savedCopies.value].sort((a, b) => {
+    const parse = (name) => {
+      const parts = (name || '').split(' ')
+      const mi = monthAbbr.indexOf(parts[0])
+      const yr = parseInt(parts[1]) || 0
+      return yr * 100 + (mi >= 0 ? mi : 99)
+    }
+    return parse(a.name) - parse(b.name)
+  })
+})
 
 // Copy entry dialog
 const copyEntryDialog = ref(false)
@@ -1850,6 +1978,9 @@ const copyIncomeEntries = computed(() =>
 )
 const copyExpenseEntries = computed(() =>
   (activeCopy.value?.entries || []).filter(e => e.type === 'expense').sort(sortByDay)
+)
+const copyRegularExpenses = computed(() =>
+  copyExpenseEntries.value.filter(e => e.source !== 'loan')
 )
 
 function effectiveAmountForCopy(e) {
@@ -1886,8 +2017,51 @@ const copyTotalIncomeMax = computed(() => {
   }, 0)
 })
 const copyTotalExpense = computed(() =>
-  copyExpenseEntries.value.reduce((s, e) => s + effectiveAmountForCopy(e), 0)
+  copyRegularExpenses.value.reduce((s, e) => s + effectiveAmountForCopy(e), 0)
 )
+const copyTotalExpenseWithLoans = computed(() =>
+  copyTotalExpense.value + totalCopyLoanPayments.value
+)
+
+// Copy loans
+const copyLoansToPayOff = ref(new Set(JSON.parse(localStorage.getItem('budget_copy_loans_payoff') || '[]')))
+watch(copyLoansToPayOff, (v) => localStorage.setItem('budget_copy_loans_payoff', JSON.stringify([...v])), { deep: true })
+const copyLoans = computed(() => activeCopy.value?.loans || [])
+const sortedCopyLoans = computed(() => [...copyLoans.value].sort((a, b) => (a.payment_date || 999) - (b.payment_date || 999)))
+const totalCopyDebt = computed(() => copyLoans.value.reduce((s, l) => s + (l.remaining_debt || 0), 0))
+const totalCopyToPayOff = computed(() => copyLoans.value.filter(l => copyLoansToPayOff.value.has(l.id)).reduce((s, l) => s + (l.remaining_debt || 0), 0))
+const totalCopyLoanPayments = computed(() => copyLoans.value.reduce((s, l) => s + (l.monthly_payment || 0), 0))
+
+function getCopyLoanEntry(loan) {
+  if (!activeCopy.value) return null
+  return (activeCopy.value.entries || []).find(e => e.source === 'loan' && e.loan_id === loan.id)
+}
+
+function isCopyLoanPaid(loan) {
+  const entry = getCopyLoanEntry(loan)
+  return entry ? !!entry.is_paid : false
+}
+
+async function toggleCopyLoanPaid(loan) {
+  const entry = getCopyLoanEntry(loan)
+  if (entry) {
+    await toggleCopyPaid(entry)
+  }
+}
+const payoffCopyLoanBanks = computed(() => new Set(
+  copyLoans.value.filter(l => copyLoansToPayOff.value.has(l.id)).map(l => l.bank)
+))
+
+function isCopyEntryPayoff(item) {
+  if (item.source !== 'loan') return false
+  if (copyLoansToPayOff.value.has(item.loan_id)) return true
+  // Fallback: match by bank name from entry name "Loan: BankName"
+  const bankName = (item.name || '').replace(/^Loan:\s*/, '')
+  return payoffCopyLoanBanks.value.has(bankName)
+}
+
+// Paid off loans from copy doc (stored during copy creation, shown strikethrough for one month only)
+const totalPaidOffDebt = computed(() => (activeCopy.value?.paid_off_loans || []).reduce((s, l) => s + (l.remaining_debt || 0), 0))
 
 // Snackbar
 const snack = ref(false)
@@ -2116,12 +2290,14 @@ function confirmDeleteAccount(acc) {
 
 function openAddLoan() {
   editingLoan.value = null
+  editingCopyLoan.value = false
   loanForm.value = { bank: '', purpose: '', credit_limit: 0, remaining_debt: 0, monthly_payment: 0, payment_date: null, notes: '' }
   loanDialog.value = true
 }
 
 function openEditLoan(loan) {
   editingLoan.value = loan
+  editingCopyLoan.value = false
   loanForm.value = { ...loan }
   loanDialog.value = true
 }
@@ -2148,6 +2324,55 @@ async function saveLoan() {
 function confirmDeleteLoan(loan) {
   deleteTarget.value = loan
   deleteType.value = 'loan'
+  deleteConfirmText.value = ''
+  deleteDialog.value = true
+}
+
+// ── Copy Loan CRUD ──────────────────────────────────────────────────
+
+const editingCopyLoan = ref(false)
+
+function openAddCopyLoan() {
+  editingLoan.value = null
+  editingCopyLoan.value = true
+  loanForm.value = { bank: '', purpose: '', credit_limit: 0, remaining_debt: 0, monthly_payment: 0, payment_date: null, notes: '' }
+  loanDialog.value = true
+}
+
+function openEditCopyLoan(loan) {
+  editingLoan.value = loan
+  editingCopyLoan.value = true
+  loanForm.value = { ...loan }
+  loanDialog.value = true
+}
+
+async function saveCopyLoan() {
+  if (!activeCopy.value) return
+  loanSaving.value = true
+  try {
+    if (editingLoan.value) {
+      const { data } = await api.patch(`/addons/budgeting/copies/${activeCopy.value.id}/loans/${editingLoan.value.id}`, loanForm.value)
+      const idx = activeCopy.value.loans.findIndex(l => l.id === editingLoan.value.id)
+      if (idx >= 0) activeCopy.value.loans[idx] = data
+      showSnack('Loan updated')
+    } else {
+      const { data } = await api.post(`/addons/budgeting/copies/${activeCopy.value.id}/loans`, loanForm.value)
+      activeCopy.value.loans = [...(activeCopy.value.loans || []), data]
+      showSnack('Loan added')
+    }
+    loanDialog.value = false
+    editingCopyLoan.value = false
+    await loadCopySummary()
+  } catch (e) {
+    showSnack(e.response?.data?.detail || 'Failed to save loan', 'error')
+  } finally {
+    loanSaving.value = false
+  }
+}
+
+function confirmDeleteCopyLoan(loan) {
+  deleteTarget.value = loan
+  deleteType.value = 'copy_loan'
   deleteConfirmText.value = ''
   deleteDialog.value = true
 }
@@ -2224,6 +2449,20 @@ async function executeDelete() {
     } else if (deleteType.value === 'loan') {
       await api.delete(`/addons/budgeting/loans/${id}`)
       await Promise.all([loadLoans(), loadSummary(), loadCalendar()])
+    } else if (deleteType.value === 'copy_loan') {
+      if (activeCopy.value) {
+        await api.delete(`/addons/budgeting/copies/${activeCopy.value.id}/loans/${id}`)
+        activeCopy.value.loans = (activeCopy.value.loans || []).filter(l => l.id !== id)
+        // Also remove the loan payment entry from local state
+        activeCopy.value.entries = (activeCopy.value.entries || []).filter(e => !(e.source === 'loan' && e.loan_id === id))
+        await loadCopySummary()
+      }
+    } else if (deleteType.value === 'copy_entry') {
+      if (activeCopy.value) {
+        await api.delete(`/addons/budgeting/copies/${activeCopy.value.id}/entries/${id}`)
+        activeCopy.value.entries = (activeCopy.value.entries || []).filter(e => e.id !== id)
+        await loadCopySummary()
+      }
     } else if (deleteType.value === 'asset') {
       await api.delete(`/addons/budgeting/assets/${id}`)
       await Promise.all([loadAssets(), loadAssetsSummary(), loadSummary()])
@@ -2267,8 +2506,20 @@ async function transitionMonth() {
 // ── Budget Copy CRUD ────────────────────────────────────────────────
 
 function openNextMonthDialog() {
-  // Default to next month from current
-  const [y, m] = currentMonth.value.split('-').map(Number)
+  // Default to one month after the latest existing month (current or any copy)
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const allMonths = [currentMonth.value]
+  for (const c of savedCopies.value) {
+    // Parse copy name like "Apr 2026" back to "2026-04"
+    const parts = (c.name || '').split(' ')
+    if (parts.length === 2) {
+      const mi = monthNames.indexOf(parts[0])
+      if (mi >= 0) allMonths.push(`${parts[1]}-${String(mi + 1).padStart(2, '0')}`)
+    }
+  }
+  allMonths.sort()
+  const maxMonth = allMonths[allMonths.length - 1]
+  const [y, m] = maxMonth.split('-').map(Number)
   if (m === 12) targetMonth.value = `${y + 1}-01`
   else targetMonth.value = `${y}-${String(m + 1).padStart(2, '0')}`
   nextMonthDialog.value = true
@@ -2286,13 +2537,28 @@ function nextTargetMonth() {
   else targetMonth.value = `${y}-${String(m + 1).padStart(2, '0')}`
 }
 
+function getPayoffLoanIds() {
+  if (activeTab.value.startsWith('copy-') && activeCopy.value) {
+    return [...copyLoansToPayOff.value]
+  }
+  return [...loansToPayOff.value]
+}
+
 async function createBudgetCopy() {
   copyCreating.value = true
   try {
     const name = `${formatMonthLabel(targetMonth.value)}`
-    const { data } = await api.post('/addons/budgeting/copies', null, {
-      params: { month_key: currentMonth.value, name },
-    })
+    const payoffIds = getPayoffLoanIds()
+    const body = {
+      month_key: currentMonth.value,
+      name,
+      payoff_loan_ids: payoffIds,
+    }
+    // If on a copy tab, use that copy as source
+    if (activeTab.value.startsWith('copy-') && activeCopy.value) {
+      body.source_copy_id = activeCopy.value.id
+    }
+    const { data } = await api.post('/addons/budgeting/copies', body)
     activeCopy.value = data
     localStorage.setItem('budget_active_copy_id', data.id)
     nextMonthDialog.value = false
@@ -2310,9 +2576,16 @@ async function createBudgetCopy() {
 async function createBudgetCopyDirect() {
   copyCreating.value = true
   try {
-    const { data } = await api.post('/addons/budgeting/copies', null, {
-      params: { month_key: currentMonth.value },
-    })
+    const payoffIds = getPayoffLoanIds()
+    const body = {
+      month_key: currentMonth.value,
+      payoff_loan_ids: payoffIds,
+    }
+    // If on a copy tab, use that copy as source
+    if (activeTab.value.startsWith('copy-') && activeCopy.value) {
+      body.source_copy_id = activeCopy.value.id
+    }
+    const { data } = await api.post('/addons/budgeting/copies', body)
     activeCopy.value = data
     localStorage.setItem('budget_active_copy_id', data.id)
     await loadCopySummary()
@@ -2448,17 +2721,11 @@ async function saveCopyEntry() {
   }
 }
 
-async function deleteCopyEntry(item) {
-  if (!activeCopy.value) return
-  try {
-    await api.delete(`/addons/budgeting/copies/${activeCopy.value.id}/entries/${item.id}`)
-    // Remove from local state
-    activeCopy.value.entries = activeCopy.value.entries.filter(e => e.id !== item.id)
-    await loadCopySummary()
-    showSnack('Entry removed from copy')
-  } catch (e) {
-    showSnack('Failed to remove entry', 'error')
-  }
+function confirmDeleteCopyEntry(item) {
+  deleteTarget.value = item
+  deleteType.value = 'copy_entry'
+  deleteConfirmText.value = ''
+  deleteDialog.value = true
 }
 
 // ── Init ────────────────────────────────────────────────────────────
@@ -2466,6 +2733,7 @@ async function deleteCopyEntry(item) {
 onMounted(async () => {
   refreshAll()
   await loadSavedCopies()
+  copiesLoaded.value = true
   // Restore active copy from localStorage
   const savedCopyId = localStorage.getItem('budget_active_copy_id')
   if (savedCopyId) {

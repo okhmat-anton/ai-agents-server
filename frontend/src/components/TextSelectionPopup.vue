@@ -4,6 +4,7 @@
       v-if="visible"
       ref="popupRef"
       class="text-selection-popup"
+      :class="{ 'popup-below': !popupAbove }"
       :style="{ top: posY + 'px', left: posX + 'px' }"
       @mousedown.stop
     >
@@ -105,6 +106,7 @@ const emit = defineEmits(['save', 'selection-change'])
 const visible = ref(false)
 const posX = ref(0)
 const posY = ref(0)
+const popupAbove = ref(true)
 const popupRef = ref(null)
 const agentStep = ref('type')        // 'type' → 'agent'
 const selectedAgentType = ref('')     // 'agent_fact', 'agent_belief', etc.
@@ -167,17 +169,35 @@ function positionPopup(sel) {
   const range = sel.getRangeAt(0)
   const rect = range.getBoundingClientRect()
 
-  // Position above the selection
-  const popupWidth = 200
-  let x = rect.left + rect.width / 2 - popupWidth / 2
-  let y = rect.top - 10 // Will be adjusted with transform in CSS
-
-  // Keep within viewport
-  x = Math.max(8, Math.min(x, window.innerWidth - popupWidth - 8))
-  y = Math.max(8, y)
+  // Initial position above the selection
+  const estWidth = 220
+  let x = rect.left + rect.width / 2 - estWidth / 2
+  x = Math.max(8, Math.min(x, window.innerWidth - estWidth - 8))
 
   posX.value = x
-  posY.value = y
+  posY.value = rect.top - 10
+  popupAbove.value = true
+
+  // After render, adjust based on actual popup size
+  nextTick(() => {
+    const popup = popupRef.value
+    if (!popup) return
+
+    const pW = popup.offsetWidth || estWidth
+    const pH = popup.offsetHeight || 200
+
+    // Recalculate horizontal with actual width
+    let newX = rect.left + rect.width / 2 - pW / 2
+    newX = Math.max(8, Math.min(newX, window.innerWidth - pW - 8))
+    posX.value = newX
+
+    // Check if popup goes off-screen at top
+    if (posY.value - pH < 8) {
+      // Position below the selection instead
+      posY.value = rect.bottom + 10
+      popupAbove.value = false
+    }
+  })
 }
 
 function hidePopup() {
@@ -248,10 +268,15 @@ watch(() => props.containerEl, (newEl, oldEl) => {
   padding: 6px;
   min-width: 180px;
   max-width: 240px;
-  animation: popup-appear 0.15s ease-out;
+  animation: popup-appear-above 0.15s ease-out;
 }
 
-@keyframes popup-appear {
+.text-selection-popup.popup-below {
+  transform: none;
+  animation: popup-appear-below 0.15s ease-out;
+}
+
+@keyframes popup-appear-above {
   from {
     opacity: 0;
     transform: translateY(-100%) scale(0.95);
@@ -259,6 +284,17 @@ watch(() => props.containerEl, (newEl, oldEl) => {
   to {
     opacity: 1;
     transform: translateY(-100%) scale(1);
+  }
+}
+
+@keyframes popup-appear-below {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }
 

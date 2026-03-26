@@ -971,28 +971,83 @@ class CopyEntryUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+class CopyLoanUpdate(BaseModel):
+    bank: Optional[str] = None
+    purpose: Optional[str] = None
+    original_debt: Optional[float] = None
+    remaining_debt: Optional[float] = None
+    credit_limit: Optional[float] = None
+    monthly_payment: Optional[float] = None
+    payment_date: Optional[int] = None
+    notes: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class CreateCopyRequest(BaseModel):
+    month_key: Optional[str] = None
+    name: Optional[str] = None
+    payoff_loan_banks: List[str] = []  # deprecated, kept for backward compat
+    payoff_loan_ids: List[str] = []
+    source_copy_id: Optional[str] = None  # copy from another copy instead of main budget
+
+
 @router.post("/copies")
 async def create_budget_copy(
     month_key: Optional[str] = Query(None, description="YYYY-MM to copy from"),
     name: Optional[str] = Query(None, description="Name for the copy"),
+    body: Optional[CreateCopyRequest] = None,
     db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
     """Create a copy of the budget for forecasting/editing."""
-    mk = month_key or _current_month_key()
+    # Merge body fields with query params (query params take precedence)
+    if body:
+        mk = month_key or body.month_key or _current_month_key()
+        if not name and body.name:
+            name = body.name
+        payoff_ids = set(body.payoff_loan_ids)
+        payoff_banks = set(body.payoff_loan_banks) if not payoff_ids else set()
+        source_copy_id = body.source_copy_id
+    else:
+        mk = month_key or _current_month_key()
+        payoff_ids = set()
+        payoff_banks = set()
+        source_copy_id = None
 
-    # Load entries for the month
-    entries_list = await db[ENTRIES_COL].find(
-        {"month_key": mk}, {"_id": 0}
-    ).to_list(1000)
+    # ── Source: another copy ──────────────────────────────────────────
+    if source_copy_id:
+        src_copy = await db[COPIES_COL].find_one({"id": source_copy_id}, {"_id": 0})
+        if not src_copy:
+            raise HTTPException(status_code=404, detail="Source copy not found")
 
-    # Load loans
-    loans_list = await db[LOANS_COL].find({}, {"_id": 0}).to_list(100)
+        # Use entries from source copy (skip loan entries — they are regenerated from loans)
+        entries_list = [e for e in src_copy.get("entries", []) if e.get("source") != "loan"]
+        # Use loans from source copy (only active, skip paid_off_loans)
+        loans_list = src_copy.get("loans", [])
+    else:
+        # ── Source: main budget ───────────────────────────────────────
+        entries_list = await db[ENTRIES_COL].find(
+            {"month_key": mk}, {"_id": 0}
+        ).to_list(1000)
+        loans_list = await db[LOANS_COL].find({}, {"_id": 0}).to_list(100)
+
+    # Separate active vs paid-off loans (prefer ID matching, fallback to bank name)
+    active_loans = []
+    paid_off_loans_raw = []
+    for loan in loans_list:
+        if (payoff_ids and loan.get("id") in payoff_ids) or \
+           (payoff_banks and loan.get("bank") in payoff_banks):
+            paid_off_loans_raw.append(loan)
+        else:
+            active_loans.append(loan)
 
     # Load accounts for starting balance
     accounts_list = await db[ACCOUNTS_COL].find({}, {"_id": 0}).to_list(100)
 
-    # Load active assets
-    assets_list = await db[ASSETS_COL].find({"is_active": True}, {"_id": 0}).to_list(500)
+    # Load active assets (only when NOT copying from another copy — copy already has assets)
+    if source_copy_id:
+        assets_list = []
+    else:
+        assets_list = await db[ASSETS_COL].find({"is_active": True}, {"_id": 0}).to_list(500)
 
     # Assign new IDs to entries within the copy
     copy_entries = []
@@ -1001,9 +1056,8 @@ async def create_budget_copy(
         ce.pop("_id", None)
         copy_entries.append(ce)
 
-    # Add loan payments as entries in the copy
-    for loan in loans_list:
-        paid_months = loan.get("paid_months", [])
+    # Add loan payments as entries in the copy (only for active loans, not paid-off)
+    for loan in active_loans:
         copy_entries.append({
             "id": _make_id(),
             "type": "expense",
@@ -1058,11 +1112,45 @@ async def create_budget_copy(
 
     starting_balance = sum(a.get("balance", 0) for a in accounts_list)
 
+    # Copy active loans with new IDs and build old→new ID map
+    copy_loans = []
+    loan_id_map = {}  # original_id → copy_id
+    for loan in active_loans:
+        new_id = _make_id()
+        loan_id_map[loan.get("id")] = new_id
+        cl = {**loan, "id": new_id}
+        cl.pop("_id", None)
+        cl.pop("paid_months", None)
+        copy_loans.append(cl)
+
+    # Build paid-off loans list (for strikethrough display, one month only)
+    copy_paid_off = []
+    for loan in paid_off_loans_raw:
+        pol = {**loan, "id": _make_id()}
+        pol.pop("_id", None)
+        pol.pop("paid_months", None)
+        copy_paid_off.append(pol)
+
+    # Also include paid-off loans from source copy (they stay paid off)
+    if source_copy_id and src_copy:
+        for loan in src_copy.get("paid_off_loans", []):
+            pol = {**loan, "id": _make_id()}
+            pol.pop("_id", None)
+            copy_paid_off.append(pol)
+
+    # Remap loan_id references in entries to use new copy loan IDs
+    for e in copy_entries:
+        old_lid = e.get("loan_id")
+        if old_lid and old_lid in loan_id_map:
+            e["loan_id"] = loan_id_map[old_lid]
+
     copy_doc = {
         "id": _make_id(),
         "name": name or f"Copy of {mk}",
         "source_month": mk,
         "entries": copy_entries,
+        "loans": copy_loans,
+        "paid_off_loans": copy_paid_off,
         "starting_balance": starting_balance,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1078,7 +1166,7 @@ async def list_budget_copies(
 ):
     """List all budget copies."""
     items = await db[COPIES_COL].find(
-        {}, {"_id": 0, "entries": 0}
+        {}, {"_id": 0, "entries": 0, "loans": 0}
     ).sort("created_at", -1).to_list(50)
     return {"items": items}
 
@@ -1193,6 +1281,99 @@ async def delete_copy_entry(
     if result.matched_count == 0:
         raise HTTPException(404, "Budget copy not found")
     return {"ok": True}
+
+
+@router.get("/copies/{copy_id}/loans")
+async def get_copy_loans(
+    copy_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Get just the loans array from a copy (lightweight)."""
+    doc = await db[COPIES_COL].find_one({"id": copy_id}, {"_id": 0, "loans": 1})
+    if not doc:
+        raise HTTPException(404, "Budget copy not found")
+    return {"items": doc.get("loans", [])}
+
+
+@router.patch("/copies/{copy_id}/loans/{loan_id}")
+async def update_copy_loan(
+    copy_id: str,
+    loan_id: str,
+    body: CopyLoanUpdate,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Update a loan inside a budget copy."""
+    updates = body.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    set_dict = {f"loans.$.{k}": v for k, v in updates.items()}
+    set_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
+    result = await db[COPIES_COL].update_one(
+        {"id": copy_id, "loans.id": loan_id},
+        {"$set": set_dict},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Copy or loan not found")
+    doc = await db[COPIES_COL].find_one({"id": copy_id}, {"_id": 0})
+    loan = next((l for l in doc.get("loans", []) if l["id"] == loan_id), None)
+    return loan
+
+
+@router.delete("/copies/{copy_id}/loans/{loan_id}")
+async def delete_copy_loan(
+    copy_id: str,
+    loan_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Remove a loan from a budget copy. Also removes related loan-payment entries."""
+    # Remove the loan
+    result = await db[COPIES_COL].update_one(
+        {"id": copy_id},
+        {
+            "$pull": {"loans": {"id": loan_id}},
+            "$set": {"updated_at": datetime.now(timezone.utc).isoformat()},
+        },
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Budget copy not found")
+    # Also remove the auto-generated loan payment entry
+    await db[COPIES_COL].update_one(
+        {"id": copy_id},
+        {"$pull": {"entries": {"loan_id": loan_id, "source": "loan"}}},
+    )
+    return {"ok": True}
+
+
+@router.post("/copies/{copy_id}/loans")
+async def add_copy_loan(
+    copy_id: str,
+    body: BudgetLoanCreate,
+    db: AsyncIOMotorDatabase = Depends(get_mongodb),
+):
+    """Add a new loan to a budget copy."""
+    doc = await db[COPIES_COL].find_one({"id": copy_id})
+    if not doc:
+        raise HTTPException(404, "Budget copy not found")
+    new_loan = {
+        "id": _make_id(),
+        "bank": body.bank,
+        "purpose": body.purpose,
+        "original_debt": body.original_debt,
+        "remaining_debt": body.remaining_debt,
+        "credit_limit": body.credit_limit,
+        "monthly_payment": body.monthly_payment,
+        "payment_date": body.payment_date,
+        "notes": body.notes,
+        "sort_order": body.sort_order,
+    }
+    await db[COPIES_COL].update_one(
+        {"id": copy_id},
+        {
+            "$push": {"loans": new_loan},
+            "$set": {"updated_at": datetime.now(timezone.utc).isoformat()},
+        },
+    )
+    return new_loan
 
 
 @router.get("/copies/{copy_id}/summary")
