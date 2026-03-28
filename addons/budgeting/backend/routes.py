@@ -365,6 +365,7 @@ async def transition_month(
     """
     Create entries for a new month by copying recurring entries from source month.
     All paid statuses are reset. Non-recurring entries are NOT copied.
+    Loan paid statuses are carried forward from source month.
     """
     if not source_month:
         # Calculate previous month
@@ -374,10 +375,26 @@ async def transition_month(
         else:
             source_month = f"{year}-{month - 1:02d}"
 
+    # Carry forward loan paid status from source month to target month
+    loans = await db[LOANS_COL].find({}, {"_id": 0}).to_list(100)
+    loans_carried = 0
+    for loan in loans:
+        paid_months = loan.get("paid_months", [])
+        if source_month in paid_months and target_month not in paid_months:
+            paid_months.append(target_month)
+            await db[LOANS_COL].update_one(
+                {"id": loan["id"]},
+                {"$set": {"paid_months": paid_months}},
+            )
+            loans_carried += 1
+
     # Check if target already has entries
     existing = await db[ENTRIES_COL].count_documents({"month_key": target_month})
     if existing > 0:
-        return {"message": f"Month {target_month} already has {existing} entries", "created": 0}
+        msg = f"Month {target_month} already has {existing} entries"
+        if loans_carried:
+            msg += f", carried forward {loans_carried} loan paid status(es)"
+        return {"message": msg, "created": 0}
 
     # Copy recurring entries from source
     source_entries = await db[ENTRIES_COL].find(
@@ -386,7 +403,10 @@ async def transition_month(
     ).to_list(1000)
 
     if not source_entries:
-        return {"message": f"No recurring entries in {source_month}", "created": 0}
+        msg = f"No recurring entries in {source_month}"
+        if loans_carried:
+            msg += f", but carried forward {loans_carried} loan paid status(es)"
+        return {"message": msg, "created": 0}
 
     import calendar as cal_mod
     t_year, t_month = map(int, target_month.split("-"))
@@ -407,7 +427,11 @@ async def transition_month(
     if not new_entries:
         return {"message": "No entries to create", "created": 0}
     await db[ENTRIES_COL].insert_many(new_entries)
-    return {"message": f"Created {len(new_entries)} entries for {target_month}", "created": len(new_entries)}
+
+    msg = f"Created {len(new_entries)} entries for {target_month}"
+    if loans_carried:
+        msg += f", carried forward {loans_carried} loan paid status(es)"
+    return {"message": msg, "created": len(new_entries)}
 
 
 @router.get("/months")
@@ -600,13 +624,18 @@ async def get_summary(
             unpaid_no_daily += base_amt
     unpaid_no_daily_with_loans = unpaid_no_daily + (total_loan_payments - loan_paid)
 
+    total_income_avg = (total_income + total_income_max) / 2 if has_income_range else None
+    balance_avg = (balance_with_loans + balance_with_loans_max) / 2 if has_income_range else None
+
     return {
         "month_key": mk,
         "total_income": round(total_income, 2),
         "total_income_max": round(total_income_max, 2) if has_income_range else None,
+        "total_income_avg": round(total_income_avg, 2) if has_income_range else None,
         "total_expense": round(total_expense_with_loans, 2),
         "balance": round(balance_with_loans, 2),
         "balance_max": round(balance_with_loans_max, 2) if has_income_range else None,
+        "balance_avg": round(balance_avg, 2) if has_income_range else None,
         "income_paid": round(income_paid, 2),
         "expense_paid": round(expense_paid_with_loans, 2),
         "unpaid_expense": round(unpaid_forward_with_loans, 2),
@@ -733,22 +762,48 @@ async def toggle_loan_paid(
     month_key: Optional[str] = Query(None, description="YYYY-MM"),
     db: AsyncIOMotorDatabase = Depends(get_mongodb),
 ):
-    """Toggle loan payment paid status for a specific month."""
+    """Toggle loan payment paid status for a specific month.
+    Cascades to all subsequent months: if marked paid, all future months
+    become paid; if unmarked, all future months become unpaid.
+    Also updates corresponding loan entries in budget copies.
+    """
     mk = month_key or _current_month_key()
     doc = await db[LOANS_COL].find_one({"id": loan_id})
     if not doc:
         raise HTTPException(404, "Loan not found")
+    bank_name = doc.get("bank", "")
     paid_months = doc.get("paid_months", [])
     if mk in paid_months:
-        paid_months.remove(mk)
+        # Unmarking this month — also remove all months after mk
+        paid_months = [m for m in paid_months if m < mk]
         is_paid = False
     else:
+        # Marking this month as paid — also mark all existing future months
         paid_months.append(mk)
+        # Find all budget months after mk that have entries
+        all_months_cursor = db[ENTRIES_COL].aggregate([
+            {"$group": {"_id": "$month_key"}},
+            {"$match": {"_id": {"$gt": mk}}},
+            {"$sort": {"_id": 1}},
+        ])
+        future_months = [m["_id"] async for m in all_months_cursor]
+        for fm in future_months:
+            if fm not in paid_months:
+                paid_months.append(fm)
         is_paid = True
     await db[LOANS_COL].update_one(
         {"id": loan_id},
         {"$set": {"paid_months": paid_months, "updated_at": datetime.now(timezone.utc).isoformat()}},
     )
+
+    # Cascade is_paid to loan entries in all budget copies (matched by bank name)
+    entry_name = f"Loan: {bank_name}"
+    await db[COPIES_COL].update_many(
+        {"entries": {"$elemMatch": {"source": "loan", "name": entry_name}}},
+        {"$set": {"entries.$[elem].is_paid": is_paid}},
+        array_filters=[{"elem.source": "loan", "elem.name": entry_name}],
+    )
+
     return {"id": loan_id, "month_key": mk, "is_paid": is_paid}
 
 
@@ -1058,6 +1113,9 @@ async def create_budget_copy(
 
     # Add loan payments as entries in the copy (only for active loans, not paid-off)
     for loan in active_loans:
+        # Carry forward paid status: if loan was paid in source month, mark entry as paid
+        loan_paid_months = loan.get("paid_months", [])
+        loan_is_paid = mk in loan_paid_months
         copy_entries.append({
             "id": _make_id(),
             "type": "expense",
@@ -1065,7 +1123,7 @@ async def create_budget_copy(
             "amount": loan.get("monthly_payment", 0),
             "category": "Loan Payment",
             "is_recurring": True,
-            "is_paid": False,
+            "is_paid": loan_is_paid,
             "is_credit_card": False,
             "frequency": "once",
             "month_key": mk,
@@ -1427,19 +1485,25 @@ async def get_copy_summary(
     balance = total_income - total_expense
     balance_max = total_income_max - total_expense
     starting = doc.get("starting_balance", 0)
+    total_income_avg = (total_income + total_income_max) / 2 if has_income_range else None
+    balance_avg = (balance + balance_max) / 2 if has_income_range else None
+    projected_balance_avg = round(starting + balance_avg, 2) if has_income_range else None
 
     return {
         "month_key": mk,
         "total_income": round(total_income, 2),
         "total_income_max": round(total_income_max, 2) if has_income_range else None,
+        "total_income_avg": round(total_income_avg, 2) if has_income_range else None,
         "total_expense": round(total_expense, 2),
         "balance": round(balance, 2),
         "balance_max": round(balance_max, 2) if has_income_range else None,
+        "balance_avg": round(balance_avg, 2) if has_income_range else None,
         "income_by_category": {k: round(v, 2) for k, v in sorted(income_by_cat.items())},
         "expense_by_category": {k: round(v, 2) for k, v in sorted(expense_by_cat.items())},
         "starting_balance": starting,
         "projected_balance": round(starting + balance, 2),
         "projected_balance_max": round(starting + balance_max, 2) if has_income_range else None,
+        "projected_balance_avg": projected_balance_avg,
     }
 
 

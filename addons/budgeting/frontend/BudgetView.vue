@@ -44,7 +44,7 @@ next month <template>
         <div class="d-flex flex-wrap ga-2 mb-4" v-if="summary">
           <v-chip variant="tonal" color="green" size="large">
             <v-icon start size="16">mdi-arrow-down</v-icon>
-            Income: <template v-if="summary.total_income_max">from ${{ fmt(summary.total_income) }} to ${{ fmt(summary.total_income_max) }}</template><template v-else>${{ fmt(summary.total_income) }}</template>
+            Income: <template v-if="summary.total_income_max">from ${{ fmt(summary.total_income) }} to ${{ fmt(summary.total_income_max) }} <span class="text-orange">(avg ${{ fmt(summary.total_income_avg) }})</span></template><template v-else>${{ fmt(summary.total_income) }}</template>
           </v-chip>
           <v-chip variant="tonal" color="red" size="large">
             <v-icon start size="16">mdi-arrow-up</v-icon>
@@ -52,7 +52,7 @@ next month <template>
           </v-chip>
           <v-chip variant="tonal" :color="summary.balance >= 0 ? 'green' : 'red'" size="large">
             <v-icon start size="16">mdi-scale-balance</v-icon>
-            Balance: <template v-if="summary.balance_max">from ${{ fmt(summary.balance) }} to&nbsp;<span :class="summary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(summary.balance_max) }}</span></template><template v-else>${{ fmt(summary.balance) }}</template>
+            Balance: <template v-if="summary.balance_max">from ${{ fmt(summary.balance) }} to&nbsp;<span :class="summary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(summary.balance_max) }}</span> <span class="text-orange">(avg ${{ fmt(summary.balance_avg) }})</span></template><template v-else>${{ fmt(summary.balance) }}</template>
           </v-chip>
           <v-chip variant="tonal" :color="actualResult >= 0 ? 'teal' : 'red'" size="large" v-if="actualResult">
             <v-icon start size="16">mdi-bank-check</v-icon>
@@ -98,7 +98,7 @@ next month <template>
                 <span class="text-h6">Income</span>
                 <v-spacer />
                 <span class="text-h6 text-green">
-                  ${{ fmt(totalIncome) }}<template v-if="totalIncomeMax"> — ${{ fmt(totalIncomeMax) }}</template>
+                  ${{ fmt(totalIncome) }}<template v-if="totalIncomeMax"> — ${{ fmt(totalIncomeMax) }} <span class="text-orange">(avg ${{ fmt((totalIncome + totalIncomeMax) / 2) }})</span></template>
                 </span>
               </div>
 
@@ -135,6 +135,7 @@ next month <template>
                     <span class="text-green font-weight-bold mr-2">
                       <template v-if="item.amount_max">
                         ${{ fmt(item.amount) }} — ${{ fmt(item.amount_max) }}
+                        <div class="text-orange" style="font-size: 11px; line-height: 1.2;">avg ${{ fmt((item.amount + item.amount_max) / 2) }}</div>
                       </template>
                       <template v-else>
                         ${{ fmt(item.amount) }}
@@ -142,10 +143,10 @@ next month <template>
                       <span v-if="item.frequency === 'daily'" class="text-caption text-blue">/day</span>
                       <span v-else-if="item.frequency === 'weekly'" class="text-caption text-indigo">/wk</span>
                       <div v-if="item.frequency === 'daily'" class="text-caption text-medium-emphasis" style="font-size: 10px; line-height: 1;">
-                        ${{ fmt(item.amount * 30) }}<template v-if="item.amount_max"> — ${{ fmt(item.amount_max * 30) }}</template>/mo
+                        ${{ fmt(item.amount * 30) }}<template v-if="item.amount_max"> — ${{ fmt(item.amount_max * 30) }} <span class="text-orange">avg ${{ fmt((item.amount + item.amount_max) / 2 * 30) }}</span></template>/mo
                       </div>
                       <div v-else-if="item.frequency === 'weekly'" class="text-caption text-medium-emphasis" style="font-size: 10px; line-height: 1;">
-                        ${{ fmt(Math.round(item.amount * 4.33 * 100) / 100) }}<template v-if="item.amount_max"> — ${{ fmt(Math.round(item.amount_max * 4.33 * 100) / 100) }}</template>/mo
+                        ${{ fmt(Math.round(item.amount * 4.33 * 100) / 100) }}<template v-if="item.amount_max"> — ${{ fmt(Math.round(item.amount_max * 4.33 * 100) / 100) }} <span class="text-orange">avg ${{ fmt(Math.round((item.amount + item.amount_max) / 2 * 4.33 * 100) / 100) }}</span></template>/mo
                       </div>
                     </span>
                     <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEditEntry(item)" />
@@ -349,7 +350,7 @@ next month <template>
                 <v-divider class="my-2" />
                 <div class="d-flex justify-space-between">
                   <span class="font-weight-bold">Total Income</span>
-                  <span class="font-weight-bold text-green"><template v-if="summary.total_income_max">from ${{ fmt(summary.total_income) }} to ${{ fmt(summary.total_income_max) }}</template><template v-else>${{ fmt(summary.total_income) }}</template></span>
+                  <span class="font-weight-bold text-green"><template v-if="summary.total_income_max">from ${{ fmt(summary.total_income) }} to ${{ fmt(summary.total_income_max) }} <span class="text-orange">(avg ${{ fmt(summary.total_income_avg) }})</span></template><template v-else>${{ fmt(summary.total_income) }}</template></span>
                 </div>
               </div>
               <div v-else class="text-medium-emphasis text-body-2">No income yet</div>
@@ -360,7 +361,7 @@ next month <template>
               <div class="d-flex justify-space-between mb-2">
                 <span class="text-h6">Balance</span>
                 <span class="text-h6" :class="summary && summary.balance >= 0 ? 'text-green' : 'text-red'">
-                  <template v-if="summary && summary.balance_max">from ${{ fmt(summary.balance) }} to&nbsp;<span :class="summary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(summary.balance_max) }}</span></template><template v-else>${{ summary ? fmt(summary.balance) : '0.00' }}</template>
+                  <template v-if="summary && summary.balance_max">from ${{ fmt(summary.balance) }} to&nbsp;<span :class="summary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(summary.balance_max) }}</span> <span class="text-orange">(avg ${{ fmt(summary.balance_avg) }})</span></template><template v-else>${{ summary ? fmt(summary.balance) : '0.00' }}</template>
                 </span>
               </div>
 
@@ -829,7 +830,7 @@ next month <template>
         <div class="d-flex flex-wrap ga-2 mb-4" v-if="copySummary">
           <v-chip variant="tonal" color="green" size="large">
             <v-icon start size="16">mdi-arrow-down</v-icon>
-            Income: <template v-if="copySummary.total_income_max">from ${{ fmt(copySummary.total_income) }} to ${{ fmt(copySummary.total_income_max) }}</template><template v-else>${{ fmt(copySummary.total_income) }}</template>
+            Income: <template v-if="copySummary.total_income_max">from ${{ fmt(copySummary.total_income) }} to ${{ fmt(copySummary.total_income_max) }} <span class="text-orange">(avg ${{ fmt(copySummary.total_income_avg) }})</span></template><template v-else>${{ fmt(copySummary.total_income) }}</template>
           </v-chip>
           <v-chip variant="tonal" color="red" size="large">
             <v-icon start size="16">mdi-arrow-up</v-icon>
@@ -837,7 +838,7 @@ next month <template>
           </v-chip>
           <v-chip variant="tonal" :color="copySummary.balance >= 0 ? 'green' : 'red'" size="large">
             <v-icon start size="16">mdi-scale-balance</v-icon>
-            Balance: <template v-if="copySummary.balance_max">from ${{ fmt(copySummary.balance) }} to&nbsp;<span :class="copySummary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.balance_max) }}</span></template><template v-else>${{ fmt(copySummary.balance) }}</template>
+            Balance: <template v-if="copySummary.balance_max">from ${{ fmt(copySummary.balance) }} to&nbsp;<span :class="copySummary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.balance_max) }}</span> <span class="text-orange">(avg ${{ fmt(copySummary.balance_avg) }})</span></template><template v-else>${{ fmt(copySummary.balance) }}</template>
           </v-chip>
           <v-chip variant="tonal" color="cyan" size="large" v-if="copySummary.starting_balance">
             <v-icon start size="16">mdi-bank</v-icon>
@@ -845,11 +846,11 @@ next month <template>
           </v-chip>
           <v-chip variant="tonal" :color="copySummary.projected_balance >= 0 ? 'green' : 'red'" size="large">
             <v-icon start size="16">mdi-crystal-ball</v-icon>
-            Projected: <template v-if="copySummary.projected_balance_max">from ${{ fmt(copySummary.projected_balance) }} to&nbsp;<span :class="copySummary.projected_balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max) }}</span></template><template v-else>${{ fmt(copySummary.projected_balance) }}</template>
+            Projected: <template v-if="copySummary.projected_balance_max">from ${{ fmt(copySummary.projected_balance) }} to&nbsp;<span :class="copySummary.projected_balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max) }}</span> <span class="text-orange">(avg ${{ fmt(copySummary.projected_balance_avg) }})</span></template><template v-else>${{ fmt(copySummary.projected_balance) }}</template>
           </v-chip>
           <v-chip v-if="totalCopyToPayOff > 0" variant="tonal" :color="(copySummary.projected_balance_max != null ? copySummary.projected_balance_max : copySummary.projected_balance) - totalCopyToPayOff >= 0 ? 'green' : 'red'" size="large">
             <v-icon start size="16">mdi-cash-minus</v-icon>
-            After Payoff: <template v-if="copySummary.projected_balance_max != null">from ${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }} to&nbsp;<span :class="copySummary.projected_balance_max - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max - totalCopyToPayOff) }}</span></template><template v-else>${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }}</template>
+            After Payoff: <template v-if="copySummary.projected_balance_max != null">from ${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }} to&nbsp;<span :class="copySummary.projected_balance_max - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max - totalCopyToPayOff) }}</span> <span class="text-orange">(avg ${{ fmt((copySummary.projected_balance + copySummary.projected_balance_max) / 2 - totalCopyToPayOff) }})</span></template><template v-else>${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }}</template>
           </v-chip>
           <v-chip variant="tonal" :color="copyActualResult >= 0 ? 'teal' : 'red'" size="large" v-if="copyActualResult">
             <v-icon start size="16">mdi-bank-check</v-icon>
@@ -870,7 +871,7 @@ next month <template>
                 <span class="text-h6">Income</span>
                 <v-spacer />
                 <span class="text-h6 text-green">
-                  ${{ fmt(copyTotalIncome) }}<template v-if="copyTotalIncomeMax"> — ${{ fmt(copyTotalIncomeMax) }}</template>
+                  ${{ fmt(copyTotalIncome) }}<template v-if="copyTotalIncomeMax"> — ${{ fmt(copyTotalIncomeMax) }} <span class="text-orange">(avg ${{ fmt((copyTotalIncome + copyTotalIncomeMax) / 2) }})</span></template>
                 </span>
               </div>
 
@@ -907,6 +908,7 @@ next month <template>
                     <span class="text-green font-weight-bold mr-2">
                       <template v-if="item.amount_max">
                         ${{ fmt(item.amount) }} — ${{ fmt(item.amount_max) }}
+                        <div class="text-orange" style="font-size: 11px; line-height: 1.2;">avg ${{ fmt((item.amount + item.amount_max) / 2) }}</div>
                       </template>
                       <template v-else>
                         ${{ fmt(item.amount) }}
@@ -914,10 +916,10 @@ next month <template>
                       <span v-if="item.frequency === 'daily'" class="text-caption text-blue">/day</span>
                       <span v-else-if="item.frequency === 'weekly'" class="text-caption text-indigo">/wk</span>
                       <div v-if="item.frequency === 'daily'" class="text-caption text-medium-emphasis" style="font-size: 10px; line-height: 1;">
-                        ${{ fmt(item.amount * 30) }}<template v-if="item.amount_max"> — ${{ fmt(item.amount_max * 30) }}</template>/mo
+                        ${{ fmt(item.amount * 30) }}<template v-if="item.amount_max"> — ${{ fmt(item.amount_max * 30) }} <span class="text-orange">avg ${{ fmt((item.amount + item.amount_max) / 2 * 30) }}</span></template>/mo
                       </div>
                       <div v-else-if="item.frequency === 'weekly'" class="text-caption text-medium-emphasis" style="font-size: 10px; line-height: 1;">
-                        ${{ fmt(Math.round(item.amount * 4.33 * 100) / 100) }}<template v-if="item.amount_max"> — ${{ fmt(Math.round(item.amount_max * 4.33 * 100) / 100) }}</template>/mo
+                        ${{ fmt(Math.round(item.amount * 4.33 * 100) / 100) }}<template v-if="item.amount_max"> — ${{ fmt(Math.round(item.amount_max * 4.33 * 100) / 100) }} <span class="text-orange">avg ${{ fmt(Math.round((item.amount + item.amount_max) / 2 * 4.33 * 100) / 100) }}</span></template>/mo
                       </div>
                     </span>
                     <v-btn icon="mdi-pencil" size="x-small" variant="text" @click="openEditCopyEntry(item)" />
@@ -1063,7 +1065,7 @@ next month <template>
                 <v-divider class="my-2" />
                 <div class="d-flex justify-space-between">
                   <span class="font-weight-bold">Total Income</span>
-                  <span class="font-weight-bold text-green">${{ fmt(copySummary.total_income) }}</span>
+                  <span class="font-weight-bold text-green"><template v-if="copySummary.total_income_max">from ${{ fmt(copySummary.total_income) }} to ${{ fmt(copySummary.total_income_max) }} <span class="text-orange">(avg ${{ fmt(copySummary.total_income_avg) }})</span></template><template v-else>${{ fmt(copySummary.total_income) }}</template></span>
                 </div>
               </div>
               <div v-else class="text-medium-emphasis text-body-2">No income</div>
@@ -1074,7 +1076,7 @@ next month <template>
               <div class="d-flex justify-space-between mb-2">
                 <span class="text-subtitle-1">Monthly Balance</span>
                 <span class="text-subtitle-1" :class="copySummary && copySummary.balance >= 0 ? 'text-green' : 'text-red'">
-                  <template v-if="copySummary && copySummary.balance_max">from ${{ fmt(copySummary.balance) }} to&nbsp;<span :class="copySummary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.balance_max) }}</span></template><template v-else>${{ copySummary ? fmt(copySummary.balance) : '0.00' }}</template>
+                  <template v-if="copySummary && copySummary.balance_max">from ${{ fmt(copySummary.balance) }} to&nbsp;<span :class="copySummary.balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.balance_max) }}</span> <span class="text-orange">(avg ${{ fmt(copySummary.balance_avg) }})</span></template><template v-else>${{ copySummary ? fmt(copySummary.balance) : '0.00' }}</template>
                 </span>
               </div>
               <div class="d-flex justify-space-between mb-2" v-if="copySummary">
@@ -1085,7 +1087,7 @@ next month <template>
               <div class="d-flex justify-space-between">
                 <span class="text-h6">Projected End Balance</span>
                 <span class="text-h6" :class="copySummary && copySummary.projected_balance >= 0 ? 'text-green' : 'text-red'">
-                  <template v-if="copySummary && copySummary.projected_balance_max">from ${{ fmt(copySummary.projected_balance) }} to&nbsp;<span :class="copySummary.projected_balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max) }}</span></template><template v-else>${{ copySummary ? fmt(copySummary.projected_balance) : '0.00' }}</template>
+                  <template v-if="copySummary && copySummary.projected_balance_max">from ${{ fmt(copySummary.projected_balance) }} to&nbsp;<span :class="copySummary.projected_balance_max >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max) }}</span> <span class="text-orange">(avg ${{ fmt(copySummary.projected_balance_avg) }})</span></template><template v-else>${{ copySummary ? fmt(copySummary.projected_balance) : '0.00' }}</template>
                 </span>
               </div>
               <!-- After payoff: projected minus checked-for-payoff loan debts -->
@@ -1093,7 +1095,7 @@ next month <template>
                 <div class="d-flex justify-space-between mt-1">
                   <span class="text-subtitle-2 text-medium-emphasis">After Payoff (−${{ fmt(totalCopyToPayOff) }})</span>
                   <span class="text-subtitle-2" :class="(copySummary.projected_balance_max != null ? copySummary.projected_balance_max : copySummary.projected_balance) - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">
-                    <template v-if="copySummary.projected_balance_max != null">from ${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }} to&nbsp;<span :class="copySummary.projected_balance_max - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max - totalCopyToPayOff) }}</span></template><template v-else>${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }}</template>
+                    <template v-if="copySummary.projected_balance_max != null">from ${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }} to&nbsp;<span :class="copySummary.projected_balance_max - totalCopyToPayOff >= 0 ? 'text-green' : 'text-red'">${{ fmt(copySummary.projected_balance_max - totalCopyToPayOff) }}</span> <span class="text-orange">(avg ${{ fmt((copySummary.projected_balance + copySummary.projected_balance_max) / 2 - totalCopyToPayOff) }})</span></template><template v-else>${{ fmt(copySummary.projected_balance - totalCopyToPayOff) }}</template>
                   </span>
                 </div>
               </template>
@@ -2292,7 +2294,7 @@ async function toggleLoanPaid(loan) {
     await api.patch(`/addons/budgeting/loans/${loan.id}/toggle-paid`, null, {
       params: { month_key: currentMonth.value },
     })
-    await Promise.all([loadLoans(), loadSummary(), loadCalendar()])
+    await Promise.all([loadLoans(), loadSummary(), loadCalendar(), loadSavedCopies()])
   } catch (e) {
     showSnack('Failed to update loan payment', 'error')
   }

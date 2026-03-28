@@ -3392,8 +3392,10 @@ async def _scrape_landsearch(db, client: httpx.AsyncClient, states_filter: list)
                         continue
 
                     # Extract price: $174,999
+                    # Strip "$Xk drop" labels (price-drop badges) before matching actual price
                     price = None
-                    pm = re.search(r"\$([\d,]+(?:\.\d+)?)", card_text)
+                    price_text = re.sub(r"\$[\d,]+k\s+drop", "", card_text, flags=re.I)
+                    pm = re.search(r"\$([\d,]+(?:\.\d+)?)", price_text)
                     if pm:
                         price = _parse_price(pm.group(1))
                     # Skip lease listings
